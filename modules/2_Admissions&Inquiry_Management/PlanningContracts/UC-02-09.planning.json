@@ -1,0 +1,708 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-02-09",
+    "name": "Re-admit a former student onto their existing record",
+    "module": "Admissions & Inquiry Management",
+    "file": "../UseCases/UC-02-09.json",
+    "featureRef": "2.9 Re-admission handling"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-02-09-PC-1",
+      "intent": {
+        "name": "readmission.match.confirm",
+        "summary": "Confirm that the previous student ID a returning family gave is the child on the school's own record, so the re-admission proceeds onto that record rather than a new one. One step.",
+        "routesHere": [
+          "confirm the re-admission match for the Bilal Khan inquiry",
+          {
+            "text": "ye wohi bacha hai, match confirm kar do",
+            "lang": "ur-Latn",
+            "gloss": "this is the same child, confirm the match"
+          },
+          {
+            "text": "purana student ID mil gaya, confirm kar do",
+            "lang": "ur-Latn",
+            "gloss": "the previous student ID matched, confirm it"
+          },
+          "yes that's the right record — STD-2021-0188, confirm it",
+          {
+            "text": "match theek hai, aage bhejo",
+            "lang": "ur-Latn",
+            "gloss": "the match is right, send it on"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ID match nahi ho rahi",
+              "lang": "ur-Latn",
+              "gloss": "the ID does not match"
+            },
+            "goesTo": "Not a confirmation.",
+            "note": "Where the previous student ID matches nothing and the family cannot supply a correct one, the inquiry continues as an ordinary new admission and the admission form is sent as usual (BR-12). That is inquiry.review and inquiry.approve, not this."
+          },
+          {
+            "request": {
+              "text": "principal ko bhej do",
+              "lang": "ur-Latn",
+              "gloss": "forward it to the principal"
+            },
+            "goesTo": "inquiry.review — UC-02-02-PC-1",
+            "note": "Forwarding is the next act after confirming, and it is refused while the match is unconfirmed (UC-02-02 BR-7)."
+          },
+          {
+            "request": {
+              "text": "isko dobara admit kar do",
+              "lang": "ur-Latn",
+              "gloss": "re-admit them"
+            },
+            "goesTo": "readmission.reactivate — UC-02-09-PC-2",
+            "note": "Reactivating the record is the Principal's act at the end of the pipeline, not the admin's at review."
+          },
+          {
+            "request": {
+              "text": "ye bacha dusri branch chala gaya tha",
+              "lang": "ur-Latn",
+              "gloss": "this child moved to another branch"
+            },
+            "goesTo": "student.transfer.raise — UC-23-04.",
+            "note": "A student who transferred to another branch is handled by transfer, not here (BR-10, E8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "readmission.match.confirm",
+            "inputs": {
+              "inquiry_id": "$request.inquiry_phrase",
+              "student_id": "$request.student_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The match the system proposed is a proposal, not a fact (BR-2) — this is a person saying it is the right child, and nothing proceeds as a re-admission until they have (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the matched record is currently enrolled, whether it transferred to another branch, and whether the details differ from the inquiry, are all enforced by the API and arrive as errors.",
+        "atomicity": "One write. The inquiry is linked to the existing student record and marked a confirmed re-admission, with the audit entry, together or not at all. Nothing on the student record itself changes — it is still Left, Struck off or Transferred, and reactivation happens later at approval (BR-5). No enrolment is created and no admission-form invite is issued (BR-4)."
+      },
+      "operations": [
+        {
+          "name": "readmission.match.confirm",
+          "method": "POST",
+          "path": "/api/v1/inquiries/{inquiry_id}/readmission/confirm",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "inquiry_id + student_id, so a repeat does not record a second confirmation",
+          "purpose": "Link a re-admission inquiry to the existing student record it belongs to, so the school reuses that record rather than creating a second.",
+          "parameters": [
+            {
+              "name": "inquiry_id",
+              "source": "resolved",
+              "sourceRef": "$request.inquiry_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "inquiry",
+                "fromPhrase": "$request.inquiry_phrase",
+                "onNoMatch": "Refuse. No re-admission inquiry matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with child name, previous student ID and year last attended."
+              },
+              "notes": "The re-admission inquiry, resolved from how the actor named it — a reference, the child's name, or the previous student ID."
+            },
+            {
+              "name": "student_id",
+              "source": "request",
+              "sourceRef": "$request.student_id",
+              "required": true,
+              "type": "string",
+              "notes": "The former student record being confirmed. Passed exactly as given — a system-issued identifier is never re-spelled or transliterated (request-language). Where the request names a person rather than an ID, ask for the ID: this is the field that decides whether a second record gets created."
+            },
+            {
+              "name": "confirmation_note",
+              "source": "request",
+              "sourceRef": "$request.confirmation_note",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 250 characters. Where the details differ from the record and the admin is confirming anyway, what they checked."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The link, and what the record holds.",
+            "fields": [
+              {
+                "name": "inquiry_id",
+                "type": "string",
+                "description": "The inquiry, now marked a confirmed re-admission."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The record it is linked to."
+              },
+              {
+                "name": "student_name",
+                "type": "string",
+                "description": "The name on the record, for reading back against the inquiry."
+              },
+              {
+                "name": "student_status",
+                "type": "string",
+                "description": "Left, Struck off or Transferred."
+              },
+              {
+                "name": "year_last_attended",
+                "type": "string",
+                "description": "From the record, not from what the family said."
+              },
+              {
+                "name": "class_last_attended",
+                "type": "string",
+                "description": "Used to default the return class later (BR-6)."
+              },
+              {
+                "name": "outstanding_balance",
+                "type": "string",
+                "description": "Carried from the previous enrolment. Shown to the Principal before the decision, because it bears on whether the school wants the family back (BR-8)."
+              },
+              {
+                "name": "detail_mismatch",
+                "type": "object",
+                "description": "Where the name or date of birth on the record differs from the inquiry (E3). Reported, not hidden."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_MATCH",
+              "mapsTo": "E1",
+              "httpStatus": 404,
+              "meaning": "The previous student ID matches no record.",
+              "written": "Nothing.",
+              "notWritten": "Not confirmed.",
+              "note": "The inquiry continues as an ordinary new admission and the admission form is sent as usual (BR-12). That is a different path, not a retry."
+            },
+            {
+              "code": "CURRENTLY_ENROLLED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The matched record is currently enrolled.",
+              "written": "Nothing.",
+              "notWritten": "Not confirmed.",
+              "note": "The message names the class. A currently enrolled child is not a re-admission, and this is usually a mistyped ID."
+            },
+            {
+              "code": "DETAILS_DIFFER",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The name or date of birth on the record differs from the inquiry.",
+              "written": "Nothing.",
+              "notWritten": "Not confirmed.",
+              "note": "The message names the record. Resolving it is the reviewer's work at review, not later (BR-3)."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "A Staff user attempted to confirm.",
+              "written": "Nothing.",
+              "notWritten": "Not confirmed.",
+              "note": "Only a School Admin may confirm a re-admission match. In practice the capability is absent from a Staff allow-list."
+            },
+            {
+              "code": "TRANSFERRED_TO_ANOTHER_BRANCH",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The matched student transferred to another branch.",
+              "written": "Nothing.",
+              "notWritten": "Not confirmed.",
+              "note": "Message names the branch. Inter-branch student transfer is UC-23-04 and a different use case entirely (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never confirm a match the request has not stated. The system's proposal is a proposal, not a fact (BR-2), and confirming is a person saying it is the right child. A planner confirming on the strength of a name match is exactly how one child ends up with two records — the failure this whole use case exists to prevent (BR-1).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never re-spell or reconstruct the previous student ID. It is what the family quoted from a document, and a corrected version points at a different child or at nobody.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never treat NO_MATCH as a retry. Where the ID matches nothing and the family cannot supply a correct one, the inquiry continues as an ordinary new admission with the admission form sent as usual (BR-12). That is a different path someone chooses, not a fallback the controller takes.",
+          "derivedFrom": [
+            "BR-12",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report detail_mismatch and outstanding_balance whenever they come back. The balance bears on whether the school wants the family back (BR-8) and the Principal is meant to see it before deciding; a mismatch in name or date of birth is the reviewer's to resolve now rather than later (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain a forward or an approval onto a confirmation. Confirming the match is one act; whether the school takes the family back is a separate decision by different people.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no unconfirm written. A confirmation links an inquiry to a record and changes nothing on the record itself, so the consequence is contained — but correcting a wrong link is not specified, and a re-admission confirmed against the wrong child would carry that child's history forward. See the open question."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Bilal Khan wali re-admission inquiry — STD-2021-0188 sahi record hai, confirm kar do",
+            "lang": "ur-Latn",
+            "gloss": "the Bilal Khan re-admission inquiry — STD-2021-0188 is the right record, confirm it"
+          },
+          "context": "School Admin, Johar Town branch. The record is at status Left.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "readmission.match.confirm",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Bilal Khan\"",
+                "student_id": "STD-2021-0188",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The ID comes from the request, quoted by the actor from the record they checked. The plan does not take it from the system's proposal (PR-1)."
+            }
+          ],
+          "outcome": "The inquiry is linked to the existing record and marked a confirmed re-admission. The outstanding balance from the previous enrolment comes back and is reported, because the Principal will need it. The record itself is untouched and no invite is issued (BR-4)."
+        },
+        {
+          "request": {
+            "text": "purana ID confirm kar do",
+            "lang": "ur-Latn",
+            "gloss": "confirm the previous ID"
+          },
+          "context": "School Admin, Johar Town branch, on an inquiry whose proposed match is currently enrolled in Grade 5 Section A.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "readmission.match.confirm",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "student_id": "$request.student_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged; it does not check the record's status beforehand. The API returns CURRENTLY_ENROLLED (E2)."
+            }
+          ],
+          "outcome": "Nothing is confirmed. Report that the record is currently enrolled in Grade 5 Section A — which usually means the ID was mistyped, not that the child is enrolled twice."
+        },
+        {
+          "request": "confirm the match for Sana Malik — she's STD-2019-0044",
+          "context": "School Admin, Johar Town branch, where that record transferred to the Model Town branch in 2023.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "readmission.match.confirm",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Sana Malik\"",
+                "student_id": "STD-2019-0044",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Nothing is confirmed. Report that the student transferred to Model Town and that bringing them back is an inter-branch student transfer (UC-23-04), not a re-admission (BR-10)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-02-09-PC-2",
+      "intent": {
+        "name": "readmission.reactivate",
+        "summary": "Re-admit a former student onto their existing record, keeping their original student ID and roll number and closing the previous enrolment. One step.",
+        "routesHere": [
+          "re-admit Bilal Khan into grade 6 section A",
+          {
+            "text": "Bilal ko dobara admit kar do, grade 6 section A mein",
+            "lang": "ur-Latn",
+            "gloss": "re-admit Bilal into grade 6 section A"
+          },
+          {
+            "text": "is purane student ko wapas le lo",
+            "lang": "ur-Latn",
+            "gloss": "take this former student back"
+          },
+          "reactivate STD-2021-0188 for this session",
+          {
+            "text": "re-admission approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the re-admission"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "naye bache ko admit kar do",
+              "lang": "ur-Latn",
+              "gloss": "admit a new child"
+            },
+            "goesTo": "applicant.admit — UC-02-07-PC-2",
+            "note": "A child who never attended gets a new record and a new student ID. Reusing one here is the whole point of this capability."
+          },
+          {
+            "request": {
+              "text": "match confirm kar do",
+              "lang": "ur-Latn",
+              "gloss": "confirm the match"
+            },
+            "goesTo": "readmission.match.confirm — UC-02-09-PC-1",
+            "note": "Confirming is the School Admin's act at review, and nothing proceeds as a re-admission until it has happened (BR-3)."
+          },
+          {
+            "request": {
+              "text": "purana balance maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "write off the old balance"
+            },
+            "goesTo": "Not this use case.",
+            "note": "Settling or writing off the carried balance is out of scope here. It is shown to the Principal, not resolved."
+          },
+          {
+            "request": {
+              "text": "dusri branch se wapas lana hai",
+              "lang": "ur-Latn",
+              "gloss": "bring them back from another branch"
+            },
+            "goesTo": "student.transfer.raise — UC-23-04."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "readmission.reactivate",
+            "inputs": {
+              "inquiry_id": "$request.inquiry_phrase",
+              "return_section_id": "$request.section_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. Reactivating the record, closing the previous enrolment, creating the new one and preserving the gap all happen inside it (BR-5, BR-7, BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. Section capacity, the confirmed match and whether the section filled while the decision was pending are all enforced by the API and arrive as errors; the plan does not test for them beforehand.",
+        "atomicity": "One write, atomic in itself: the reactivation, the closure of the previous enrolment, the new enrolment and the audit entry together or not at all — a failure part way leaves the record unchanged (E7). The student keeps their original student ID and roll number (BR-5), so nothing new is issued and there is no second record to reconcile. The previous enrolment is closed rather than deleted, and its attendance, marks and fee history stay attached (BR-7). The gap between leaving and returning is preserved: a re-admission never rewrites history to look continuous (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "readmission.reactivate",
+          "method": "POST",
+          "path": "/api/v1/inquiries/{inquiry_id}/readmission/reactivate",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "inquiry_id + student_id + session_id, so a repeat cannot create a second enrolment against the same record and academic session",
+          "purpose": "Reactivate a former student's existing record into the return class and academic session, closing the previous enrolment and keeping the history attached.",
+          "parameters": [
+            {
+              "name": "inquiry_id",
+              "source": "resolved",
+              "sourceRef": "$request.inquiry_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "inquiry",
+                "fromPhrase": "$request.inquiry_phrase",
+                "onNoMatch": "Refuse. No re-admission inquiry matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with child name, previous student ID and year last attended."
+              },
+              "notes": "The re-admission inquiry, resolved from how the actor named it — a reference, the child's name, or the previous student ID."
+            },
+            {
+              "name": "return_section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "class_section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No such section in this academic session.",
+                "onAmbiguous": "Ask, naming the candidates with their remaining capacity."
+              },
+              "notes": "The section to return into. Omit where the request names none — the class above the one they left is a suggestion, never applied silently (BR-6), so an unnamed section means the Principal places them later. The class is derived from the section by the backend; never send both."
+            },
+            {
+              "name": "updated_guardian_contact",
+              "source": "request",
+              "sourceRef": "$request.updated_guardian_contact",
+              "required": false,
+              "type": "string",
+              "notes": "Only where the request states the family's number changed while they were away. This also changes the guardian's sign-in contact, because a guardian ID is tied to the family code (BR-9) — so it is never supplied speculatively."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The reactivated record, and what it carried with it.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The original, unchanged (BR-5)."
+              },
+              {
+                "name": "roll_number",
+                "type": "string",
+                "description": "The original, unchanged (BR-5)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Enrolled."
+              },
+              {
+                "name": "return_class_name",
+                "type": "string",
+                "description": "The class returned into."
+              },
+              {
+                "name": "return_section_name",
+                "type": "string",
+                "description": "Absent where no section was given and placement follows later."
+              },
+              {
+                "name": "previous_enrolment_closed",
+                "type": "boolean",
+                "description": "Closed, not deleted. Its attendance, marks and fee history stay attached (BR-7)."
+              },
+              {
+                "name": "gap_years",
+                "type": "string",
+                "description": "The gap between leaving and returning, preserved on the record (BR-11)."
+              },
+              {
+                "name": "outstanding_balance",
+                "type": "string",
+                "description": "Carried from the previous enrolment. Shown, not settled."
+              },
+              {
+                "name": "guardian_contact_updated",
+                "type": "boolean",
+                "description": "True where the sign-in contact changed with it (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "MATCH_NOT_CONFIRMED",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The re-admission match has not been confirmed by a School Admin.",
+              "written": "Nothing.",
+              "notWritten": "Not reactivated.",
+              "note": "Nothing proceeds as a re-admission until the match is confirmed (BR-3). Confirming it here would remove that check."
+            },
+            {
+              "code": "SECTION_AT_CAPACITY",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The return section is full.",
+              "written": "Nothing.",
+              "notWritten": "Not reactivated.",
+              "note": "Message names the section. Choosing another is the Principal's decision, and approving without one is open to them."
+            },
+            {
+              "code": "SECTION_FILLED_WHILE_PENDING",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The section filled while the decision was awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Not reactivated.",
+              "note": "The same outcome as E5 with a different history behind it. Report which, because the Principal chose that section when it had room."
+            },
+            {
+              "code": "REACTIVATION_FAILED",
+              "mapsTo": "E7",
+              "httpStatus": 500,
+              "meaning": "Reactivation failed part way.",
+              "written": "Nothing. The record is unchanged.",
+              "notWritten": "No enrolment created, the previous one still open.",
+              "note": "Message: \"The re-admission could not be completed. The record is unchanged.\" Atomic, so there is nothing to clean up and no compensating call."
+            },
+            {
+              "code": "TRANSFERRED_TO_ANOTHER_BRANCH",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The student transferred to another branch.",
+              "written": "Nothing.",
+              "notWritten": "Not reactivated.",
+              "note": "Inter-branch student transfer is UC-23-04 (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never chain a match confirmation onto a reactivation. E4 refusing an unconfirmed match is BR-3 working — a person has to say this is the right child before their history is carried forward — and confirming it here to make the reactivation succeed removes the only check standing before that.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never choose the return section. The class above the one they left is a suggestion and never applied silently (BR-6); where the request names none, omit it and the Principal places them later. Where the named one is full, E5 says so.",
+          "derivedFrom": [
+            "BR-6",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Distinguish E5 from E6 when reporting. Both say the section is full, but E6 means it filled while the Principal was deciding — they chose it when it had room, and that is a different conversation.",
+          "derivedFrom": [
+            "E5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never supply updated_guardian_contact speculatively. It changes the guardian's sign-in contact (BR-9), so a number picked up in passing locks a family out of the portal.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never plan applicant.admit for a returning student. That creates a new student record with a new ID, which is the exact failure this use case exists to prevent (BR-1) — and the two records would then split one child's attendance, marks and fee history between them.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report the carried balance and the gap. The balance bears on the decision (BR-8) and the gap is deliberately preserved (BR-11); a reply that presents the re-admission as a clean continuous enrolment misstates the record.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-11"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is none. Reactivation closes the previous enrolment and opens a new one against a record that is now Enrolled, billable and on the class register. Reversing it means marking the student left again, which is UC-03-01's business and a different act with its own reasons. The controller must not attempt a compensating call — and must never fall back to applicant.admit, which would create the second record the whole use case exists to prevent."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Bilal Khan ko dobara admit kar do — grade 6 section A mein",
+            "lang": "ur-Latn",
+            "gloss": "re-admit Bilal Khan — into grade 6 section A"
+          },
+          "context": "Principal, Johar Town branch, academic session 2025-26. The match is confirmed against STD-2021-0188, who left after grade 5.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "readmission.reactivate",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Bilal Khan\"",
+                "return_section_id": "$request.section_phrase → \"grade 6 section A\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The section alone; the class is derived from it. No student ID is generated, because the record already has one (BR-5)."
+            }
+          ],
+          "outcome": "STD-2021-0188 is Enrolled again in 6-A with the original student ID and roll number. The previous enrolment is closed with its attendance, marks and fee history still attached, and the two-year gap stays visible on the record. The carried balance is reported, not settled."
+        },
+        {
+          "request": {
+            "text": "re-admission approve kar do, section baad mein dekh lenge",
+            "lang": "ur-Latn",
+            "gloss": "approve the re-admission, we will sort the section later"
+          },
+          "context": "Principal, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "readmission.reactivate",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "return_section_id is omitted because the request names none. The class above the one they left is a suggestion and is never applied silently (BR-6, PR-2)."
+            }
+          ],
+          "outcome": "The record is reactivated without a section. Placement is a separate act afterwards, and no section was chosen on the student's behalf."
+        },
+        {
+          "request": {
+            "text": "Sana ko wapas le lo grade 4 section A mein, aur unka naya number bhi laga do — 03211234567",
+            "lang": "ur-Latn",
+            "gloss": "take Sana back into grade 4 section A, and put their new number in too — 03211234567"
+          },
+          "context": "Principal, Johar Town branch. The family's number changed while they were away.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "readmission.reactivate",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Sana\"",
+                "return_section_id": "$request.section_phrase → \"grade 4 section A\"",
+                "updated_guardian_contact": "03211234567",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The number is supplied because the request states it changed. It also becomes the guardian's sign-in contact (BR-9), so it is reported as such and not treated as an ordinary field."
+            }
+          ],
+          "outcome": "Reactivated into 4-A on the original record, with the guardian's sign-in contact changed to the new number. Report that second part explicitly — the family signs in with it from now on."
+        }
+      ]
+    }
+  ]
+}

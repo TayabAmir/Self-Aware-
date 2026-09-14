@@ -1,0 +1,1179 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-29-03",
+    "name": "Read the record of who was on campus and when, for safety, investigation and reporting",
+    "module": "Gate & Entry Protection",
+    "file": "../UseCases/UC-29-03.json",
+    "featureRef": "29.3 Reviewing the gate and visitor log"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-29-03-PC-1",
+      "intent": {
+        "name": "gate.log.read",
+        "summary": "Open the gate and visitor log for a day: who came, whom they saw, when they came and went, and whether anybody saw them leave. Read only with a permission the Super Admin grants.",
+        "routesHere": [
+          "show me the visitor log for 4 December",
+          {
+            "text": "4 December ka gate log dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show the gate log for 4 December"
+          },
+          {
+            "text": "kal kaun kaun visitor aaya tha school mein?",
+            "lang": "ur-Latn",
+            "gloss": "which visitors came to school yesterday?"
+          },
+          {
+            "text": "incident wale din gate 2 se kaun aaya tha?",
+            "lang": "ur-Latn",
+            "gloss": "who came through gate 2 on the day of the incident?"
+          },
+          "who was on campus on Tuesday afternoon?"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "abhi school mein kaun kaun bachay hain?",
+              "lang": "ur-Latn",
+              "gloss": "which students are in the school right now?"
+            },
+            "goesTo": "Not answerable.",
+            "note": "Students are not recorded at the gate at all, so the log cannot say which students are on campus (BR-7, BR-11). Attendance records who was marked present that morning, not who is in the building now."
+          },
+          {
+            "request": {
+              "text": "fire drill hai — abhi andar kaun hai?",
+              "lang": "ur-Latn",
+              "gloss": "it's a fire drill — who is inside now?"
+            },
+            "goesTo": "visits.open.read — this use case.",
+            "note": "It answers for visitors, and says plainly that students are not covered (E7, AC-10)."
+          },
+          {
+            "request": {
+              "text": "is visit mein time ghalat likha hai, theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "the time on this visit is wrong, fix it"
+            },
+            "goesTo": "Not here.",
+            "note": "The log is read-only. A wrong visit is corrected where it was recorded, not from the log (BR-8, E3)."
+          },
+          {
+            "request": {
+              "text": "Mr Kamran ki gate scan ghalat hai, attendance theek karo",
+              "lang": "ur-Latn",
+              "gloss": "Mr Kamran's gate scan is wrong, fix the attendance"
+            },
+            "goesTo": "staff.attendance.correction.raise — UC-05-03.",
+            "note": "A staff scan at the gate is the attendance record, and it is corrected there (BR-3, E4)."
+          },
+          {
+            "request": {
+              "text": "gate log kis kis ne parha hai?",
+              "lang": "ur-Latn",
+              "gloss": "who has read the gate log?"
+            },
+            "goesTo": "audit.trail.read — UC-25-06.",
+            "note": "Every reading of the log is recorded in the audit trail (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "gate.log.read",
+            "inputs": {
+              "date": "$request.date",
+              "gate_id": "$request.gate_phrase",
+              "departure": "$request.departure",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read, and the reading is itself recorded (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. Without the permission nothing is returned.",
+        "atomicity": "A read, which writes one audit entry for the reading (BR-10). Nothing in the log is changed (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "gate.log.read",
+          "method": "GET",
+          "path": "/api/v1/gate-log",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return the gate and visitor log for a day at the reader's branch.",
+          "parameters": [
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": true,
+              "type": "date",
+              "notes": "The day the log is opened for (BR-1)."
+            },
+            {
+              "name": "gate_id",
+              "source": "resolved",
+              "sourceRef": "$request.gate_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "gate",
+                "fromPhrase": "$request.gate_phrase",
+                "onNoMatch": "Refuse. No gate at this branch matches. Nothing in the specification creates gates (OQ-5).",
+                "onAmbiguous": "Ask, naming this branch's gates."
+              },
+              "notes": "Which gate, where the branch has more than one (BR-1)."
+            },
+            {
+              "name": "departure",
+              "source": "request",
+              "sourceRef": "$request.departure",
+              "required": false,
+              "type": "enum: Confirmed|Unconfirmed|Still open",
+              "notes": "Only visits whose departure was confirmed, closed unconfirmed, or still open (BR-2)."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The reader. Every reading is recorded against them (BR-10). Never from the request."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who was on the premises that day.",
+            "fields": [
+              {
+                "name": "visits",
+                "type": "object[]",
+                "description": "Visitor, whom they came to see, time in, time out, and departure (BR-2)."
+              },
+              {
+                "name": "unconfirmed_count",
+                "type": "integer",
+                "description": "Visits closed with nobody seeing the visitor leave — distinguishable from those who signed out (AC-2)."
+              },
+              {
+                "name": "staff_movements",
+                "type": "object[]",
+                "description": "Staff arrivals and departures, read from the attendance record and not held here (BR-3)."
+              },
+              {
+                "name": "covers",
+                "type": "string",
+                "description": "Visitors and staff. Never students, who are not recorded at the gate (BR-7, BR-11)."
+              },
+              {
+                "name": "reading_recorded",
+                "type": "boolean",
+                "description": "True. The reading is in the audit trail (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_LOG_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The reader does not hold the permission the Super Admin grants.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned.",
+              "note": "Nobody holds it by default (BR-5)."
+            },
+            {
+              "code": "OTHER_BRANCH",
+              "mapsTo": "E2",
+              "httpStatus": 403,
+              "meaning": "Another branch's log was asked for.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned.",
+              "note": "branch_id comes from the session, so a plan cannot ask for another branch; a reader who may switch does so in the header (BR-9)."
+            },
+            {
+              "code": "NO_VISITS",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "No visits were logged for the date.",
+              "written": "The reading is recorded.",
+              "treatedAsSuccess": true,
+              "note": "The log is empty and says so."
+            }
+          ],
+          "writesOnRead": "Every reading is written to the audit trail with the reader and the filters, because the log holds the movements of named people (BR-10)."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never offer the log to someone without the permission. Reading it is granted by the Super Admin and nobody holds it by default — not the School Admin, not the Principal (BR-5, E1).",
+          "derivedFrom": [
+            "BR-5",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the reading is recorded. Every reading is written down with the reader and the filters, because the log holds the movements of named people (BR-10, AC-7).",
+          "derivedFrom": [
+            "BR-10",
+            "AC-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never answer a question about students from it. Students are not recorded at the gate; the log cannot say which were on campus and must not seem to (BR-7, BR-11, E6).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-11",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Keep confirmed and unconfirmed departures apart. A visit closed unconfirmed is the record that nobody saw the visitor leave, and calling it a departure hides exactly that (BR-2, AC-2).",
+          "derivedFrom": [
+            "BR-2",
+            "AC-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never correct anything from here. The log is read-only; a wrong visit is corrected where it was recorded and a wrong staff scan through the attendance correction (BR-8, E3, E4).",
+          "derivedFrom": [
+            "BR-8",
+            "E3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "staff_id and branch_id come from $session — another branch's log is read only by switching branch in the header, never because the request names one (BR-9).",
+          "derivedFrom": [
+            "BR-9",
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing a plan can take back. The audit entry it writes is permanent, as every audit entry is (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "4 December ko 2 se 4 baje ke darmiyan kaun visitor aaya tha? incident ki tehqeeq hai",
+            "lang": "ur-Latn",
+            "gloss": "which visitors came between 2 and 4 on 4 December? it's an incident investigation"
+          },
+          "context": "Principal, granted log access, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "gate.log.read",
+              "inputs": {
+                "date": "$request.date → 04-12-2026",
+                "gate_id": "omitted",
+                "departure": "omitted",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-2)."
+            }
+          ],
+          "outcome": "The day's visits, with the two-to-four window read from the times in and out. Name any visit closed unconfirmed as such — nobody saw that visitor leave. Say the reading has been recorded, and that students are not in the log."
+        },
+        {
+          "request": {
+            "text": "kal ka visitor log dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show yesterday's visitor log"
+          },
+          "context": "School Admin, Johar Town, never granted log access.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "gate.log.read",
+              "inputs": {
+                "date": "$request.date → yesterday",
+                "gate_id": "omitted",
+                "departure": "omitted",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is returned. Reading the log is a permission only the Super Admin grants, and a School Admin does not hold it by default."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-29-03-PC-2",
+      "intent": {
+        "name": "visits.open.read",
+        "summary": "The visits still open and the passes still out, as a list of their own, so the desk can chase them.",
+        "routesHere": [
+          "which visitors haven't signed out yet?",
+          {
+            "text": "kaun se visitors abhi tak andar hain?",
+            "lang": "ur-Latn",
+            "gloss": "which visitors are still inside?"
+          },
+          {
+            "text": "kaun se pass abhi tak wapas nahi aaye?",
+            "lang": "ur-Latn",
+            "gloss": "which passes haven't come back yet?"
+          },
+          "list the outstanding passes"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "sab open visits band kar do",
+              "lang": "ur-Latn",
+              "gloss": "close all the open visits"
+            },
+            "goesTo": "visit.close.unconfirmed — UC-29-02."
+          },
+          {
+            "request": {
+              "text": "outstanding pass V-009 retire karo",
+              "lang": "ur-Latn",
+              "gloss": "retire outstanding pass V-009"
+            },
+            "goesTo": "visitor.pass.retire — UC-29-02."
+          },
+          {
+            "request": {
+              "text": "abhi school mein kaun kaun bachay hain?",
+              "lang": "ur-Latn",
+              "gloss": "which students are in school right now?"
+            },
+            "goesTo": "Not answerable.",
+            "note": "Students are not recorded at the gate (BR-7, BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "visits.open.read",
+            "inputs": {
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read, recorded like every reading of the log (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read, which writes one audit entry for the reading (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "visits.open.read",
+          "method": "GET",
+          "path": "/api/v1/gate-log/open",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List the visits still open and the passes still outstanding at the branch.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The reader. The desk reads today's list as part of its own work; a School Admin or Principal reads it only where granted (BR-5). Never from the request."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What the desk has to chase.",
+            "fields": [
+              {
+                "name": "outstanding_passes",
+                "type": "object[]",
+                "description": "Pass number, the visit it went out on, and days outstanding (BR-4)."
+              },
+              {
+                "name": "open_visits",
+                "type": "object[]",
+                "description": "Visitor, host, pass number, time in and hours on site."
+              },
+              {
+                "name": "covers",
+                "type": "string",
+                "description": "Visitors only. Staff come from the attendance record; students are not recorded at the gate (BR-3, BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_LOG_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The reader does not hold the permission the Super Admin grants.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned.",
+              "note": "Nobody holds it by default (BR-5)."
+            }
+          ],
+          "writesOnRead": "Every reading is written to the audit trail with the reader and the filters, because the log holds the movements of named people (BR-10)."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Put outstanding passes first. An unreturned pass is a credential still in circulation, which is why it is listed to be chased (BR-4, A2).",
+          "derivedFrom": [
+            "BR-4",
+            "A2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Where this is asked during a drill or an evacuation, say what it does not cover. It answers for visitors; staff are read from the attendance record; students are not recorded at the gate at all (E7, BR-11, AC-10).",
+          "derivedFrom": [
+            "E7",
+            "BR-11",
+            "AC-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the reading is recorded (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "staff_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing a plan can take back. The audit entry it writes is permanent (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "fire drill hai, kaun se visitors abhi andar hain?",
+            "lang": "ur-Latn",
+            "gloss": "it's a fire drill, which visitors are inside right now?"
+          },
+          "context": "Security, Johar Town. Two visits open; one pass outstanding from yesterday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "visits.open.read",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-2)."
+            }
+          ],
+          "outcome": "Names the two visitors still open with their hosts and times in, and the pass outstanding from yesterday. Says plainly that this covers visitors only — staff are read from the attendance record, and students are not recorded at the gate, so this list cannot account for them."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-29-03-PC-3",
+      "intent": {
+        "name": "visit.read",
+        "summary": "Open one visit as it was recorded — for an investigation, or to check a disputed account. Nothing is corrected here.",
+        "routesHere": [
+          "open the visit of the man with pass V-014 on Monday",
+          {
+            "text": "Asif Mehmood wali visit dikhao jo mangal ko hui thi",
+            "lang": "ur-Latn",
+            "gloss": "show the Asif Mehmood visit from Tuesday"
+          },
+          {
+            "text": "wo refused entry wala record kholo",
+            "lang": "ur-Latn",
+            "gloss": "open that refused entry record"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is visit mein time ghalat likha hai, theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "the time on this visit is wrong, fix it"
+            },
+            "goesTo": "Not here.",
+            "note": "The log is read-only. A wrong visit is corrected where it was recorded, not from the log (BR-8, E3)."
+          },
+          {
+            "request": {
+              "text": "gate log kis kis ne parha hai?",
+              "lang": "ur-Latn",
+              "gloss": "who has read the gate log?"
+            },
+            "goesTo": "audit.trail.read — UC-25-06.",
+            "note": "Every reading of the log is recorded in the audit trail (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "visit.read",
+            "inputs": {
+              "visit_id": "$request.visit_phrase",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read, recorded (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. Without the permission nothing is returned.",
+        "atomicity": "A read, which writes one audit entry for the reading (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "visit.read",
+          "method": "GET",
+          "path": "/api/v1/visits/{visit_id}",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return one visit as recorded.",
+          "parameters": [
+            {
+              "name": "visit_id",
+              "source": "resolved",
+              "sourceRef": "$request.visit_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "visit",
+                "fromPhrase": "$request.visit_phrase",
+                "onNoMatch": "Refuse. No visit at this branch matches.",
+                "onAmbiguous": "Ask, naming the matching visits with their dates, times in and pass numbers."
+              },
+              "notes": "The visit, named by the visitor, the day or the pass."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The reader. Every reading is recorded against them (BR-10). Never from the request."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The visit as it was recorded.",
+            "fields": [
+              {
+                "name": "visit",
+                "type": "object",
+                "description": "Visitor, contact, host, purpose, pass, time in, time out, departure — and the refusal reason where entry was refused."
+              },
+              {
+                "name": "recorded_by",
+                "type": "string",
+                "description": "Who at the desk recorded it."
+              },
+              {
+                "name": "reading_recorded",
+                "type": "boolean",
+                "description": "True (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_LOG_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The reader does not hold the permission the Super Admin grants.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned.",
+              "note": "Nobody holds it by default (BR-5)."
+            }
+          ],
+          "writesOnRead": "Every reading is written to the audit trail with the reader and the filters, because the log holds the movements of named people (BR-10)."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Only for a reader holding the permission (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report it as recorded, a refusal and its reason included. A person turned away is often what the log is read for (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never correct it from here (BR-8, E3).",
+          "derivedFrom": [
+            "BR-8",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that the reading is recorded (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "staff_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing a plan can take back. The audit entry it writes is permanent (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "pichle mangal ko jo aadmi gate pe roka gaya tha uska record dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show the record of the man stopped at the gate last Tuesday"
+          },
+          "context": "Principal, granted log access. One refused visit last Tuesday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "visit.read",
+              "inputs": {
+                "visit_id": "$request.visit_phrase → last Tuesday's refused visit",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-2)."
+            }
+          ],
+          "outcome": "The refused visit as recorded — the name and number he gave, whom he asked for, the time, and the reason entry was refused. Say the reading has been recorded."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-29-03-PC-4",
+      "intent": {
+        "name": "gate.log.access.grant",
+        "summary": "Grant a named School Admin or Principal the permission to read the gate log. Super Admin only.",
+        "routesHere": [
+          "give the Johar Town principal access to the gate log",
+          {
+            "text": "Mrs Farzana ko gate log parhne ki ijazat de do",
+            "lang": "ur-Latn",
+            "gloss": "give Mrs Farzana permission to read the gate log"
+          },
+          {
+            "text": "School Admin Mr Bilal ko visitor log ka access do",
+            "lang": "ur-Latn",
+            "gloss": "give School Admin Mr Bilal access to the visitor log"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mujhe gate log ka access de do",
+              "lang": "ur-Latn",
+              "gloss": "give me access to the gate log"
+            },
+            "goesTo": "Refused unless the Super Admin is asking.",
+            "note": "Only the Super Admin grants it; a School Admin cannot grant it to themselves (BR-5, E8)."
+          },
+          {
+            "request": {
+              "text": "sab teachers ko gate log dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show the gate log to all teachers"
+            },
+            "goesTo": "Not offered.",
+            "note": "It goes to a named School Admin or Principal. Teachers, coordinators and accounts staff have no access."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "gate.log.access.grant",
+            "inputs": {
+              "user_id": "$request.user_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, the Super Admin's."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the grant, and the holder and the Principal told (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "gate.log.access.grant",
+          "method": "POST",
+          "path": "/api/v1/gate-log/access",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "user_id + branch_id, since a person holds the permission once per branch",
+          "purpose": "Grant a named person the permission to read the gate log at the branch.",
+          "parameters": [
+            {
+              "name": "user_id",
+              "source": "resolved",
+              "sourceRef": "$request.user_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "user",
+                "fromPhrase": "$request.user_phrase",
+                "onNoMatch": "Refuse. No School Admin or Principal at this branch matches. The permission goes only to one of those (BR-5).",
+                "onAmbiguous": "Ask, naming the matching School Admins and Principals."
+              },
+              "notes": "A named School Admin or Principal. The log holds the movements of named people, so it goes to people, not to a role (BR-5)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The grant.",
+            "fields": [
+              {
+                "name": "grant_id",
+                "type": "string",
+                "description": "The grant."
+              },
+              {
+                "name": "holder",
+                "type": "string",
+                "description": "Who now holds it."
+              },
+              {
+                "name": "granted_at",
+                "type": "datetime",
+                "description": "When."
+              },
+              {
+                "name": "holder_told",
+                "type": "boolean",
+                "description": "Whether the holder and the Principal were told."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SELF_GRANT",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "Somebody other than the Super Admin tried to grant access — a School Admin to themselves, typically.",
+              "written": "Nothing.",
+              "notWritten": "It is refused."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Only for the Super Admin. A School Admin asking for their own access is refused — nobody holds it by default, and nobody hands it to themselves (BR-5, E8, AC-11).",
+          "derivedFrom": [
+            "BR-5",
+            "E8",
+            "AC-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Grant to a named person, never to a role. The log holds the movements of named people (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that every reading they make will be recorded (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "gate.log.access.revoke",
+        "statement": "The permission is revoked. Readings already made stay in the audit trail (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Mrs Farzana ko gate log parhne ki ijazat de do",
+            "lang": "ur-Latn",
+            "gloss": "give Mrs Farzana permission to read the gate log"
+          },
+          "context": "Super Admin, Johar Town branch selected. Mrs Farzana is its Principal.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "gate.log.access.grant",
+              "inputs": {
+                "user_id": "$request.user_phrase → Mrs Farzana",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-2)."
+            }
+          ],
+          "outcome": "Granted for Johar Town. She and the Principal are told; say that every reading she makes is recorded."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-29-03-PC-5",
+      "intent": {
+        "name": "gate.log.access.revoke",
+        "summary": "Take back a named person's permission to read the gate log. Super Admin only.",
+        "routesHere": [
+          "revoke Mrs Farzana's gate log access",
+          {
+            "text": "Mr Kamran se gate log ka access wapas le lo",
+            "lang": "ur-Latn",
+            "gloss": "take back Mr Kamran's gate log access"
+          },
+          {
+            "text": "jo School Admin chala gaya uska gate log access band karo",
+            "lang": "ur-Latn",
+            "gloss": "close the gate log access of the School Admin who left"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "unki purani readings mita do",
+              "lang": "ur-Latn",
+              "gloss": "delete their old readings"
+            },
+            "goesTo": "No route.",
+            "note": "Every reading of the log is recorded, and audit entries are never editable (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "gate.log.access.revoke",
+            "inputs": {
+              "user_id": "$request.user_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, the Super Admin's."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One state change: the grant ended, and the holder and the Principal told."
+      },
+      "operations": [
+        {
+          "name": "gate.log.access.revoke",
+          "method": "POST",
+          "path": "/api/v1/gate-log/access/{user_id}/revoke",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "user_id + branch_id",
+          "purpose": "End a named person's permission to read the gate log at the branch.",
+          "parameters": [
+            {
+              "name": "user_id",
+              "source": "resolved",
+              "sourceRef": "$request.user_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "user",
+                "fromPhrase": "$request.user_phrase",
+                "onNoMatch": "Refuse. Nobody holding the permission at this branch matches.",
+                "onAmbiguous": "Ask, naming the current holders."
+              },
+              "notes": "A current holder."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The ended grant.",
+            "fields": [
+              {
+                "name": "holder",
+                "type": "string",
+                "description": "Who held it."
+              },
+              {
+                "name": "revoked_at",
+                "type": "datetime",
+                "description": "When."
+              },
+              {
+                "name": "holder_told",
+                "type": "boolean",
+                "description": "Whether the holder and the Principal were told."
+              },
+              {
+                "name": "readings_kept",
+                "type": "boolean",
+                "description": "True. What they read stays in the audit trail (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_A_HOLDER",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The person does not hold the permission.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changes.",
+              "note": "The use case records revocation only in the entity's operations and in the access-changed message; no flow step or exception describes it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Only for the Super Admin (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say what stays. The readings they made are in the audit trail and remain there (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "gate.log.access.grant",
+        "statement": "The permission is granted again, as a new grant."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Mr Bilal chale gaye hain, unka gate log access band kar do",
+            "lang": "ur-Latn",
+            "gloss": "Mr Bilal has left, close his gate log access"
+          },
+          "context": "Super Admin, Johar Town branch selected.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "gate.log.access.revoke",
+              "inputs": {
+                "user_id": "$request.user_phrase → Mr Bilal",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-1)."
+            }
+          ],
+          "outcome": "Revoked. His past readings stay in the audit trail."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-29-03-PC-6",
+      "intent": {
+        "name": "gate.log.access.read",
+        "summary": "Who holds the permission to read the gate log at this branch.",
+        "routesHere": [
+          "who can read the gate log?",
+          {
+            "text": "gate log kaun kaun parh sakta hai?",
+            "lang": "ur-Latn",
+            "gloss": "who all can read the gate log?"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "gate log kis kis ne parha hai?",
+              "lang": "ur-Latn",
+              "gloss": "who has read the gate log?"
+            },
+            "goesTo": "audit.trail.read — UC-25-06.",
+            "note": "Every reading of the log is recorded in the audit trail (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "gate.log.access.read",
+            "inputs": {
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written."
+      },
+      "operations": [
+        {
+          "name": "gate.log.access.read",
+          "method": "GET",
+          "path": "/api/v1/gate-log/access",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List the holders of the gate log permission at the branch.",
+          "parameters": [
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The holders.",
+            "fields": [
+              {
+                "name": "holders",
+                "type": "object[]",
+                "description": "Name, role, granted by and on."
+              },
+              {
+                "name": "nobody_holds",
+                "type": "boolean",
+                "description": "True where nobody holds it — which is the default (BR-5)."
+              }
+            ]
+          },
+          "errors": []
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that nobody holds it by default. An empty list is the starting position, not a fault (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "gate log kaun kaun parh sakta hai?",
+            "lang": "ur-Latn",
+            "gloss": "who all can read the gate log?"
+          },
+          "context": "Super Admin, Johar Town branch selected. One holder.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "gate.log.access.read",
+              "inputs": {
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read."
+            }
+          ],
+          "outcome": "One holder — the Principal, granted in September."
+        }
+      ]
+    }
+  ]
+}

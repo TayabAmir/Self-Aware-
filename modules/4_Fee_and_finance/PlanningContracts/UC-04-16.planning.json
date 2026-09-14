@@ -1,0 +1,1407 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-16",
+    "name": "Confirm that what the books say was received matches what the bank and gateway actually received",
+    "module": "Finance",
+    "file": "../UseCases/UC-04-16.json",
+    "featureRef": "4.16 Payment reconciliation"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-16-PC-1",
+      "intent": {
+        "name": "finance.reconciliation.start",
+        "summary": "Open a reconciliation for a bank or gateway account and a period, carrying the opening balance from the last signed-off one. One step, and it changes no book.",
+        "routesHere": [
+          "start the September reconciliation for the main bank account",
+          {
+            "text": "September ki reconciliation shuru karo",
+            "lang": "ur-Latn",
+            "gloss": "start September's reconciliation"
+          },
+          {
+            "text": "bank account ka milan karna hai",
+            "lang": "ur-Latn",
+            "gloss": "we need to reconcile the bank account"
+          },
+          {
+            "text": "gateway settlement ka reconciliation kholo",
+            "lang": "ur-Latn",
+            "gloss": "open the gateway settlement reconciliation"
+          },
+          "open a reconciliation for October"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "statement import karo",
+              "lang": "ur-Latn",
+              "gloss": "import the statement"
+            },
+            "goesTo": "finance.reconciliation.statement.import — UC-04-16-PC-2",
+            "note": "The reconciliation is opened first, then the statement is imported into it."
+          },
+          {
+            "request": {
+              "text": "sign off kar do",
+              "lang": "ur-Latn",
+              "gloss": "sign it off"
+            },
+            "goesTo": "finance.reconciliation.signoff — UC-04-16-PC-4"
+          },
+          {
+            "request": {
+              "text": "ledger dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show me the ledger"
+            },
+            "goesTo": "finance.ledger.read — UC-04-18",
+            "note": "Reading the books is a different act from checking them against a statement."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.reconciliation.start",
+            "inputs": {
+              "account_id": "$request.account_phrase",
+              "period": "$request.period",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The opening balance is carried from the previous signed-off reconciliation and is never typed (BR-11) — and a period cannot be reconciled before the one before it is closed (E6)."
+          }
+        ],
+        "onFailure": "Stop and report. An unsigned previous period is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the reconciliation at In progress, with its opening balance carried forward and any unresolved differences from the previous period carried with it (BR-11). Nothing in the books changes — reconciliation never adjusts the books to match the statement (BR-1)."
+      },
+      "operations": [
+        {
+          "name": "finance.reconciliation.start",
+          "method": "POST",
+          "path": "/api/v1/reconciliations",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "account_id + period, since one reconciliation exists per account and period",
+          "purpose": "Open a reconciliation for an account and period, carrying the opening balance and unresolved differences forward.",
+          "parameters": [
+            {
+              "name": "account_id",
+              "source": "resolved",
+              "sourceRef": "$request.account_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "ledger_account",
+                "fromPhrase": "$request.account_phrase",
+                "onNoMatch": "Refuse. No such bank or settlement account.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The bank account or gateway settlement account being reconciled."
+            },
+            {
+              "name": "period",
+              "source": "request",
+              "sourceRef": "$request.period",
+              "required": true,
+              "type": "string",
+              "notes": "The month or period being reconciled. Only where the request states it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The reconciliation as opened.",
+            "fields": [
+              {
+                "name": "reconciliation_id",
+                "type": "string",
+                "description": "The reconciliation."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "In progress."
+              },
+              {
+                "name": "opening_balance",
+                "type": "string",
+                "description": "Carried from the previous signed-off reconciliation. Never typed (BR-11)."
+              },
+              {
+                "name": "closing_per_books",
+                "type": "string",
+                "description": "The ledger's closing balance for the account."
+              },
+              {
+                "name": "carried_differences",
+                "type": "object[]",
+                "description": "Unresolved differences carried forward from the previous period (BR-11)."
+              },
+              {
+                "name": "movements_in_period",
+                "type": "integer",
+                "description": "Every movement, not fees alone — salaries, expenses and refunds all pass through this account (BR-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "PREVIOUS_NOT_SIGNED_OFF",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The previous period has not been signed off.",
+              "written": "Nothing.",
+              "notWritten": "No reconciliation opened.",
+              "note": "The message names the period. A period cannot be reconciled before the one before it is closed (BR-11)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never type an opening balance. It is carried from the previous signed-off reconciliation (BR-11), and a figure supplied here would let a period open on a number nobody agreed.",
+          "derivedFrom": [
+            "BR-11",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never start a period before the one before it is signed off. E6 is BR-11 working — differences carry forward, and reconciling out of order loses them.",
+          "derivedFrom": [
+            "BR-11",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the account carries every movement, not fees alone. Salaries, expenses and refunds all pass through it and all have to be matched (BR-4) — somebody expecting a fees-only exercise will not have the records.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the differences carried forward. They came from a period somebody has already signed off, and they are still unexplained.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An open reconciliation is not deleted — it is worked through and signed off, or left in progress. Nothing in the books has changed either way (BR-1)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "September ki bank reconciliation shuru karo",
+            "lang": "ur-Latn",
+            "gloss": "start September's bank reconciliation"
+          },
+          "context": "Accounts, Johar Town branch. August was signed off on 08-09-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.start",
+              "inputs": {
+                "account_id": "$request.account_phrase → the main bank account",
+                "period": "Sep 2026",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Opened at In progress with the opening balance carried from August. Report the movement count — it covers salaries and expenses too, not just fee receipts (PR-3)."
+        },
+        {
+          "request": {
+            "text": "October ki reconciliation kholo",
+            "lang": "ur-Latn",
+            "gloss": "open October's reconciliation"
+          },
+          "context": "Accounts, Johar Town branch, where September has not been signed off.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.start",
+              "inputs": {
+                "account_id": "$request.account_phrase",
+                "period": "Oct 2026",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns PREVIOUS_NOT_SIGNED_OFF (E6)."
+            }
+          ],
+          "outcome": "Nothing is opened. Report that September is still open and must be completed first — differences carry forward, and reconciling out of order loses them (PR-2)."
+        },
+        {
+          "request": {
+            "text": "gateway settlement ka milan karna hai",
+            "lang": "ur-Latn",
+            "gloss": "we need to reconcile the gateway settlement"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.start",
+              "inputs": {
+                "account_id": "$request.account_phrase → the gateway settlement account",
+                "period": "$request.period",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Opened against the settlement account. Gateway confirmations are matched here on their transaction references — confirmation by the gateway is not the same as money in the school's account (UC-04-03 BR-12)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-16-PC-2",
+      "intent": {
+        "name": "finance.reconciliation.statement.import",
+        "summary": "Import a bank or gateway statement into an open reconciliation and match what it can automatically. One step.",
+        "routesHere": [
+          "import the September bank statement",
+          {
+            "text": "bank statement import kar do",
+            "lang": "ur-Latn",
+            "gloss": "import the bank statement"
+          },
+          {
+            "text": "gateway ka settlement file laga do",
+            "lang": "ur-Latn",
+            "gloss": "load the gateway settlement file"
+          },
+          "load the statement and run the auto-match"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "statement haath se likh do",
+              "lang": "ur-Latn",
+              "gloss": "key the statement in by hand"
+            },
+            "goesTo": "Not offered.",
+            "note": "Statements are imported rather than keyed wherever the format allows. A statement typed by hand is a second place for an error to enter (BR-3)."
+          },
+          {
+            "request": {
+              "text": "line match kar do",
+              "lang": "ur-Latn",
+              "gloss": "match this line"
+            },
+            "goesTo": "finance.reconciliation.match — UC-04-16-PC-3"
+          },
+          {
+            "request": {
+              "text": "reconciliation shuru karo",
+              "lang": "ur-Latn",
+              "gloss": "start the reconciliation"
+            },
+            "goesTo": "finance.reconciliation.start — UC-04-16-PC-1"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.reconciliation.statement.import",
+            "inputs": {
+              "reconciliation_id": "$request.reconciliation_phrase",
+              "statement_file_id": "$request.statement_file_phrase",
+              "closing_per_statement": "$request.closing_per_statement",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The file is uploaded on the screen and referenced here — the request channel carries no file. Auto-matching runs inside the import."
+          }
+        ],
+        "onFailure": "Stop and report. An unreadable file, a statement covering a different period and lines matching two movements equally well are all enforced by the API and arrive as errors or as unmatched items.",
+        "atomicity": "One write: the statement lines and the automatic matches, together with the audit entry or not at all. Nothing in the books changes — reconciliation never adjusts the books to match the statement (BR-1). Every unmatched line and every unmatched movement is reported, because a recorded movement with no statement line is how a payment recorded but never received comes to light (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "finance.reconciliation.statement.import",
+          "method": "POST",
+          "path": "/api/v1/reconciliations/{reconciliation_id}/statement",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "reconciliation_id + statement_file_id, so a repeat does not double-import the lines",
+          "purpose": "Import a statement into an open reconciliation and match its lines against recorded movements automatically.",
+          "parameters": [
+            {
+              "name": "reconciliation_id",
+              "source": "resolved",
+              "sourceRef": "$request.reconciliation_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "reconciliation",
+                "fromPhrase": "$request.reconciliation_phrase",
+                "onNoMatch": "Refuse. No reconciliation matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with account, period, status and outstanding difference."
+              },
+              "notes": "The reconciliation, resolved from how the actor named it — the account and period, or simply the one in progress."
+            },
+            {
+              "name": "statement_file_id",
+              "source": "resolved",
+              "sourceRef": "$request.statement_file_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "uploaded_file",
+                "fromPhrase": "$request.statement_file_phrase",
+                "onNoMatch": "Refuse. No uploaded statement matches.",
+                "onAmbiguous": "Ask, naming the candidates with file name and upload time."
+              },
+              "notes": "The statement uploaded on the screen. The request channel carries no file, so the upload happens there and this references it."
+            },
+            {
+              "name": "closing_per_statement",
+              "source": "request",
+              "sourceRef": "$request.closing_per_statement",
+              "required": true,
+              "type": "money",
+              "notes": "The statement's closing balance, entered from the statement. The one figure keyed here, and it is what the difference is measured against."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What matched and what did not.",
+            "fields": [
+              {
+                "name": "statement_lines",
+                "type": "integer",
+                "description": "How many lines the file held."
+              },
+              {
+                "name": "matched_automatically",
+                "type": "integer",
+                "description": "Matched without a person (BR-2)."
+              },
+              {
+                "name": "unmatched_statement_lines",
+                "type": "object[]",
+                "description": "Statement lines with no recorded movement (BR-8, A1)."
+              },
+              {
+                "name": "unmatched_movements",
+                "type": "object[]",
+                "description": "Recorded movements with no statement line — how a payment recorded but never received comes to light (BR-8, A2)."
+              },
+              {
+                "name": "ambiguous",
+                "type": "object[]",
+                "description": "Lines where two movements match equally well (E3). Left for a person; never guessed."
+              },
+              {
+                "name": "closing_per_books",
+                "type": "string",
+                "description": "The ledger's figure."
+              },
+              {
+                "name": "closing_per_statement",
+                "type": "string",
+                "description": "As entered."
+              },
+              {
+                "name": "difference",
+                "type": "string",
+                "description": "The gap, itemised line by line and never forced to zero (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "FILE_UNREADABLE",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The statement file cannot be read.",
+              "written": "Nothing.",
+              "notWritten": "Nothing imported.",
+              "note": "Message names the format expected. Never key the statement instead (BR-3)."
+            },
+            {
+              "code": "WRONG_PERIOD",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The statement covers a different period from the reconciliation.",
+              "written": "Nothing.",
+              "notWritten": "Nothing imported.",
+              "note": "The message names both periods."
+            },
+            {
+              "code": "AMBIGUOUS_MATCH",
+              "mapsTo": "E3",
+              "httpStatus": 200,
+              "meaning": "Two movements match one statement line equally well.",
+              "written": "The unambiguous matches.",
+              "notWritten": "Those lines stay unmatched.",
+              "treatedAsSuccess": true,
+              "note": "Left for a person to resolve. Never picked — a wrongly matched line is worse than an unmatched one (BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never key a statement. Import it (BR-3) — a statement typed by hand is a second place for an error to enter, and the whole exercise exists to catch errors.",
+          "derivedFrom": [
+            "BR-3",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never resolve an ambiguous match. Two movements matching one line equally well is left for a person (E3), because a wrongly matched line is worse than an unmatched one — it hides a difference rather than showing it (BR-5).",
+          "derivedFrom": [
+            "BR-5",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report both kinds of unmatched item. A statement line with no movement and a movement with no statement line are different problems, and the second is how a payment recorded but never received comes to light (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never adjust the books to close the difference. Reconciliation confirms; it never adjusts (BR-1), and the difference is itemised line by line rather than forced to zero by an entry nobody can explain (BR-9).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An import is not undone as a whole, but individual matches can be unmade through finance.reconciliation.match — a wrongly matched line is worse than an unmatched one (BR-5). Nothing in the books has changed."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "September ki bank statement import kar do, closing 1,284,500 hai",
+            "lang": "ur-Latn",
+            "gloss": "import September's bank statement, the closing balance is 1,284,500"
+          },
+          "context": "Accounts, Johar Town branch, on an open September reconciliation.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.statement.import",
+              "inputs": {
+                "reconciliation_id": "$request.reconciliation_phrase",
+                "statement_file_id": "$request.statement_file_phrase → the uploaded CSV",
+                "closing_per_statement": 1284500,
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The file was uploaded on the screen; the plan references it. The closing balance is the one figure keyed, from the statement itself."
+            }
+          ],
+          "outcome": "412 lines imported, 398 matched automatically. 14 unmatched: 6 statement lines with no movement and 8 movements with no statement line. Report both kinds — the 8 are the ones that matter most (PR-3). The difference is itemised, not forced to zero."
+        },
+        {
+          "request": {
+            "text": "August wali statement laga do",
+            "lang": "ur-Latn",
+            "gloss": "load the August statement"
+          },
+          "context": "Accounts, Johar Town branch, on a September reconciliation.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.statement.import",
+              "inputs": {
+                "reconciliation_id": "$request.reconciliation_phrase",
+                "statement_file_id": "$request.statement_file_phrase",
+                "closing_per_statement": "$request.closing_per_statement",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns WRONG_PERIOD (E2)."
+            }
+          ],
+          "outcome": "Nothing is imported. Report that the statement covers August and the reconciliation is for September."
+        },
+        {
+          "request": {
+            "text": "statement import karo",
+            "lang": "ur-Latn",
+            "gloss": "import the statement"
+          },
+          "context": "Accounts, Johar Town branch, where two payments of PKR 4,000 on the same date match one line.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.statement.import",
+              "inputs": {
+                "reconciliation_id": "$request.reconciliation_phrase",
+                "statement_file_id": "$request.statement_file_phrase",
+                "closing_per_statement": "$request.closing_per_statement",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Imported, with that line listed under ambiguous and left unmatched (E3). Report it for a person to resolve — never pick one, because a wrong match hides the difference instead of showing it (PR-2)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-16-PC-3",
+      "intent": {
+        "name": "finance.reconciliation.match",
+        "summary": "Match a statement line to a recorded movement by hand. One step, and it changes no book.",
+        "routesHere": [
+          "match this statement line to the cheque we issued on the 3rd",
+          {
+            "text": "is line ko us payment se match kar do",
+            "lang": "ur-Latn",
+            "gloss": "match this line to that payment"
+          },
+          {
+            "text": "cheque 3 tareekh ka hai, September mein clear hua",
+            "lang": "ur-Latn",
+            "gloss": "the cheque is dated the 3rd and cleared in September"
+          },
+          "match line 41 to the salary payment"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye match galat tha, hata do",
+              "lang": "ur-Latn",
+              "gloss": "this match was wrong, undo it"
+            },
+            "goesTo": "finance.reconciliation.unmatch — UC-04-16-PC-4",
+            "note": "A match may be undone, because a wrongly matched line is worse than an unmatched one (BR-5)."
+          },
+          {
+            "request": {
+              "text": "record hi galat tha",
+              "lang": "ur-Latn",
+              "gloss": "the record itself was wrong"
+            },
+            "goesTo": "fee.payment.correction.raise — UC-04-12",
+            "note": "Where the record was wrong rather than the statement, a correction is raised through the payment correction route rather than adjusted here (BR-7)."
+          },
+          {
+            "request": {
+              "text": "statement import karo",
+              "lang": "ur-Latn",
+              "gloss": "import the statement"
+            },
+            "goesTo": "finance.reconciliation.statement.import — UC-04-16-PC-2"
+          },
+          {
+            "request": {
+              "text": "farq ko zero kar do",
+              "lang": "ur-Latn",
+              "gloss": "make the difference zero"
+            },
+            "goesTo": "Not offered.",
+            "note": "The difference is never forced to zero by an adjusting entry nobody can explain (BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.reconciliation.match",
+            "inputs": {
+              "reconciliation_id": "$request.reconciliation_phrase",
+              "statement_line_id": "$request.statement_line_phrase",
+              "movement_id": "$request.movement_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The movement is named by the actor, never chosen on amount (E3)."
+          }
+        ],
+        "onFailure": "Stop and report. Nothing in the books changes either way.",
+        "atomicity": "One write: the match or its removal, and the audit entry, together or not at all. No ledger entry is created, amended or deleted — reconciliation never adjusts the books (BR-1). The difference is recalculated from what is matched, never set."
+      },
+      "operations": [
+        {
+          "name": "finance.reconciliation.match",
+          "method": "POST",
+          "path": "/api/v1/reconciliations/{reconciliation_id}/matches",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "reconciliation_id + statement_line_id + movement_id",
+          "purpose": "Match a statement line to a recorded movement.",
+          "parameters": [
+            {
+              "name": "reconciliation_id",
+              "source": "resolved",
+              "sourceRef": "$request.reconciliation_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "reconciliation",
+                "fromPhrase": "$request.reconciliation_phrase",
+                "onNoMatch": "Refuse. No reconciliation matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with account, period, status and outstanding difference."
+              },
+              "notes": "The reconciliation, resolved from how the actor named it — the account and period, or simply the one in progress."
+            },
+            {
+              "name": "statement_line_id",
+              "source": "resolved",
+              "sourceRef": "$request.statement_line_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "statement_line",
+                "fromPhrase": "$request.statement_line_phrase",
+                "onNoMatch": "Refuse. No statement line matches.",
+                "onAmbiguous": "Ask, naming the candidates with date, amount and narration."
+              },
+              "notes": "The statement line."
+            },
+            {
+              "name": "movement_id",
+              "source": "resolved",
+              "sourceRef": "$request.movement_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "ledger_movement",
+                "fromPhrase": "$request.movement_phrase",
+                "onNoMatch": "Refuse. No recorded movement matches.",
+                "onAmbiguous": "Ask, naming the candidates with date, amount, route and what it was for."
+              },
+              "notes": "The recorded movement to match it to."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The match, and where the difference now stands.",
+            "fields": [
+              {
+                "name": "statement_line_id",
+                "type": "string",
+                "description": "The line."
+              },
+              {
+                "name": "movement_id",
+                "type": "string",
+                "description": "What it is matched to."
+              },
+              {
+                "name": "difference",
+                "type": "string",
+                "description": "Recalculated from what is matched. Never set (BR-9)."
+              },
+              {
+                "name": "unmatched_remaining",
+                "type": "integer",
+                "description": "How many items still have no counterpart."
+              },
+              {
+                "name": "match_type",
+                "type": "string",
+                "description": "Manual."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "AMBIGUOUS_MATCH",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The movement is already matched to another line.",
+              "written": "Nothing.",
+              "notWritten": "Not matched.",
+              "note": "Unmatch the other line first, which is a deliberate act (BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never match on amount alone. Two payments of the same amount on the same date are the ordinary case (E3), and a wrongly matched line hides a difference rather than showing it (BR-5).",
+          "derivedFrom": [
+            "BR-5",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never adjust a record to make it match. Where the record was wrong rather than the statement, a correction is raised through UC-04-12 (BR-7) — with its own approval, because it moves money between accounts.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never force the difference to zero. It is itemised line by line, and an adjusting entry nobody can explain is the thing BR-9 exists to prevent.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Treat a cheque issued in the period and cleared later as timing, not as a difference to resolve. It carries forward with an explanation (A4).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "finance.reconciliation.unmatch",
+        "statement": "finance.reconciliation.unmatch undoes it. A match may be undone precisely because a wrongly matched line is worse than an unmatched one (BR-5) — it hides a difference rather than showing it. It is a deliberate act somebody takes, never a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye line 3 tareekh wale cheque se match kar do",
+            "lang": "ur-Latn",
+            "gloss": "match this line to the cheque dated the 3rd"
+          },
+          "context": "Accounts, Johar Town branch, on an open reconciliation.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.match",
+              "inputs": {
+                "reconciliation_id": "$request.reconciliation_phrase",
+                "statement_line_id": "$request.statement_line_phrase",
+                "movement_id": "$request.movement_phrase → the cheque issued on 03-09-2026",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The movement is named by the actor, not chosen on amount (PR-1)."
+            }
+          ],
+          "outcome": "Matched manually. The difference recalculates from what is now matched, and one fewer item is unexplained."
+        },
+        {
+          "request": {
+            "text": "statement pe hai lekin books mein nahi — books theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "it is on the statement but not in the books — fix the books"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.match",
+              "inputs": {
+                "reconciliation_id": "$request.reconciliation_phrase",
+                "statement_line_id": "$request.statement_line_phrase",
+                "movement_id": "$request.movement_phrase — none exists",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. There is no movement to match to, and reconciliation never adjusts the books (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is matched. Report that money arrived which the books do not show — that is a payment to record under UC-04-05, or an unidentified receipt, and either way a separate deliberate act."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-16-PC-4",
+      "intent": {
+        "name": "finance.reconciliation.unmatch",
+        "summary": "Undo a match that was made wrongly, so the difference shows again. One step.",
+        "routesHere": [
+          "unmatch line 41, it was matched to the wrong movement",
+          {
+            "text": "ye match galat tha, hata do",
+            "lang": "ur-Latn",
+            "gloss": "this match was wrong, undo it"
+          },
+          {
+            "text": "ghalat payment se match ho gaya tha",
+            "lang": "ur-Latn",
+            "gloss": "it got matched to the wrong payment"
+          },
+          {
+            "text": "match wapas lo",
+            "lang": "ur-Latn",
+            "gloss": "take the match back"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is line ko match kar do",
+              "lang": "ur-Latn",
+              "gloss": "match this line"
+            },
+            "goesTo": "finance.reconciliation.match — UC-04-16-PC-3"
+          },
+          {
+            "request": {
+              "text": "record hi galat tha",
+              "lang": "ur-Latn",
+              "gloss": "the record itself was wrong"
+            },
+            "goesTo": "fee.payment.correction.raise — UC-04-12",
+            "note": "Where the record was wrong rather than the statement, a correction is raised through the payment correction route rather than adjusted here (BR-7)."
+          },
+          {
+            "request": {
+              "text": "statement import karo",
+              "lang": "ur-Latn",
+              "gloss": "import the statement"
+            },
+            "goesTo": "finance.reconciliation.statement.import — UC-04-16-PC-2"
+          },
+          {
+            "request": {
+              "text": "farq ko zero kar do",
+              "lang": "ur-Latn",
+              "gloss": "make the difference zero"
+            },
+            "goesTo": "Not offered.",
+            "note": "The difference is never forced to zero by an adjusting entry nobody can explain (BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.reconciliation.unmatch",
+            "inputs": {
+              "reconciliation_id": "$request.reconciliation_phrase",
+              "statement_line_id": "$request.statement_line_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Both items become unmatched again and the difference reappears, which is the point (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. A line that is not matched is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the match is removed and the audit entry written, together or not at all. Nothing in the books changes and the difference is recalculated from what is still matched, never set (BR-1, BR-9)."
+      },
+      "operations": [
+        {
+          "name": "finance.reconciliation.unmatch",
+          "method": "POST",
+          "path": "/api/v1/reconciliations/{reconciliation_id}/unmatch",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "reconciliation_id + statement_line_id",
+          "purpose": "Undo an existing match so both items are unmatched again.",
+          "parameters": [
+            {
+              "name": "reconciliation_id",
+              "source": "resolved",
+              "sourceRef": "$request.reconciliation_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "reconciliation",
+                "fromPhrase": "$request.reconciliation_phrase",
+                "onNoMatch": "Refuse. No reconciliation matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with account, period, status and outstanding difference."
+              },
+              "notes": "The reconciliation, resolved from how the actor named it — the account and period, or simply the one in progress."
+            },
+            {
+              "name": "statement_line_id",
+              "source": "resolved",
+              "sourceRef": "$request.statement_line_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "statement_line",
+                "fromPhrase": "$request.statement_line_phrase",
+                "onNoMatch": "Refuse. No statement line matches.",
+                "onAmbiguous": "Ask, naming the candidates with date, amount and narration."
+              },
+              "notes": "The statement line."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The line as unmatched, and where the difference now stands.",
+            "fields": [
+              {
+                "name": "statement_line_id",
+                "type": "string",
+                "description": "The line, now unmatched."
+              },
+              {
+                "name": "match_type",
+                "type": "string",
+                "description": "Unmatched (BR-5)."
+              },
+              {
+                "name": "movement_id",
+                "type": "string",
+                "description": "The movement it was matched to, now unmatched too."
+              },
+              {
+                "name": "difference",
+                "type": "string",
+                "description": "Recalculated. Never set (BR-9)."
+              },
+              {
+                "name": "unmatched_remaining",
+                "type": "integer",
+                "description": "How many items now have no counterpart."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_MATCHED",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The line is not currently matched.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "UC-04-16 defines no E-id for it — see OPEN-QUESTIONS."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never leave a wrong match in place because unmatching looks like a step backwards. A wrongly matched line is worse than an unmatched one — it hides a difference rather than showing it (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain a re-match onto an unmatch. Which movement the line actually belongs to is what the actor is working out, and pairing it again in the same breath assumes the answer.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the difference has grown. Unmatching reveals a gap that was hidden, and the number moving the wrong way is the correct outcome.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "finance.reconciliation.match",
+        "statement": "finance.reconciliation.match pairs it again, to whichever movement it actually belongs to. The two capabilities are each other's reversal, deliberately, because BR-5 makes undoing a match a normal part of the work rather than an exception."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye match galat tha — dosri family ki payment thi, hata do",
+            "lang": "ur-Latn",
+            "gloss": "this match was wrong — it was the other family's payment, undo it"
+          },
+          "context": "Accounts, Johar Town branch, on an open reconciliation.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.unmatch",
+              "inputs": {
+                "reconciliation_id": "$request.reconciliation_phrase",
+                "statement_line_id": "$request.statement_line_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The match is undone and both items are unmatched again. The difference grows by PKR 4,000 — report that as the correct outcome, not a problem (PR-3): a hidden difference has become a visible one."
+        },
+        {
+          "request": "unmatch line 41 and match it to the salary payment instead",
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.unmatch",
+              "inputs": {
+                "reconciliation_id": "$request.reconciliation_phrase",
+                "statement_line_id": "$request.statement_line_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the unmatch is planned. Re-matching is a separate act, because which movement it belongs to is what the actor is working out (PR-2)."
+            }
+          ],
+          "outcome": "Line 41 is unmatched. Report the movements now available and let the actor confirm the salary payment before matching it again."
+        },
+        {
+          "request": {
+            "text": "is line ka match hata do",
+            "lang": "ur-Latn",
+            "gloss": "remove this line's match"
+          },
+          "context": "Accounts, Johar Town branch, on a line that was never matched.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.unmatch",
+              "inputs": {
+                "reconciliation_id": "$request.reconciliation_phrase",
+                "statement_line_id": "$request.statement_line_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_MATCHED."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the line is already unmatched — which is usually what the actor wanted to confirm."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-16-PC-5",
+      "intent": {
+        "name": "finance.reconciliation.signoff",
+        "summary": "Sign off a reconciliation, with every unmatched item carrying what was done about it. School Admin only, one step, and it cannot be reopened.",
+        "routesHere": [
+          "sign off the September reconciliation",
+          {
+            "text": "September ki reconciliation sign off kar do",
+            "lang": "ur-Latn",
+            "gloss": "sign off September's reconciliation"
+          },
+          {
+            "text": "milan mukammal ho gaya, band kar do",
+            "lang": "ur-Latn",
+            "gloss": "the reconciliation is complete, close it"
+          },
+          "close off the gateway settlement reconciliation"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "dobara khol do",
+              "lang": "ur-Latn",
+              "gloss": "reopen it"
+            },
+            "goesTo": "Not offered.",
+            "note": "A signed-off reconciliation is not reopened. A later discovery is handled in the current period, since reopening a signed period changes a figure somebody has already relied on (BR-12, E7)."
+          },
+          {
+            "request": {
+              "text": "line match kar do",
+              "lang": "ur-Latn",
+              "gloss": "match a line"
+            },
+            "goesTo": "finance.reconciliation.match — UC-04-16-PC-3",
+            "note": "Matching happens before sign-off."
+          },
+          {
+            "request": {
+              "text": "farq abhi bhi hai",
+              "lang": "ur-Latn",
+              "gloss": "there is still a difference"
+            },
+            "goesTo": "finance.reconciliation.signoff, with the items explained",
+            "note": "Differences may remain at sign-off, provided each carries what was done about it and a written note (BR-6, A6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.reconciliation.signoff",
+            "inputs": {
+              "reconciliation_id": "$request.reconciliation_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it is terminal. Every unmatched item must already carry an action and a note — nothing is left unexplained simply because the period closed (BR-6, E4)."
+          }
+        ],
+        "onFailure": "Stop and report. Unexplained items, an unitemised difference and whether the acting user performed the reconciliation themselves are all enforced by the API and arrive as errors.",
+        "atomicity": "One write: the sign-off and the audit entry together or not at all. Nothing in the books changes. The period becomes closed to further matching and cannot be reopened (BR-12) — unresolved differences carry forward into the next period with their explanations (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "finance.reconciliation.signoff",
+          "method": "POST",
+          "path": "/api/v1/reconciliations/{reconciliation_id}/signoff",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "reconciliation_id, since a reconciliation is signed off once and Signed off is terminal",
+          "purpose": "Sign off a reconciliation, closing the period and carrying any unresolved differences forward.",
+          "parameters": [
+            {
+              "name": "reconciliation_id",
+              "source": "resolved",
+              "sourceRef": "$request.reconciliation_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "reconciliation",
+                "fromPhrase": "$request.reconciliation_phrase",
+                "onNoMatch": "Refuse. No reconciliation matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with account, period, status and outstanding difference."
+              },
+              "notes": "The reconciliation, resolved from how the actor named it — the account and period, or simply the one in progress."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The reconciliation as closed.",
+            "fields": [
+              {
+                "name": "reconciliation_id",
+                "type": "string",
+                "description": "The reconciliation."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Signed off. Terminal — it is not reopened (BR-12)."
+              },
+              {
+                "name": "signed_off_by",
+                "type": "string",
+                "description": "The School Admin, never the person who performed it (BR-10)."
+              },
+              {
+                "name": "difference",
+                "type": "string",
+                "description": "The gap, itemised."
+              },
+              {
+                "name": "carried_forward",
+                "type": "object[]",
+                "description": "Unresolved items and their explanations, carried into the next period (BR-11)."
+              },
+              {
+                "name": "closing_balance",
+                "type": "string",
+                "description": "Becomes the next period's opening balance (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ITEMS_UNEXPLAINED",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "Items are left unmatched with no action or note.",
+              "written": "Nothing.",
+              "notWritten": "Not signed off.",
+              "note": "The message names the count. Nothing is left unexplained simply because the period closed (BR-6)."
+            },
+            {
+              "code": "CANNOT_SIGN_OWN",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to sign off their own reconciliation.",
+              "written": "Nothing.",
+              "notWritten": "Not signed off.",
+              "note": "Somebody checking their own work is not a control (BR-10)."
+            },
+            {
+              "code": "ALREADY_SIGNED_OFF",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The reconciliation has already been signed off.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "A signed-off reconciliation is not reopened. A later discovery is handled in the current period (BR-12)."
+            },
+            {
+              "code": "DIFFERENCE_NOT_ITEMISED",
+              "mapsTo": "E8",
+              "httpStatus": 400,
+              "meaning": "The difference is not explained line by line.",
+              "written": "Nothing.",
+              "notWritten": "Not signed off.",
+              "note": "It is never forced to zero by an adjusting entry nobody can explain (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never sign off a reconciliation the acting user performed. E5 is BR-10 working — somebody checking their own work is not a control.",
+          "derivedFrom": [
+            "BR-10",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never write the explanations to get past ITEMS_UNEXPLAINED. Each unmatched item carries what was done about it and a written note by the person who investigated it (BR-6) — a note a planner composed explains nothing.",
+          "derivedFrom": [
+            "BR-6",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never treat a remaining difference as a failure. Differences may remain at sign-off provided each is explained (A6), and they carry forward with the opening balance (BR-11).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never attempt to reopen a signed period. A later discovery is handled in the current period, because reopening changes a figure somebody has already relied on (BR-12, E7).",
+          "derivedFrom": [
+            "BR-12",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report what carries forward. The next period opens with those differences still unexplained, and whoever reconciles it will meet them again.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Signed off is terminal and a signed period is never reopened (BR-12). A later discovery is handled in the current period — as a correction, a voucher, or a difference carried into the open reconciliation. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "September ki reconciliation sign off kar do",
+            "lang": "ur-Latn",
+            "gloss": "sign off September's reconciliation"
+          },
+          "context": "School Admin, Johar Town branch. Accounts completed it; two items remain, both explained as timing.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.signoff",
+              "inputs": {
+                "reconciliation_id": "$request.reconciliation_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Signed off. The two timing items carry forward into October with their explanations (BR-11), and September's closing balance becomes October's opening. It cannot be reopened."
+        },
+        {
+          "request": {
+            "text": "sign off kar do",
+            "lang": "ur-Latn",
+            "gloss": "sign it off"
+          },
+          "context": "Accounts, Johar Town branch, on a reconciliation they performed themselves.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.signoff",
+              "inputs": {
+                "reconciliation_id": "$request.reconciliation_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "In practice sign-off is absent from an Accounts allow-list. The API returns CANNOT_SIGN_OWN (E5)."
+            }
+          ],
+          "outcome": "Nothing is signed off. Report that a School Admin has to — somebody checking their own work is not a control (PR-1)."
+        },
+        {
+          "request": {
+            "text": "sign off kar do, teen cheezein abhi tak match nahi hui",
+            "lang": "ur-Latn",
+            "gloss": "sign it off, three items are still unmatched"
+          },
+          "context": "School Admin, Johar Town branch, where the three carry no action or note.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.reconciliation.signoff",
+              "inputs": {
+                "reconciliation_id": "$request.reconciliation_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns ITEMS_UNEXPLAINED (E4)."
+            }
+          ],
+          "outcome": "Nothing is signed off. Report that three items have no explanation and that Accounts must record what was done about each — never write the notes to get past it (PR-2)."
+        }
+      ]
+    }
+  ]
+}

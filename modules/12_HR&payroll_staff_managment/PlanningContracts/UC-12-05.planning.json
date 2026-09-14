@@ -1,0 +1,1694 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-12-05",
+    "name": "Give an employee an advance on salary and track it through to full repayment",
+    "module": "HR and payroll",
+    "file": "../UseCases/UC-12-05.json",
+    "featureRef": "12.5 Staff advance management"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-12-05-PC-1",
+      "intent": {
+        "name": "staff.advance.request",
+        "summary": "Ask for an advance on salary, with the reason and a proposed repayment schedule. One step, and nobody grants themselves one.",
+        "routesHere": [
+          "request an advance of 40,000 repaid over four months",
+          {
+            "text": "mujhe tankhwah par 40,000 advance chahiye, chaar qiston mein wapas karunga",
+            "lang": "ur-Latn",
+            "gloss": "I need a 40,000 advance on salary, I will repay in four instalments"
+          },
+          {
+            "text": "advance ki darkhwast deni hai",
+            "lang": "ur-Latn",
+            "gloss": "I want to request an advance"
+          },
+          {
+            "text": "gharelu zaroorat hai, advance chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I have a household need, I need an advance"
+          },
+          "apply for an advance against next month's salary"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "advance manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the advance"
+            },
+            "goesTo": "staff.advance.approve — UC-12-05-PC-2",
+            "note": "An employee requests an advance; they do not grant themselves one. The request and the approval are separate acts by separate people (BR-1, E5)."
+          },
+          {
+            "request": {
+              "text": "paisay jari kar do",
+              "lang": "ur-Latn",
+              "gloss": "release the money"
+            },
+            "goesTo": "staff.advance.issue — UC-12-05-PC-4",
+            "note": "The advance is issued through the ordinary payment voucher route once approved (BR-4, E6)."
+          },
+          {
+            "request": {
+              "text": "mera baqaya kitna hai",
+              "lang": "ur-Latn",
+              "gloss": "how much do I still owe"
+            },
+            "goesTo": "Not offered here.",
+            "note": "The employee can see their own outstanding balance at any point (BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.advance.request",
+            "inputs": {
+              "staff_id": "$session.staff_id",
+              "amount": "$request.amount",
+              "reason": "$request.reason",
+              "proposed_schedule": "$request.proposed_schedule",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It records the ask; the amount and the recovery schedule are approved together by somebody else, because an advance approved without a schedule is a loan nobody agreed the terms of (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. A zero amount, a missing reason and an advance already outstanding all arrive as errors.",
+        "atomicity": "One write: the request and the audit entry together or not at all. No money moves and nothing is deducted. The schedule proposed here is a proposal — what is actually deducted is agreed at approval, before the money reaches the employee (BR-3)."
+      },
+      "operations": [
+        {
+          "name": "staff.advance.request",
+          "method": "POST",
+          "path": "/api/v1/staff-advances",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff_id + amount + reason, since the same ask twice is one request",
+          "purpose": "Record an employee's request for an advance on salary.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The requesting employee's own record. An employee requests an advance and does not grant themselves one (BR-1)."
+            },
+            {
+              "name": "amount",
+              "source": "request",
+              "sourceRef": "$request.amount",
+              "required": true,
+              "type": "money",
+              "notes": "Greater than zero (BR-2, E1). What the employee is asking for — never a figure a planner worked out from their salary."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters, written by the employee (E3). What the approver weighs, so it is their own words."
+            },
+            {
+              "name": "proposed_schedule",
+              "source": "request",
+              "sourceRef": "$request.proposed_schedule",
+              "required": false,
+              "type": "object",
+              "notes": "How many instalments and how much each, as the employee proposes. A proposal only — the schedule is agreed at approval (BR-3)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The request as recorded.",
+            "fields": [
+              {
+                "name": "advance_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The employee."
+              },
+              {
+                "name": "amount",
+                "type": "money",
+                "description": "As requested."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Requested. No money moves and nothing is deducted."
+              },
+              {
+                "name": "goes_to",
+                "type": "string",
+                "description": "Who approves it (BR-1)."
+              },
+              {
+                "name": "existing_advance",
+                "type": "object",
+                "description": "An advance already outstanding, where there is one, with its balance (BR-9, E2)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "AMOUNT_NOT_POSITIVE",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The amount is zero or less.",
+              "written": "Nothing.",
+              "notWritten": "No request submitted."
+            },
+            {
+              "code": "NO_REASON",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "No reason is given.",
+              "written": "Nothing.",
+              "notWritten": "No request submitted.",
+              "note": "It is what the approver weighs."
+            },
+            {
+              "code": "ADVANCE_OUTSTANDING",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "An advance is already outstanding.",
+              "written": "Nothing.",
+              "notWritten": "No second request created.",
+              "note": "An employee holds one advance at a time unless the school permits more, so recovery does not stack beyond what a salary can carry (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the amount. It is what the employee needs, and a figure derived from their salary is a planner deciding how much of somebody's pay to commit for months.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the reason. It is what the approver weighs (E3), and a reason written for an employee is the school deciding what their circumstances were.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never approve in the same plan. The request and the approval are separate acts by separate people, and an employee approving their own is refused outright (BR-1, E5).",
+          "derivedFrom": [
+            "BR-1",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report an existing outstanding advance rather than treating it as a formality. An employee holds one at a time so recovery does not stack beyond what a salary can carry (BR-9), and the second ask usually means the first is still being repaid.",
+          "derivedFrom": [
+            "BR-9",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say plainly that the schedule is only proposed. What is deducted each month is agreed at approval, before the money arrives (BR-3), and an employee who assumes their proposal stands will be surprised by the first payslip.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An advance is never deleted. A request that is not granted is rejected with a reason, and both stay on the record (BR-12)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mujhe 40,000 advance chahiye, chaar qiston mein wapas karunga",
+            "lang": "ur-Latn",
+            "gloss": "I need a 40,000 advance, I will repay it in four instalments"
+          },
+          "context": "Teacher, Johar Town branch, signed in, no advance outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.request",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "amount": "40000",
+                "reason": "as the employee wrote it",
+                "proposed_schedule": "four instalments, as proposed",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The amount and the reason are the employee's own (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Requested. Report who approves it, that no money moves yet, and that the four instalments are a proposal — the schedule is agreed at approval, before the money arrives (PR-5)."
+        },
+        {
+          "request": {
+            "text": "advance chahiye, jitna mil sakta hai",
+            "lang": "ur-Latn",
+            "gloss": "I need an advance, whatever I can get"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.request",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "amount": "$request.amount — absent",
+                "reason": "$request.reason — absent",
+                "proposed_schedule": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Neither the amount nor the reason has anything to take it from (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Nothing is requested. Ask how much and what it is for — the amount is repaid out of their own salary over months, and the reason is what the approver weighs."
+        },
+        {
+          "request": {
+            "text": "ek aur advance chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need another advance"
+          },
+          "context": "Teacher, Johar Town branch, with an advance still being recovered.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.request",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "amount": "$request.amount",
+                "reason": "$request.reason",
+                "proposed_schedule": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns ADVANCE_OUTSTANDING (E2)."
+            }
+          ],
+          "outcome": "No second request is created. Report the outstanding balance on the first (PR-4) and that an employee holds one at a time unless the school permits more — two recoveries running together can take more out of a salary than it can carry."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-05-PC-2",
+      "intent": {
+        "name": "staff.advance.approve",
+        "summary": "Approve an advance with its amount and its recovery schedule together. One step, and the schedule is agreed here rather than afterwards.",
+        "routesHere": [
+          "approve 30,000 over three instalments from October",
+          {
+            "text": "30,000 teen qiston mein manzoor kar do, October se recovery shuru",
+            "lang": "ur-Latn",
+            "gloss": "approve 30,000 over three instalments, recovery from October"
+          },
+          {
+            "text": "advance manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the advance"
+          },
+          {
+            "text": "kam raqam manzoor karni hai",
+            "lang": "ur-Latn",
+            "gloss": "we are approving a smaller amount"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "advance rad kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject the advance"
+            },
+            "goesTo": "staff.advance.reject — UC-12-05-PC-3"
+          },
+          {
+            "request": {
+              "text": "schedule baad mein tay kar lenge",
+              "lang": "ur-Latn",
+              "gloss": "we will settle the schedule later"
+            },
+            "goesTo": "Not offered.",
+            "note": "The schedule is agreed at approval, not afterwards. An employee should know what will be deducted before the money reaches them (BR-3, E4)."
+          },
+          {
+            "request": {
+              "text": "paisay de do",
+              "lang": "ur-Latn",
+              "gloss": "hand over the money"
+            },
+            "goesTo": "staff.advance.issue — UC-12-05-PC-4",
+            "note": "The advance is issued through the ordinary payment voucher route (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.advance.approve",
+            "inputs": {
+              "advance_id": "$request.advance_phrase",
+              "amount": "$request.amount",
+              "instalments": "$request.instalments",
+              "first_recovery_month": "$request.first_recovery_month",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and all four figures move together. The amount and the recovery schedule are approved together — an advance approved without a schedule is a loan nobody agreed the terms of (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval with no schedule, and an employee approving their own request, are both refused.",
+        "atomicity": "One write: the approved amount, the instalments, the first recovery month and the audit entry together or not at all. **No money moves** — the advance is issued separately through a payment voucher (BR-4). From the first recovery month, payroll deducts the instalment automatically and the balance falls by it (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "staff.advance.approve",
+          "method": "POST",
+          "path": "/api/v1/staff-advances/{advance_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "advance_id, since an advance carries one approval",
+          "purpose": "Approve an advance with its amount and recovery schedule.",
+          "parameters": [
+            {
+              "name": "advance_id",
+              "source": "resolved",
+              "sourceRef": "$request.advance_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_advance",
+                "fromPhrase": "$request.advance_phrase",
+                "onNoMatch": "Refuse. No advance matches for that employee at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the amount, the state and the outstanding balance."
+              },
+              "notes": "The advance, resolved from the employee and its state."
+            },
+            {
+              "name": "amount",
+              "source": "request",
+              "sourceRef": "$request.amount",
+              "required": true,
+              "type": "money",
+              "notes": "The amount approved, which may differ from the amount requested (A2). The approver's figure."
+            },
+            {
+              "name": "instalments",
+              "source": "request",
+              "sourceRef": "$request.instalments",
+              "required": true,
+              "type": "number",
+              "notes": "How many payroll runs the recovery spans. Greater than zero (BR-2, E4). The monthly recovery derives from the amount and this number — never computed in the plan."
+            },
+            {
+              "name": "first_recovery_month",
+              "source": "request",
+              "sourceRef": "$request.first_recovery_month",
+              "required": true,
+              "type": "monthYear",
+              "notes": "The first payroll month the recovery is taken from. The employee should know it before the money reaches them (BR-3)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The advance as approved.",
+            "fields": [
+              {
+                "name": "advance_id",
+                "type": "string",
+                "description": "The advance."
+              },
+              {
+                "name": "amount_requested",
+                "type": "money",
+                "description": "What the employee asked for."
+              },
+              {
+                "name": "amount",
+                "type": "money",
+                "description": "What was approved (A2)."
+              },
+              {
+                "name": "instalments",
+                "type": "number",
+                "description": "How many runs the recovery spans."
+              },
+              {
+                "name": "monthly_recovery",
+                "type": "money",
+                "description": "The instalment deducted each run, derived from the amount and the instalments."
+              },
+              {
+                "name": "first_recovery_month",
+                "type": "string",
+                "description": "When the deductions start (BR-3)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved. No money has moved."
+              },
+              {
+                "name": "employee_notified",
+                "type": "string",
+                "description": "Delivery status. They should know the schedule before the money arrives (BR-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_SCHEDULE",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "An advance was approved with no recovery schedule.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "An advance approved without a schedule is a loan nobody agreed the terms of (BR-2)."
+            },
+            {
+              "code": "SELF_APPROVAL",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "The employee attempted to approve their own request.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "The request and the approval are separate acts by separate people (BR-1)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the instalments or the first recovery month. They decide how much comes out of a salary each month and when it starts (BR-2, BR-3) — a schedule a planner produced is a deduction nobody agreed.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compute the monthly recovery in the plan. It derives from the approved amount and the instalments, and arithmetic done here is a figure taken from somebody's pay that nobody checked.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where the approved amount differs from what was asked. A2 allows it, and an employee expecting 40,000 who is given 30,000 has to be told before they plan around it.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never approve an employee's own request. E5 is BR-1 working — the whole point is that granting and asking are different people's acts.",
+          "derivedFrom": [
+            "BR-1",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say plainly that no money has moved. The advance is issued separately through the ordinary payment voucher route (BR-4), and an approved advance is not a paid one.",
+          "derivedFrom": [
+            "BR-4",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. An advance approved and not issued stays approved and unissued; one that will not be granted is rejected before approval (BR-12)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "30,000 manzoor kar do, teen qisten, recovery October se",
+            "lang": "ur-Latn",
+            "gloss": "approve 30,000 over three instalments, recovery from October"
+          },
+          "context": "School Admin, Johar Town branch, on a request for 40,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.approve",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "amount": "30000",
+                "instalments": "3",
+                "first_recovery_month": "2026-10",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Every figure is the School Admin's (PR-1). The monthly recovery is left to the API (PR-2)."
+            }
+          ],
+          "outcome": "Approved at 30,000 against 40,000 requested — report the difference plainly (PR-3). Report the monthly instalment and that deductions start in October, and that no money has moved yet (PR-5)."
+        },
+        {
+          "request": {
+            "text": "advance manzoor kar do, qisten baad mein tay kar lenge",
+            "lang": "ur-Latn",
+            "gloss": "approve the advance, we will settle the instalments later"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.approve",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "amount": "$request.amount",
+                "instalments": "$request.instalments — absent",
+                "first_recovery_month": "$request.first_recovery_month — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The schedule is agreed at approval (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is approved. Ask over how many instalments and from which month — the employee should know what will be deducted before the money reaches them, and a schedule settled afterwards is terms they never agreed to."
+        },
+        {
+          "request": {
+            "text": "meri apni darkhwast manzoor kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I will approve my own request"
+          },
+          "context": "School Admin, Johar Town branch, on their own advance request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.approve",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "amount": "$request.amount",
+                "instalments": "$request.instalments",
+                "first_recovery_month": "$request.first_recovery_month",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns SELF_APPROVAL (E5)."
+            }
+          ],
+          "outcome": "Nothing is approved. Report that asking and granting are separate people's acts — an advance is money out of the school, and the person receiving it cannot be the one who agreed to it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-05-PC-3",
+      "intent": {
+        "name": "staff.advance.reject",
+        "summary": "Reject an advance request with the reason. One step.",
+        "routesHere": [
+          "reject this advance request",
+          {
+            "text": "advance ki darkhwast rad kar do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "reject the advance request with the reason"
+          },
+          {
+            "text": "abhi advance nahi de sakte",
+            "lang": "ur-Latn",
+            "gloss": "we cannot give an advance now"
+          },
+          {
+            "text": "darkhwast manzoor nahi",
+            "lang": "ur-Latn",
+            "gloss": "the request is not approved"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "kam raqam manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve a smaller amount"
+            },
+            "goesTo": "staff.advance.approve — UC-12-05-PC-2",
+            "note": "The approved amount may differ from the amount requested (A2). Approving less is not a rejection."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.advance.reject",
+            "inputs": {
+              "advance_id": "$request.advance_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The record of the refusal stays — an advance is never deleted, and a rejected request stays on the record (BR-12)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the rejection, its reason and the audit entry together or not at all. No money moves and nothing is deducted. The employee is told, and the request stays on the record."
+      },
+      "operations": [
+        {
+          "name": "staff.advance.reject",
+          "method": "POST",
+          "path": "/api/v1/staff-advances/{advance_id}/reject",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "advance_id, since an advance carries one decision",
+          "purpose": "Reject an advance request with the reason.",
+          "parameters": [
+            {
+              "name": "advance_id",
+              "source": "resolved",
+              "sourceRef": "$request.advance_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_advance",
+                "fromPhrase": "$request.advance_phrase",
+                "onNoMatch": "Refuse. No advance matches for that employee at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the amount, the state and the outstanding balance."
+              },
+              "notes": "The advance, resolved from the employee and its state."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required. The employee is told it, and they asked for money against a household need."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The rejection.",
+            "fields": [
+              {
+                "name": "advance_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Rejected. Terminal, and it stays on the record (BR-12)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given, and told to the employee."
+              },
+              {
+                "name": "rejected_by",
+                "type": "string",
+                "description": "The approver."
+              },
+              {
+                "name": "employee_notified",
+                "type": "string",
+                "description": "Delivery status."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A rejection was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not rejected."
+            },
+            {
+              "code": "NOT_PENDING",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The advance is already approved, issued or rejected.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. The employee is told it, and they asked for money against something they explained.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never reject where a smaller amount would do. The approved amount may differ from the amount requested (A2), and those are different answers to the employee.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the request stays on the record. An advance is never deleted (BR-12), so the refusal and its reason remain readable.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Rejected is terminal. An employee who needs an advance after all submits a fresh request."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye advance rad kar do — pichla abhi poora wapas nahi hua",
+            "lang": "ur-Latn",
+            "gloss": "reject this advance — the previous one is not fully repaid"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.reject",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "reason": "The previous advance is still being recovered and a second would take more than the salary can carry.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the School Admin's own (PR-1)."
+            }
+          ],
+          "outcome": "Rejected and the employee is told. The request stays on the record with its reason (PR-3)."
+        },
+        {
+          "request": {
+            "text": "40,000 nahi de sakte, 20,000 de sakte hain",
+            "lang": "ur-Latn",
+            "gloss": "we cannot give 40,000, we can give 20,000"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.reject",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No rejection is planned. Approving a smaller amount is the act being described (PR-2)."
+            }
+          ],
+          "outcome": "Report that the approval takes its own amount — 20,000 approved with a schedule is a yes with a different figure, and rejecting would tell the employee they are getting nothing."
+        },
+        {
+          "request": {
+            "text": "darkhwast rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "reject the request"
+          },
+          "context": "School Admin, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.reject",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the employee should be told — they asked for money against a stated need, and a refusal with no explanation gives them nothing to work with."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-05-PC-4",
+      "intent": {
+        "name": "staff.advance.issue",
+        "summary": "Issue an approved advance through the ordinary payment voucher route. Accounts, one step, and the money leaves.",
+        "routesHere": [
+          "issue this approved advance",
+          {
+            "text": "manzoor shuda advance jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "issue the approved advance"
+          },
+          {
+            "text": "paisay ada kar do",
+            "lang": "ur-Latn",
+            "gloss": "pay the money out"
+          },
+          {
+            "text": "voucher bana kar advance de do",
+            "lang": "ur-Latn",
+            "gloss": "raise the voucher and give the advance"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "pehle manzoori le lo",
+              "lang": "ur-Latn",
+              "gloss": "get the approval first"
+            },
+            "goesTo": "staff.advance.approve — UC-12-05-PC-2",
+            "note": "The advance is refused if issued before it is approved (E6)."
+          },
+          {
+            "request": {
+              "text": "alag se paisay nikal lo",
+              "lang": "ur-Latn",
+              "gloss": "take the money out separately"
+            },
+            "goesTo": "Not offered.",
+            "note": "No separate mechanism exists for money leaving the school. It goes through the ordinary payment voucher route (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.advance.issue",
+            "inputs": {
+              "advance_id": "$request.advance_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it moves money. The advance is issued through the ordinary payment voucher route, so it appears in the books like any other payment out (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. Issuing before approval is refused; a voucher that cannot be raised issues nothing and leaves the advance approved and unissued.",
+        "atomicity": "One write, atomic in itself: the payment voucher and the issued advance together or not at all. Where the voucher cannot be raised, nothing is issued and the advance stays approved and unissued (E9) — there is no state where the money has gone but the book does not show it. Recovery begins in the first recovery month agreed at approval (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "staff.advance.issue",
+          "method": "POST",
+          "path": "/api/v1/staff-advances/{advance_id}/issue",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "advance_id, since an advance is issued once and a repeat must not pay twice",
+          "purpose": "Issue the approved advance through a payment voucher.",
+          "parameters": [
+            {
+              "name": "advance_id",
+              "source": "resolved",
+              "sourceRef": "$request.advance_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_advance",
+                "fromPhrase": "$request.advance_phrase",
+                "onNoMatch": "Refuse. No advance matches for that employee at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the amount, the state and the outstanding balance."
+              },
+              "notes": "The advance, resolved from the employee and its state."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The issue.",
+            "fields": [
+              {
+                "name": "advance_id",
+                "type": "string",
+                "description": "The advance."
+              },
+              {
+                "name": "amount",
+                "type": "money",
+                "description": "Issued."
+              },
+              {
+                "name": "voucher_number",
+                "type": "string",
+                "description": "The payment voucher it went out through (BR-4)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Issued, then Recovering from the first recovery month."
+              },
+              {
+                "name": "first_recovery_month",
+                "type": "string",
+                "description": "When the deductions start (BR-3)."
+              },
+              {
+                "name": "monthly_recovery",
+                "type": "money",
+                "description": "What comes out of each run (BR-5)."
+              },
+              {
+                "name": "outstanding",
+                "type": "money",
+                "description": "What is still to repay."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_APPROVED",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The advance was issued before it was approved.",
+              "written": "Nothing.",
+              "notWritten": "Nothing issued."
+            },
+            {
+              "code": "VOUCHER_FAILED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The payment voucher cannot be raised.",
+              "written": "Nothing.",
+              "notWritten": "Nothing issued; the advance stays approved and unissued.",
+              "note": "No money leaves the school outside the voucher route (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never issue an unapproved advance. E6 exists because approval is what fixes both the amount and the schedule (BR-2), and money out on an unapproved advance has terms nobody agreed.",
+          "derivedFrom": [
+            "BR-2",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never retry the issue automatically after a voucher failure. Nothing was issued (E9), and a retry nobody asked for is a second attempt to pay out.",
+          "derivedFrom": [
+            "BR-4",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the schedule again as the money goes. The employee is about to have an instalment taken from a salary they are counting on, and the first recovery month is the thing they most need to know (BR-3, BR-5).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never move money outside the voucher route. It appears in the books like any other payment out, and no separate mechanism exists (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An issue is not reversed. An advance issued in error is recovered through the schedule, by direct repayment, or from the final settlement on exit (BR-6, BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "manzoor shuda advance jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "issue the approved advance"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.issue",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Issued through a payment voucher. Report the voucher number, the monthly instalment and the first recovery month (PR-3) — the employee's next payslips are about to be smaller."
+        },
+        {
+          "request": {
+            "text": "paisay de do, manzoori kal ho jayegi",
+            "lang": "ur-Latn",
+            "gloss": "give the money now, the approval will come tomorrow"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.issue",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged, with no approval chained (PR-1). The API returns NOT_APPROVED (E6)."
+            }
+          ],
+          "outcome": "Nothing is issued. Report that approval fixes both the amount and the recovery schedule — money out before it would leave the employee repaying terms nobody had agreed."
+        },
+        {
+          "request": {
+            "text": "voucher nahi bana, dobara koshish karo",
+            "lang": "ur-Latn",
+            "gloss": "the voucher failed, try again"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.issue",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted because Accounts asked deliberately (PR-2). Nothing was issued the first time."
+            }
+          ],
+          "outcome": "Issued if the voucher raises this time. Report that the earlier attempt paid nothing — this is the first payment, not a second."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-05-PC-5",
+      "intent": {
+        "name": "staff.advance.repayment.record",
+        "summary": "Record money the employee repaid outside payroll. One step, and it reduces the balance the same way a deduction does.",
+        "routesHere": [
+          "record 10,000 repaid directly against this advance",
+          {
+            "text": "mulazim ne 10,000 seedhe wapas kiye hain, darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "the employee has repaid 10,000 directly, record it"
+          },
+          {
+            "text": "poora baqaya ek saath wapas kar diya hai",
+            "lang": "ur-Latn",
+            "gloss": "they have repaid the whole balance at once"
+          },
+          {
+            "text": "advance ki wapsi darj karo",
+            "lang": "ur-Latn",
+            "gloss": "record a repayment against the advance"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "qist payroll se kaat lo",
+              "lang": "ur-Latn",
+              "gloss": "take the instalment from payroll"
+            },
+            "goesTo": "Not offered.",
+            "note": "Recovery is deducted from subsequent payroll runs automatically. The instalment due is taken in the run and the balance falls by it (BR-5)."
+          },
+          {
+            "request": {
+              "text": "baqi baqaya maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "write off the remaining balance"
+            },
+            "goesTo": "Not offered here.",
+            "note": "An advance outstanding at exit is recovered from the final settlement, or written off with approval (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.advance.repayment.record",
+            "inputs": {
+              "advance_id": "$request.advance_phrase",
+              "amount": "$request.amount",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. An employee may repay directly instead of, or as well as, having it deducted, and a direct repayment reduces the balance in the same way (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report, with one exception: a repayment beyond the outstanding balance is capped at what is left rather than refused, and the capping is reported.",
+        "atomicity": "One write: the repayment and the reduced balance together or not at all. Where it settles the advance, recovery stops — a run never takes an instalment against one already repaid (BR-7). The repayment is recorded alongside the payroll recoveries, so the history of what came from where stays readable (BR-6)."
+      },
+      "operations": [
+        {
+          "name": "staff.advance.repayment.record",
+          "method": "POST",
+          "path": "/api/v1/staff-advances/{advance_id}/repayments",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "advance_id + amount + date, since the same repayment recorded twice would clear a balance that is still owed",
+          "purpose": "Record a direct repayment against an advance.",
+          "parameters": [
+            {
+              "name": "advance_id",
+              "source": "resolved",
+              "sourceRef": "$request.advance_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_advance",
+                "fromPhrase": "$request.advance_phrase",
+                "onNoMatch": "Refuse. No advance matches for that employee at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the amount, the state and the outstanding balance."
+              },
+              "notes": "The advance, resolved from the employee and its state."
+            },
+            {
+              "name": "amount",
+              "source": "request",
+              "sourceRef": "$request.amount",
+              "required": true,
+              "type": "money",
+              "notes": "What the employee actually handed over (BR-6). An observed figure — never derived from the balance, and never assumed to be the full amount because they said \"the rest\"."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The repayment.",
+            "fields": [
+              {
+                "name": "advance_id",
+                "type": "string",
+                "description": "The advance."
+              },
+              {
+                "name": "amount",
+                "type": "money",
+                "description": "Recorded, capped at the outstanding balance where it exceeded it (BR-8, E8)."
+              },
+              {
+                "name": "capped",
+                "type": "boolean",
+                "description": "True where less was taken than offered."
+              },
+              {
+                "name": "recovered_to_date",
+                "type": "money",
+                "description": "The total from payroll and direct repayments together (BR-5, BR-6)."
+              },
+              {
+                "name": "outstanding",
+                "type": "money",
+                "description": "What is still to repay (BR-7)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Recovering, or Settled where nothing is left."
+              },
+              {
+                "name": "recovery_stopped",
+                "type": "boolean",
+                "description": "True where the advance is settled. A run never takes an instalment against one already repaid (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ADVANCE_SETTLED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "A repayment was recorded against a settled advance.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "There is nothing left to repay (BR-7)."
+            },
+            {
+              "code": "EXCEEDS_BALANCE",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "The repayment exceeds the outstanding balance.",
+              "written": "The balance is cleared.",
+              "notWritten": "Nothing beyond it is taken.",
+              "treatedAsSuccess": true,
+              "note": "Capped rather than refused (BR-8). Report the difference — the employee handed over more than they owed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the amount. It is money the employee actually handed over, and a figure taken from the balance records a repayment that may not have happened.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never read \"the rest\" as the outstanding balance. The employee may be repaying part of it, and recording the whole balance clears a debt that is still owed.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where the repayment was capped. E8 is a success, not a refusal, and an employee who handed over more than they owed is owed the difference back (BR-8).",
+          "derivedFrom": [
+            "BR-8",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the outstanding balance and whether recovery has stopped. It is what the employee came to find out, and a settled advance stops being deducted from their salary (BR-7, BR-11).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never record a payroll recovery here. Those are taken automatically in the run (BR-5), and recording one by hand would deduct the same instalment twice.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A repayment is not withdrawn. A wrong figure is corrected as its own record, because the balance and the history both have to stay readable (BR-12)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mulazim ne 10,000 seedhe wapas kiye hain",
+            "lang": "ur-Latn",
+            "gloss": "the employee has repaid 10,000 directly"
+          },
+          "context": "Accounts, Johar Town branch, balance 22,500.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.repayment.record",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "amount": "10000",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The figure is what was handed over (PR-1)."
+            }
+          ],
+          "outcome": "Recorded. Report the recovered total and the 12,500 still outstanding (PR-4), and that the monthly instalment continues from payroll alongside this."
+        },
+        {
+          "request": {
+            "text": "baqi jitna baqaya hai wo sab wapas kar diya hai",
+            "lang": "ur-Latn",
+            "gloss": "they have repaid whatever was left"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.repayment.record",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "amount": "$request.amount — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The balance is not used as the amount (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report the outstanding balance and ask how much was actually handed over — recording the balance because somebody said \"the rest\" clears a debt that may still be partly owed."
+        },
+        {
+          "request": {
+            "text": "25,000 wapas kar diye hain",
+            "lang": "ur-Latn",
+            "gloss": "they have repaid 25,000"
+          },
+          "context": "Accounts, Johar Town branch, where 22,500 is outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.repayment.record",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "amount": "25000",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as stated. The API caps it at 22,500 and returns EXCEEDS_BALANCE (E8) on the success path."
+            }
+          ],
+          "outcome": "The advance is settled and recovery stops (PR-4). Report that only 22,500 was taken against it and that the employee handed over 2,500 more than they owed (PR-3) — that difference is theirs and somebody has to give it back."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-05-PC-6",
+      "intent": {
+        "name": "staff.advance.settlement.recover",
+        "summary": "Recover an outstanding advance from an exiting employee's final settlement. One step, and it does not simply lapse.",
+        "routesHere": [
+          "recover the outstanding advance from his final settlement",
+          {
+            "text": "jaate hue mulazim ka advance final settlement se kaat lo",
+            "lang": "ur-Latn",
+            "gloss": "recover the leaving employee's advance from the final settlement"
+          },
+          {
+            "text": "baqaya advance settlement mein adjust kar do",
+            "lang": "ur-Latn",
+            "gloss": "adjust the outstanding advance in the settlement"
+          },
+          {
+            "text": "mulazim ja raha hai, advance ka kya karein",
+            "lang": "ur-Latn",
+            "gloss": "the employee is leaving, what happens to the advance"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "baqaya maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "write the balance off"
+            },
+            "goesTo": "Not offered here.",
+            "note": "A write-off requires approval (BR-10). This recovers from the settlement."
+          },
+          {
+            "request": {
+              "text": "chhorh do, mulazim ja raha hai",
+              "lang": "ur-Latn",
+              "gloss": "leave it, the employee is going"
+            },
+            "goesTo": "Not offered.",
+            "note": "An advance outstanding when an employee exits is recovered from the final settlement, or written off with approval. It does not simply lapse (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.advance.settlement.recover",
+            "inputs": {
+              "advance_id": "$request.advance_phrase",
+              "settlement_id": "$request.settlement_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The outstanding balance is taken from the final settlement rather than lapsing (BR-10, A5)."
+          }
+        ],
+        "onFailure": "Stop and report, with one exception: where the settlement is smaller than the balance, what it can carry is recovered and the remainder is reported rather than silently dropped.",
+        "atomicity": "One write: the recovery and the reduced balance together or not at all. What the settlement cannot cover stays outstanding and is a decision for somebody — written off with approval, or pursued (BR-10). It does not disappear because the employee has left."
+      },
+      "operations": [
+        {
+          "name": "staff.advance.settlement.recover",
+          "method": "POST",
+          "path": "/api/v1/staff-advances/{advance_id}/settlement-recovery",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "advance_id + settlement_id, since a settlement recovers once",
+          "purpose": "Recover an outstanding advance balance from an exiting employee's final settlement.",
+          "parameters": [
+            {
+              "name": "advance_id",
+              "source": "resolved",
+              "sourceRef": "$request.advance_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_advance",
+                "fromPhrase": "$request.advance_phrase",
+                "onNoMatch": "Refuse. No advance matches for that employee at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the amount, the state and the outstanding balance."
+              },
+              "notes": "The advance, resolved from the employee and its state."
+            },
+            {
+              "name": "settlement_id",
+              "source": "resolved",
+              "sourceRef": "$request.settlement_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "final_settlement",
+                "fromPhrase": "$request.settlement_phrase",
+                "onNoMatch": "Refuse. No final settlement matches for that employee.",
+                "onAmbiguous": "Ask, naming the candidates with the employee and their leaving date."
+              },
+              "notes": "The exiting employee's final settlement."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The recovery.",
+            "fields": [
+              {
+                "name": "advance_id",
+                "type": "string",
+                "description": "The advance."
+              },
+              {
+                "name": "outstanding_before",
+                "type": "money",
+                "description": "What was owed."
+              },
+              {
+                "name": "recovered",
+                "type": "money",
+                "description": "What the settlement carried."
+              },
+              {
+                "name": "outstanding_after",
+                "type": "money",
+                "description": "What is still owed. Written off with approval or pursued — it does not lapse (BR-10)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Settled where nothing is left; still Recovering otherwise."
+              },
+              {
+                "name": "settlement_remaining",
+                "type": "money",
+                "description": "What the employee is left with after the recovery."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ADVANCE_SETTLED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The advance is already settled.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recovered."
+            },
+            {
+              "code": "SETTLEMENT_TOO_SMALL",
+              "mapsTo": "E10",
+              "httpStatus": 200,
+              "meaning": "The settlement is smaller than the outstanding balance.",
+              "written": "What it can carry is recovered.",
+              "notWritten": "The remainder stays outstanding.",
+              "treatedAsSuccess": true,
+              "note": "Not a refusal. Report the remainder — it is written off with approval or pursued, and it does not lapse (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write off the remainder. What the settlement cannot cover stays outstanding until somebody with the authority writes it off (BR-10) — a balance quietly cleared is money the school decided to lose without deciding.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the remainder plainly. An employee has left and still owes money, and it is invisible from a settlement that looks complete.",
+          "derivedFrom": [
+            "BR-10",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report what the settlement leaves the employee with. They are leaving and counting on it, and the recovery comes out of the same figure.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A settlement recovery is not reversed. A remaining balance is written off with approval or pursued (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "jaate hue mulazim ka baqaya advance settlement se kaat lo",
+            "lang": "ur-Latn",
+            "gloss": "recover the leaving employee's outstanding advance from the settlement"
+          },
+          "context": "Accounts, Johar Town branch, balance 15,000, settlement 48,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.settlement.recover",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "settlement_id": "$request.settlement_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Recovered in full and the advance is settled. Report what the settlement leaves the employee with (PR-3) — they are leaving and that figure is what they take."
+        },
+        {
+          "request": {
+            "text": "advance settlement se kaat lo",
+            "lang": "ur-Latn",
+            "gloss": "recover the advance from the settlement"
+          },
+          "context": "Accounts, Johar Town branch, balance 30,000, settlement 18,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.settlement.recover",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "settlement_id": "$request.settlement_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns SETTLEMENT_TOO_SMALL (E10) on the success path."
+            }
+          ],
+          "outcome": "18,000 is recovered and 12,000 stays outstanding. Report the remainder plainly (PR-2) — the employee has left owing it, and it is written off with approval or pursued rather than disappearing with them."
+        },
+        {
+          "request": {
+            "text": "mulazim ja raha hai, baqi advance chhorh do",
+            "lang": "ur-Latn",
+            "gloss": "the employee is leaving, drop the rest of the advance"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.advance.settlement.recover",
+              "inputs": {
+                "advance_id": "$request.advance_phrase",
+                "settlement_id": "$request.settlement_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The recovery is planned; nothing is written off (PR-1)."
+            }
+          ],
+          "outcome": "What the settlement carries is recovered and the remainder is reported. Report that writing off the rest needs approval — it is money the school is choosing to lose, and that is a decision somebody signs rather than a balance left to lapse."
+        }
+      ]
+    }
+  ]
+}

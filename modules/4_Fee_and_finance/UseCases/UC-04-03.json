@@ -1,0 +1,1102 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-04-03",
+  "featureRef": "4.3 Online / digital fee payment",
+  "name": "Pay a fee online through the gateway from the parent app",
+  "module": "Fee",
+  "alsoAffectsModules": [
+    "Finance",
+    "Integrations"
+  ],
+  "priority": "MVP",
+  "priorityReason": "The only route that does not need a family to travel or an office to key anything.",
+  "goal": {
+    "actor": "a guardian",
+    "capability": "to pay my child's outstanding fee from the app",
+    "outcome": "the bill is settled without a trip to the bank, and the school sees it immediately"
+  },
+  "primaryActor": "Parent / Guardian",
+  "secondaryActors": [
+    {
+      "actor": "Accounts",
+      "involvement": "Sees the payment recorded and reconciles the settlement later."
+    },
+    {
+      "actor": "School Admin",
+      "involvement": "Reviews the payment and attempt log."
+    },
+    {
+      "actor": "Student",
+      "involvement": "May pay their own outstanding invoice where the school permits it."
+    }
+  ],
+  "externalActors": [
+    {
+      "actor": "Payment gateway",
+      "involvement": "Processes the transaction and returns whether it succeeded or failed. Holds no login."
+    }
+  ],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "inbound",
+        "description": "The gateway returns its result, which decides whether a payment is recorded.",
+        "source": "Payment gateway callback"
+      },
+      {
+        "type": "scheduled",
+        "description": "An attempt left pending past the configured window is queried against the gateway and resolved (BR-8).",
+        "source": "Fee scheduler"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An issued invoice exists with an outstanding balance.",
+      "establishedBy": {
+        "id": "UC-04-02",
+        "name": "Issuing fee invoices at different scopes",
+        "link": "UC-04-02.json"
+      }
+    },
+    {
+      "condition": "The guardian is signed in to the parent app and the invoice belongs to their own child.",
+      "establishedBy": {
+        "id": "UC-15-01",
+        "name": "Parent and student portal",
+        "link": "UC-15-01.json"
+      }
+    },
+    {
+      "condition": "A payment gateway is configured and live for the branch. Setting it up is not part of this use case.",
+      "establishedBy": {
+        "id": "UC-26-02",
+        "name": "Payment gateway integration",
+        "link": "UC-26-02.json"
+      }
+    },
+    {
+      "condition": "The gateway is reachable. Where it is not, the invoice simply stays payable by the other routes."
+    }
+  ],
+  "postConditions": [
+    "On success the payment is recorded against the invoice and a numbered receipt has been issued, through the same path as any other payment.",
+    "The invoice reads Paid or Partially paid, and has left overdue tracking where it is settled.",
+    "The gateway's transaction reference is held against the payment, which is what reconciliation matches on later.",
+    "On failure the invoice is untouched and still outstanding, and the attempt is logged with the gateway's reason.",
+    "A guardian is never charged without the invoice being credited, and the invoice is never credited without the gateway confirming.",
+    "The settlement has not yet been reconciled against the bank. Money confirmed by a gateway is not the same as money in the school's account.",
+    "The attempt log holds every try, successful or not, so a family saying they paid can be checked."
+  ],
+  "screens": [
+    {
+      "name": "My children's fees",
+      "route": "/portal/fees",
+      "sidebar": "Portal",
+      "columns": [
+        "Child",
+        "Period",
+        "Amount",
+        "Due date",
+        "Status"
+      ],
+      "defaultSort": "Due date, soonest first",
+      "filters": [
+        "Child",
+        "Status"
+      ],
+      "actions": [
+        "Open invoice",
+        "Pay online",
+        "Print challan"
+      ],
+      "visibleTo": [
+        "Parent / Guardian",
+        "Student"
+      ]
+    },
+    {
+      "name": "Pay invoice",
+      "route": "/portal/fees/{invoiceId}/pay",
+      "sidebar": "Portal",
+      "columns": [
+        "Line",
+        "Description",
+        "Amount"
+      ],
+      "actions": [
+        "Select payment method",
+        "Proceed to gateway",
+        "Cancel"
+      ],
+      "visibleTo": [
+        "Parent / Guardian",
+        "Student"
+      ]
+    },
+    {
+      "name": "Payment result",
+      "route": "/portal/fees/{invoiceId}/result",
+      "sidebar": "Portal",
+      "actions": [
+        "View receipt",
+        "Try again",
+        "Return to fees"
+      ],
+      "visibleTo": [
+        "Parent / Guardian",
+        "Student"
+      ]
+    },
+    {
+      "name": "Online payment attempts",
+      "route": "/fee/payments/attempts",
+      "sidebar": "Fee",
+      "columns": [
+        "Attempt",
+        "Date",
+        "Student",
+        "Invoice",
+        "Amount",
+        "Method",
+        "Gateway reference",
+        "Outcome"
+      ],
+      "defaultSort": "Date, newest first",
+      "filters": [
+        "Outcome",
+        "Date range",
+        "Method"
+      ],
+      "actions": [
+        "Open",
+        "Query gateway",
+        "Reconcile"
+      ],
+      "visibleTo": [
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Invoice",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "An issued invoice of the guardian's own child, with an outstanding balance.",
+      "example": "INV/LHR/26-27/004192",
+      "lookupSource": "The guardian's children's outstanding invoices"
+    },
+    {
+      "name": "Amount to pay",
+      "type": "money",
+      "required": "yes",
+      "validation": "Defaults to the full outstanding balance. A part payment is permitted where the school allows it (BR-3).",
+      "default": "The outstanding balance",
+      "example": "PKR 4,000"
+    },
+    {
+      "name": "Payment method",
+      "type": "enum",
+      "required": "yes",
+      "validation": "The methods the configured gateway offers.",
+      "example": "Card",
+      "enumValues": [
+        "Card",
+        "Bank transfer",
+        "Wallet"
+      ]
+    },
+    {
+      "name": "Attempt reference",
+      "type": "generated",
+      "required": "no",
+      "validation": "Issued before the guardian leaves for the gateway, so an attempt exists even if they never come back (BR-5).",
+      "example": "ATT-2026-0918-0447"
+    },
+    {
+      "name": "Gateway transaction reference",
+      "type": "generated",
+      "required": "no",
+      "validation": "Returned by the gateway. Held against the payment and matched on at reconciliation (BR-6).",
+      "example": "PG-88401223"
+    },
+    {
+      "name": "Outcome",
+      "type": "generated",
+      "required": "no",
+      "validation": "What the gateway returned.",
+      "default": "Pending",
+      "example": "Succeeded",
+      "enumValues": [
+        "Pending",
+        "Succeeded",
+        "Failed",
+        "Cancelled",
+        "Expired"
+      ]
+    },
+    {
+      "name": "Failure reason",
+      "type": "generated",
+      "required": "no",
+      "validation": "As the gateway gave it, shown to the guardian in plain terms (BR-7).",
+      "example": "The card was declined by the issuing bank."
+    },
+    {
+      "name": "Attempted on",
+      "type": "generated",
+      "required": "no",
+      "example": "18-09-2026 20:14"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Payment attempt",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One per try, successful or not. Never deleted (BR-9)."
+    },
+    {
+      "entity": "Invoice",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Read for the outstanding balance; its status moves only on a confirmed success."
+    },
+    {
+      "entity": "Payment",
+      "operations": [
+        "create"
+      ],
+      "notes": "Created on success through the ordinary payment path, not by a separate route (BR-2)."
+    },
+    {
+      "entity": "Receipt",
+      "operations": [
+        "create"
+      ],
+      "notes": "Issued on success by the same path as any other payment."
+    },
+    {
+      "entity": "Student ledger",
+      "operations": [
+        "create"
+      ],
+      "notes": "A credit on success."
+    },
+    {
+      "entity": "General ledger voucher",
+      "operations": [
+        "create"
+      ],
+      "notes": "The double-entry posting on success."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Every attempt and every outcome."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Parent / Guardian",
+      "actions": [
+        "view",
+        "create"
+      ],
+      "rowScope": "Own children's outstanding invoices only.",
+      "notes": "Initiates the payment. Cannot see any other family's invoice or attempt."
+    },
+    {
+      "actor": "Student",
+      "actions": [
+        "view",
+        "create"
+      ],
+      "rowScope": "Own outstanding invoices only.",
+      "notes": "May pay where the school permits it."
+    },
+    {
+      "actor": "Accounts",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Sees payments and attempts, and reconciles the settlement later. Does not initiate an online payment on a family's behalf (BR-10)."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Reviews the payment and attempt log."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches."
+    },
+    {
+      "actor": "Staff, Coordinator, Teacher",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "An invoice is marked paid only on a confirmation the gateway returned. Nothing is credited because the guardian says they paid, or because the browser came back."
+    },
+    {
+      "id": "BR-2",
+      "rule": "A successful payment is recorded through the ordinary payment path, so an online payment produces the same numbered receipt and the same ledger postings as a payment made at the counter."
+    },
+    {
+      "id": "BR-3",
+      "rule": "The amount defaults to the full outstanding balance. Where a part payment is permitted, the invoice reads Partially paid and the balance stays outstanding."
+    },
+    {
+      "id": "BR-4",
+      "rule": "An amount greater than the outstanding balance is refused before the guardian reaches the gateway. It is easier to refuse than to refund."
+    },
+    {
+      "id": "BR-5",
+      "rule": "An attempt reference is issued before the guardian leaves for the gateway. Without it a payment made by a family who never returns to the app cannot be tied to an invoice."
+    },
+    {
+      "id": "BR-6",
+      "rule": "The gateway's transaction reference is held against the payment. It is what reconciliation matches on when the settlement reaches the bank."
+    },
+    {
+      "id": "BR-7",
+      "rule": "A failure is shown to the guardian in the gateway's own terms, so they know whether to try again or use another card. The invoice stays outstanding and is untouched."
+    },
+    {
+      "id": "BR-8",
+      "rule": "An attempt left pending past the configured window is queried against the gateway and resolved. A payment is never left in limbo because a callback was lost."
+    },
+    {
+      "id": "BR-9",
+      "rule": "Every attempt is logged, successful or not, so a family saying they paid can be checked against what actually happened."
+    },
+    {
+      "id": "BR-10",
+      "rule": "Accounts do not initiate an online payment on a family's behalf. The guardian's own act is what authorises the charge."
+    },
+    {
+      "id": "BR-11",
+      "rule": "A repeated confirmation for the same transaction reference records the payment once. A gateway retrying its callback must not credit an invoice twice."
+    },
+    {
+      "id": "BR-12",
+      "rule": "Confirmation by the gateway is not the same as money in the school's account. The settlement is reconciled separately, and until then the payment is recorded but unreconciled."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Payment attempt",
+      "states": [
+        "Initiated",
+        "Pending",
+        "Succeeded",
+        "Failed",
+        "Cancelled",
+        "Expired"
+      ],
+      "initial": "Initiated",
+      "terminal": [
+        "Succeeded",
+        "Failed",
+        "Cancelled",
+        "Expired"
+      ],
+      "transitions": [
+        {
+          "from": "Initiated",
+          "to": "Pending",
+          "triggeredBy": "System",
+          "condition": "The guardian is directed to the gateway."
+        },
+        {
+          "from": "Pending",
+          "to": "Succeeded",
+          "triggeredBy": "Payment gateway",
+          "condition": "The gateway confirms the transaction (BR-1)."
+        },
+        {
+          "from": "Pending",
+          "to": "Failed",
+          "triggeredBy": "Payment gateway",
+          "condition": "The gateway declines the transaction."
+        },
+        {
+          "from": "Pending",
+          "to": "Cancelled",
+          "triggeredBy": "Parent / Guardian",
+          "condition": "The guardian abandons the payment."
+        },
+        {
+          "from": "Pending",
+          "to": "Expired",
+          "triggeredBy": "System",
+          "condition": "No result within the configured window, and the query finds no transaction (BR-8)."
+        },
+        {
+          "from": "Expired",
+          "to": "Succeeded",
+          "triggeredBy": "System",
+          "condition": "A later query finds the transaction did succeed after all."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Parent / Guardian",
+      "navigation": "Login → Portal → My children's fees",
+      "userAction": "Opens the outstanding invoice for their child.",
+      "function": "openInvoiceForPayment(invoiceId)",
+      "systemResponse": "Shows the invoice and its outstanding balance, for their own child only.",
+      "rules": []
+    },
+    {
+      "step": 2,
+      "actor": "Parent / Guardian",
+      "navigation": "My children's fees → Pay invoice → Payment method",
+      "userAction": "Chooses a payment method.",
+      "function": "selectPaymentMethod(invoiceId, method, amount)",
+      "systemResponse": "Checks the amount is not more than the outstanding balance before the guardian goes anywhere.",
+      "rules": [
+        "BR-3",
+        "BR-4"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "System",
+      "navigation": "Pay invoice → Payment gateway",
+      "userAction": "—",
+      "function": "initiatePaymentAttempt(invoiceId, amount, method)",
+      "systemResponse": "Creates the attempt with its reference and directs the guardian to the gateway.",
+      "rules": [
+        "BR-5"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "Parent / Guardian",
+      "navigation": "Payment gateway",
+      "userAction": "Completes the payment on the gateway.",
+      "function": "—",
+      "systemResponse": "—",
+      "rules": []
+    },
+    {
+      "step": 5,
+      "actor": "Payment gateway",
+      "navigation": "Gateway → Payment result",
+      "userAction": "—",
+      "function": "receiveGatewayResult(attemptReference, outcome, transactionReference)",
+      "systemResponse": "Returns whether the transaction succeeded or failed, with its transaction reference.",
+      "rules": [
+        "BR-1"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "recordPayment(invoiceId, 'Online gateway', amount, paymentDate, transactionReference)",
+      "systemResponse": "On success, records the payment through the ordinary payment path, which issues the numbered receipt and posts to both ledgers.",
+      "rules": [
+        "BR-2",
+        "BR-6",
+        "BR-11"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "System",
+      "navigation": "Payment result → My children's fees",
+      "userAction": "—",
+      "function": "showPaymentResult(attemptReference)",
+      "systemResponse": "Shows the guardian the receipt on success, or the gateway's reason on failure with the invoice still outstanding.",
+      "rules": [
+        "BR-7"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 5,
+      "condition": "The gateway declines the transaction",
+      "actor": "Parent / Guardian",
+      "navigation": "Gateway → Payment result → My children's fees",
+      "behaviour": "The invoice is untouched and still outstanding. The guardian is shown the gateway's reason so they know whether to try again or use another method, and the attempt is logged (BR-7, BR-9).",
+      "function": "recordAttemptOutcome(attemptReference, 'Failed', reason)",
+      "resumesAtStep": 7
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 4,
+      "condition": "The guardian abandons the payment at the gateway",
+      "actor": "Parent / Guardian",
+      "navigation": "Gateway → Portal → My children's fees",
+      "behaviour": "The attempt is closed as cancelled, the invoice is untouched, and no charge was made.",
+      "function": "recordAttemptOutcome(attemptReference, 'Cancelled', null)",
+      "resumesAtStep": 7
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 5,
+      "condition": "The guardian pays but never returns to the app",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "The gateway's callback resolves the attempt, and the attempt reference issued at step 3 ties the payment to the invoice. The receipt is sent to the guardian without their coming back (BR-5).",
+      "function": "receiveGatewayResult(attemptReference, outcome, transactionReference)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 5,
+      "condition": "No result arrives within the configured window",
+      "actor": "System",
+      "navigation": "Fee → Online payment attempts → Query gateway",
+      "behaviour": "The attempt is queried against the gateway and resolved either way, so a payment is never left in limbo because a callback was lost (BR-8).",
+      "function": "queryGatewayForAttempt(attemptReference)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 6,
+      "condition": "The gateway sends the same confirmation twice",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "The transaction reference is recognised and the payment is recorded once. An invoice is never credited twice for one transaction (BR-11).",
+      "function": "recordPayment(invoiceId, 'Online gateway', amount, paymentDate, transactionReference)",
+      "resumesAtStep": 7
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 2,
+      "condition": "The guardian pays part of the balance",
+      "actor": "Parent / Guardian",
+      "navigation": "Pay invoice → Amount",
+      "behaviour": "The invoice reads Partially paid afterwards and the balance stays outstanding and payable by any route (BR-3).",
+      "function": "selectPaymentMethod(invoiceId, method, partialAmount)",
+      "resumesAtStep": 3
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 2,
+      "condition": "The amount exceeds the outstanding balance",
+      "systemResponse": "The guardian is not sent to the gateway (BR-4).",
+      "messageShown": "The outstanding balance is PKR 4,000. Enter that or less.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E2",
+      "atStep": 1,
+      "condition": "The invoice has already been paid",
+      "systemResponse": "No payment can be started.",
+      "messageShown": "This fee has already been paid.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E3",
+      "atStep": 1,
+      "condition": "The invoice belongs to a child who is not theirs",
+      "systemResponse": "It does not open, per role-based-access.",
+      "messageShown": "You do not have permission to view this record.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 3,
+      "condition": "The gateway is unreachable",
+      "systemResponse": "No attempt is created and the invoice is untouched. It stays payable at the bank or the office.",
+      "messageShown": "Online payment is unavailable at the moment. You can pay at the bank using the challan, or at the school office.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 5,
+      "condition": "The gateway returns a result for an unknown attempt reference",
+      "systemResponse": "Nothing is credited. The result is logged for Accounts to investigate.",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E6",
+      "atStep": 6,
+      "condition": "The ledger posting fails after the gateway confirmed",
+      "systemResponse": "The payment is not lost. The attempt stays Succeeded and unposted, and is flagged to Accounts, because the family has been charged.",
+      "messageShown": "Your payment went through and the school has been notified. Your receipt will follow shortly.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 5,
+      "condition": "The gateway confirms an amount different from the one requested",
+      "systemResponse": "The confirmed amount is recorded and the difference is flagged to Accounts rather than being assumed away.",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E8",
+      "atStep": 2,
+      "condition": "The branch has no gateway configured",
+      "systemResponse": "The pay option is not offered at all.",
+      "messageShown": "Online payment is not available. Pay at the bank using the challan, or at the school office.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Payment succeeded",
+      "recipient": "Parent / Guardian",
+      "channels": [
+        "whatsapp",
+        "sms"
+      ],
+      "template": "FEE_RECEIPT_ISSUED",
+      "contents": [
+        "Student name",
+        "Receipt number",
+        "Amount received",
+        "Date",
+        "Remaining balance",
+        "Link to the receipt"
+      ],
+      "retry": "Resend from the receipt log.",
+      "blocking": false
+    },
+    {
+      "event": "Payment failed",
+      "recipient": "Parent / Guardian",
+      "channels": [
+        "inApp"
+      ],
+      "template": "FEE_PAYMENT_FAILED",
+      "contents": [
+        "Student name",
+        "Amount attempted",
+        "The gateway's reason",
+        "That the fee is still outstanding"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Confirmed payment that could not be posted",
+      "recipient": "Accounts and School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "ONLINE_PAYMENT_UNPOSTED",
+      "contents": [
+        "Student",
+        "Amount",
+        "Gateway reference",
+        "That the family has been charged"
+      ],
+      "retry": "Repeated until resolved.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "The payment and its receipt are created through the ordinary payment path.",
+      "affects": {
+        "id": "UC-04-05",
+        "name": "Recording a payment and issuing the receipt",
+        "link": "UC-04-05.json"
+      }
+    },
+    {
+      "effect": "The invoice leaves overdue tracking where it is settled.",
+      "affects": {
+        "id": "UC-04-06",
+        "name": "Overdue-fee tracking",
+        "link": "UC-04-06.json"
+      }
+    },
+    {
+      "effect": "Any further late fee stops accruing on the settled invoice.",
+      "affects": {
+        "id": "UC-04-15",
+        "name": "Late fee policy",
+        "link": "UC-04-15.json"
+      }
+    },
+    {
+      "effect": "The settlement becomes matchable against the gateway and bank statements.",
+      "affects": {
+        "id": "UC-04-16",
+        "name": "Payment reconciliation",
+        "link": "UC-04-16.json"
+      }
+    },
+    {
+      "effect": "Today's collection figure on the dashboard changes.",
+      "affects": {
+        "id": "UC-01-07",
+        "name": "Role-based dashboards, main and module level",
+        "link": "UC-01-07.json"
+      }
+    }
+  ],
+  "integrations": [
+    {
+      "system": "Payment gateway",
+      "direction": "bidirectional",
+      "sends": "The invoice amount, the attempt reference and the return address",
+      "expects": "A result stating success or failure, with its transaction reference, both by redirect and by callback",
+      "timeout": "The configured window, after which the attempt is queried rather than assumed",
+      "retry": "The gateway retries its callback; a repeat is recognised by its transaction reference and recorded once",
+      "onFailure": "No attempt is created where the gateway is unreachable, and the invoice stays payable by challan or at the office. A confirmed payment that cannot be posted is flagged rather than dropped, because the family has already been charged."
+    }
+  ],
+  "reports": [
+    {
+      "name": "Online payment attempts",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Attempt",
+        "Date",
+        "Student",
+        "Invoice",
+        "Amount",
+        "Method",
+        "Gateway reference",
+        "Outcome",
+        "Reason"
+      ],
+      "grouping": "By outcome",
+      "totals": "Attempted, succeeded and failed in the period, with success rate"
+    },
+    {
+      "name": "Online collection",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Date",
+        "Student",
+        "Invoice",
+        "Amount",
+        "Method",
+        "Gateway reference",
+        "Reconciled"
+      ],
+      "grouping": "By date",
+      "totals": "Collected online in the period, and amount not yet reconciled"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "An outstanding invoice of PKR 4,000 in the parent app",
+      "when": "the guardian pays it online and the gateway confirms",
+      "then": "the invoice reads Paid, a numbered receipt exists, and both ledgers carry the entry — the same as a counter payment"
+    },
+    {
+      "id": "AC-2",
+      "given": "The same invoice",
+      "when": "the gateway declines the transaction",
+      "then": "the invoice is untouched and still outstanding, and the guardian is shown the gateway's reason"
+    },
+    {
+      "id": "AC-3",
+      "given": "A guardian who pays and closes the app without returning",
+      "when": "the gateway's callback arrives",
+      "then": "the payment is recorded against the right invoice and the receipt is sent, without the guardian coming back"
+    },
+    {
+      "id": "AC-4",
+      "given": "A gateway callback that arrives twice for one transaction",
+      "when": "both are processed",
+      "then": "the payment is recorded once and the invoice is not credited twice"
+    },
+    {
+      "id": "AC-5",
+      "given": "An attempt with no result after the configured window",
+      "when": "the query job runs",
+      "then": "the gateway is queried and the attempt is resolved either way, not left pending"
+    },
+    {
+      "id": "AC-6",
+      "given": "A guardian entering more than the outstanding balance",
+      "when": "they proceed",
+      "then": "they are stopped before reaching the gateway"
+    },
+    {
+      "id": "AC-7",
+      "given": "A guardian opening an invoice for a child who is not theirs",
+      "when": "they request it",
+      "then": "it is refused"
+    },
+    {
+      "id": "AC-8",
+      "given": "A gateway confirmation whose ledger posting fails",
+      "when": "the failure occurs",
+      "then": "the payment is not lost, Accounts are notified, and the guardian is told the school has been notified"
+    },
+    {
+      "id": "AC-9",
+      "given": "A branch with no gateway configured",
+      "when": "a guardian opens an outstanding invoice",
+      "then": "no pay option is offered and the challan route is named instead"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-04-02",
+        "name": "Issuing fee invoices at different scopes",
+        "link": "UC-04-02.json",
+        "why": "Supplies the invoice being paid."
+      },
+      {
+        "id": "UC-04-05",
+        "name": "Recording a payment and issuing the receipt",
+        "link": "UC-04-05.json",
+        "why": "Records the successful payment and issues the receipt."
+      },
+      {
+        "id": "UC-15-01",
+        "name": "Parent and student portal",
+        "link": "UC-15-01.json",
+        "why": "The app the guardian pays from."
+      },
+      {
+        "id": "UC-26-02",
+        "name": "Payment gateway integration",
+        "link": "UC-26-02.json",
+        "why": "Configures the gateway. Setting it up is not part of this use case."
+      },
+      {
+        "id": "UC-04-16",
+        "name": "Payment reconciliation",
+        "link": "UC-04-16.json",
+        "why": "Matches the settlement afterwards."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Limits a guardian to their own children's invoices."
+      }
+    ],
+    "masterData": [
+      "Gateway configuration and credentials per branch",
+      "Permitted payment methods",
+      "Pending-attempt window"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Configuring the gateway",
+      "handledBy": {
+        "id": "UC-26-02",
+        "name": "Payment gateway integration",
+        "link": "UC-26-02.json"
+      }
+    },
+    {
+      "item": "Reconciling the settlement against the bank",
+      "handledBy": {
+        "id": "UC-04-16",
+        "name": "Payment reconciliation",
+        "link": "UC-04-16.json"
+      }
+    },
+    {
+      "item": "Recording the payment and issuing the receipt, which this hands to",
+      "handledBy": {
+        "id": "UC-04-05",
+        "name": "Recording a payment and issuing the receipt",
+        "link": "UC-04-05.json"
+      }
+    },
+    {
+      "item": "Paying at a bank counter",
+      "handledBy": {
+        "id": "UC-04-04",
+        "name": "Printable payment slips and challans",
+        "link": "UC-04-04.json"
+      }
+    },
+    {
+      "item": "Refunding a payment",
+      "handledBy": {
+        "id": "UC-04-11",
+        "name": "Refunding an unused credit on withdrawal",
+        "link": "UC-04-11.json"
+      }
+    },
+    {
+      "item": "Correcting a payment recorded against the wrong invoice",
+      "handledBy": {
+        "id": "UC-04-12",
+        "name": "Correcting a wrongly recorded payment",
+        "link": "UC-04-12.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Callback handling",
+        "requirement": "A gateway callback is processed within 5 seconds and is safe to receive more than once, since gateways retry."
+      },
+      {
+        "aspect": "No lost payments",
+        "requirement": "An attempt is never left unresolved. Where no result arrives, the gateway is queried rather than the outcome assumed."
+      },
+      {
+        "aspect": "Credential handling",
+        "requirement": "No card or bank detail ever reaches this system. The guardian enters them on the gateway, and only a transaction reference comes back."
+      },
+      {
+        "aspect": "Mobile use",
+        "requirement": "The whole flow works on a 360 px phone screen, since almost every guardian will pay from one."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "Is a part payment permitted online, or must the full balance be paid?",
+      "assumption": "Permitted (BR-3). Not confirmed, and it changes what the app offers.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Who bears the gateway's transaction charge — the school or the family?",
+      "assumption": "Not specified, and if the family bears it the amount charged differs from the invoice.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "May a student pay their own invoice, or only a guardian?",
+      "assumption": "Permitted where the school allows it. Not confirmed.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "How long is the pending-attempt window before the gateway is queried?",
+      "assumption": "Not specified.",
+      "confirmWith": "Accounts",
+      "blocksBuild": false
+    },
+    {
+      "question": "May a family pay several children's invoices in one online transaction?",
+      "assumption": "Not specified, and families will expect to.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "money",
+      "area": "Money",
+      "rule": "All monetary values are stored as fixed-point decimals in the smallest currency unit, never as floating point. Displayed as PKR with a thousands separator and two decimal places. Rounding is half-up at the line."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

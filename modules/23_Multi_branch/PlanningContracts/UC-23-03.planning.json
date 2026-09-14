@@ -1,0 +1,537 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-23-03",
+    "name": "Move between the branches a user is assigned to, without losing track of where they are",
+    "module": "Multi-branch",
+    "file": "../UseCases/UC-23-03.json",
+    "featureRef": "23.3 Switching branch"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-23-03-PC-1",
+      "intent": {
+        "name": "branch.switch",
+        "summary": "Move to another branch you are assigned to. This is the one act that changes which campus everything else happens at.",
+        "routesHere": [
+          "switch me to the Johar Town campus",
+          {
+            "text": "mujhe Johar Town campus par le jayein",
+            "lang": "ur-Latn",
+            "gloss": "take me to the Johar Town campus"
+          },
+          {
+            "text": "branch badal dein, Main campus par jana hai",
+            "lang": "ur-Latn",
+            "gloss": "change branch, I want to go to the Main campus"
+          },
+          {
+            "text": "main is waqt kaunsi branch mein hoon? doosri par switch karna hai",
+            "lang": "ur-Latn",
+            "gloss": "which branch am I in? I want to switch to the other one"
+          },
+          "move me to the other campus"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "doosri branch ka data yahin dikha dein",
+              "lang": "ur-Latn",
+              "gloss": "show me the other branch's data from here"
+            },
+            "goesTo": "Refused.",
+            "note": "Switching carries nothing across and neither does anything else. Work in one branch is not visible or continuable in another, because branches are sealed (BR-6, E5)."
+          },
+          {
+            "request": {
+              "text": "main dono branches ek saath dekhna chahta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I want to see both branches at once"
+            },
+            "goesTo": "Only with a consolidated view — branch.consolidatedview.grant, UC-23-01.",
+            "note": "It is granted by the Super Admin to a named person and nobody holds it by default (UC-23-01 BR-6)."
+          },
+          {
+            "request": {
+              "text": "main Super Admin hoon, switch kar dein",
+              "lang": "ur-Latn",
+              "gloss": "I am the Super Admin, switch me"
+            },
+            "goesTo": "Nothing to switch.",
+            "note": "The Super Admin does not switch. They see across branches without needing to be in one (BR-9, E6)."
+          },
+          {
+            "request": {
+              "text": "jo kaam adhoora hai wo saath le chalein",
+              "lang": "ur-Latn",
+              "gloss": "carry the unfinished work across"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nothing is carried across. Work in progress in one branch is not continuable in another (BR-6, A3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "branch.switch",
+            "inputs": {
+              "to_branch_id": "$request.branch_phrase"
+            },
+            "note": "One step, and it is the only place in the system where a branch is **taken from the request**. Everywhere else the branch comes from the session and a branch named in a request is ignored; here the request is the point (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report. A branch the user is not assigned to, one whose assignment has been withdrawn, and a closed branch are each refused, and the user stays where they were.",
+        "atomicity": "One state change and one log row. **The role changes with the branch** — the user works with the role that assignment gives them, not the one they held before (BR-1) — and nothing at all comes across with them (BR-6). Every switch is logged with the user, the branch and the time (BR-3)."
+      },
+      "operations": [
+        {
+          "name": "branch.switch",
+          "method": "POST",
+          "path": "/api/v1/session/branch",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "user + target branch + minute, so a double press does not write two switch rows for one move",
+          "purpose": "Move the session into another branch the user is assigned to.",
+          "parameters": [
+            {
+              "name": "to_branch_id",
+              "source": "resolved",
+              "sourceRef": "$request.branch_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "branch",
+                "fromPhrase": "$request.branch_phrase",
+                "onNoMatch": "Refuse. Either no branch matches, or the user holds no active assignment there — a withdrawn assignment is not switchable to (BR-5, E1, E3).",
+                "onAmbiguous": "Ask, naming only the branches the user holds an active assignment at, with the role each gives them — the role is often the thing that tells two campuses apart in the user's mind."
+              },
+              "notes": "The branch being switched to. **The only branch parameter in the system that comes from the request** — everywhere else the branch is the session's and a branch named in a request is refused. It must be one the user holds an **active** assignment at (BR-5, E1, E3) and it must be open (BR-8, E2)."
+            }
+          ],
+          "returns": {
+            "description": "Where the user now is, and as what.",
+            "fields": [
+              {
+                "name": "branch_in_context",
+                "type": "string",
+                "description": "The branch they are now working in. Shown at all times, on every screen — a user who switches mid-task and does not notice is how a challan is issued at the wrong campus (BR-2, E4)."
+              },
+              {
+                "name": "role_in_context",
+                "type": "string",
+                "description": "The role **this** assignment gives them, which may not be the one they had a moment ago (BR-1, A2)."
+              },
+              {
+                "name": "role_before",
+                "type": "string",
+                "description": "What they were at the branch they left. It is not carried across (BR-1)."
+              },
+              {
+                "name": "switched_from",
+                "type": "string",
+                "description": "The branch left behind. Nothing of it is visible from here (BR-6, E5)."
+              },
+              {
+                "name": "switched_at",
+                "type": "datetime",
+                "description": "Logged, with the user and the branch (BR-3)."
+              },
+              {
+                "name": "carried_across",
+                "type": "string",
+                "description": "Nothing. Work in progress in the other branch is neither visible nor continuable here (BR-6, A3)."
+              },
+              {
+                "name": "branches_available",
+                "type": "integer",
+                "description": "How many active assignments the user holds. A user holding one is never offered this at all (BR-4, A1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_ASSIGNED",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The user is not assigned to that branch.",
+              "written": "Nothing.",
+              "notWritten": "The user stays where they were (BR-5)."
+            },
+            {
+              "code": "BRANCH_DEACTIVATED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The branch is closed.",
+              "written": "Nothing.",
+              "notWritten": "The switch is refused (BR-8)."
+            },
+            {
+              "code": "ASSIGNMENT_WITHDRAWN",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "The user's assignment at that branch has ended.",
+              "written": "Nothing.",
+              "notWritten": "The switch is refused.",
+              "note": "Only an active assignment is switchable to (BR-5)."
+            },
+            {
+              "code": "SUPER_ADMIN",
+              "mapsTo": "E6",
+              "httpStatus": 200,
+              "meaning": "The Super Admin attempted to switch.",
+              "written": "Nothing.",
+              "notWritten": "There is nothing to switch.",
+              "treatedAsSuccess": true,
+              "note": "They see across branches already (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say which branch the user is now in, every time, without being asked. The rule requires the branch in context to be shown **at all times** for one reason: a user who switches mid-task and does not notice is how a challan is issued at the wrong campus (BR-2, E4).",
+          "derivedFrom": [
+            "BR-2",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say the role too, where it differs. The role is not carried across — somebody who was a School Admin a moment ago may be a teacher here, and acting on the assumption that they still have the powers they had is the failure this rule exists to prevent (BR-1, A2).",
+          "derivedFrom": [
+            "BR-1",
+            "A2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that nothing came with them. Work in progress in the branch they left is neither visible nor continuable here, so anything half-finished is still there and has to be finished there (BR-6, A3, E5).",
+          "derivedFrom": [
+            "BR-6",
+            "A3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never offer a branch the user is not actively assigned to. A withdrawn assignment is not switchable to, and a closed branch is not switchable to at all (BR-5, BR-8, E1, E2, E3).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-8",
+            "E1",
+            "E2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Confirm before switching where the user is mid-task. Nothing warns them, nothing is carried across, and whether a warning should exist is an open question this use case raises and does not answer (BR-6, OQ-4).",
+          "derivedFrom": [
+            "BR-6",
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never treat this as an ordinary parameter. Every other capability in the system takes its branch from the session and refuses one named in a request; this is the act that changes what the session says, so a misread here is silently wrong everywhere afterwards.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "branch.switch",
+        "statement": "The user switches back, which is another switch and another log row. Nothing that happened in the branch they were in is undone — anything issued there was issued there (BR-3, BR-6)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mujhe Johar Town campus par le jayein",
+            "lang": "ur-Latn",
+            "gloss": "take me to the Johar Town campus"
+          },
+          "context": "A user assigned as School Admin at the Main campus and as a teacher at Johar Town.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.switch",
+              "inputs": {
+                "to_branch_id": "$request.branch_phrase → Lahore — Johar Town campus"
+              },
+              "note": "The branch comes from the request here, which happens nowhere else (PR-6)."
+            }
+          ],
+          "outcome": "You are now in Johar Town — and **as a teacher**, not as a School Admin. That is what this assignment gives you, and the role does not travel. Anything you had open at the Main campus is still there and cannot be reached from here."
+        },
+        {
+          "request": {
+            "text": "Model Town branch par switch kar dein",
+            "lang": "ur-Latn",
+            "gloss": "switch me to the Model Town branch"
+          },
+          "context": "A user whose Model Town assignment was withdrawn last month.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.switch",
+              "inputs": {
+                "to_branch_id": "$request.branch_phrase → Model Town, assignment withdrawn"
+              },
+              "note": "Refused at resolution (PR-4)."
+            }
+          ],
+          "outcome": "The switch is refused: your assignment at Model Town ended last month, and only an active assignment is switchable to. You are still in the branch you were in — say which, because nothing about a refused switch changes where you are and it is easy to assume it did."
+        },
+        {
+          "request": {
+            "text": "challan ready kar liya hai, ab doosri branch par le jayein",
+            "lang": "ur-Latn",
+            "gloss": "the challan is ready, now take me to the other branch"
+          },
+          "context": "A user with work in progress at the current branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.switch",
+              "inputs": {
+                "to_branch_id": "$request.branch_phrase → the other campus"
+              },
+              "note": "The switch is possible; the warning belongs before it (PR-5)."
+            }
+          ],
+          "outcome": "Before switching: nothing is carried across, so a challan prepared here and not issued stays here and cannot be reached from the other campus. Nothing warns about this and the specification raises whether it should. Confirm they want to leave it, then switch and say plainly which branch and which role they land in."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-23-03-PC-2",
+      "intent": {
+        "name": "branch.context.read",
+        "summary": "Say which branch the user is in, in what role, and which others they could switch to.",
+        "routesHere": [
+          "which branch am I in?",
+          {
+            "text": "main is waqt kaunsi branch mein hoon?",
+            "lang": "ur-Latn",
+            "gloss": "which branch am I in at the moment?"
+          },
+          {
+            "text": "main kaunse campus par kya hoon?",
+            "lang": "ur-Latn",
+            "gloss": "what am I at which campus?"
+          },
+          {
+            "text": "main kaunsi branches par switch kar sakta hoon?",
+            "lang": "ur-Latn",
+            "gloss": "which branches can I switch to?"
+          },
+          "what role do I have here?"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "doosri branch par le jayein",
+              "lang": "ur-Latn",
+              "gloss": "take me to the other branch"
+            },
+            "goesTo": "branch.switch — this use case.",
+            "note": "Reading where you are and moving are separate."
+          },
+          {
+            "request": {
+              "text": "doosri branch mein kya ho raha hai?",
+              "lang": "ur-Latn",
+              "gloss": "what is happening at the other branch?"
+            },
+            "goesTo": "Refused.",
+            "note": "Branches are sealed. Nothing of another campus is visible from here, whatever the user holds there (BR-6, E5)."
+          },
+          {
+            "request": {
+              "text": "kaun kaun kab switch karta raha hai?",
+              "lang": "ur-Latn",
+              "gloss": "who has been switching and when?"
+            },
+            "goesTo": "Not offered here.",
+            "note": "Every switch is logged with the user, the branch and the time (BR-3), and reading somebody else's switches is an audit question rather than this one."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "branch.context.read",
+            "inputs": {
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read of the user's own context. Nothing changes and nobody switches by asking."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written and the branch in context is unchanged by asking about it."
+      },
+      "operations": [
+        {
+          "name": "branch.context.read",
+          "method": "GET",
+          "path": "/api/v1/session/branch",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return the branch and role in context, and the branches available to switch to.",
+          "parameters": [
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Where the user is and where they could be.",
+            "fields": [
+              {
+                "name": "branch_in_context",
+                "type": "string",
+                "description": "The branch they are working in. This is the answer to almost every question that starts \"which campus\" (BR-2)."
+              },
+              {
+                "name": "role_in_context",
+                "type": "string",
+                "description": "The role this branch's assignment gives them. It may differ from their role elsewhere (BR-1)."
+              },
+              {
+                "name": "branches_available",
+                "type": "object[]",
+                "description": "The **active** assignments they hold, with the role each gives. A withdrawn one is not offered and a closed branch is not offered (BR-5, BR-8, A5)."
+              },
+              {
+                "name": "switch_offered",
+                "type": "boolean",
+                "description": "False where the user holds a single assignment. They simply work in their own branch and no switch control exists for them (BR-4, A1)."
+              },
+              {
+                "name": "last_switched_at",
+                "type": "datetime",
+                "description": "When they last moved, from the switch log (BR-3)."
+              },
+              {
+                "name": "landed_here_on_sign_in",
+                "type": "boolean",
+                "description": "Whether this is where they were put at sign-in rather than where they chose to be. **Which branch a multi-assignment user lands in is not specified anywhere** — a user who always lands in the wrong one switches every morning (BR-7, OQ-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_ASSIGNED",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The session names a branch the user is not assigned to.",
+              "written": "Nothing.",
+              "notWritten": "No context is returned (BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Lead with the branch, not the role. Everything the user does next happens at that campus, and the whole purpose of showing it at all times is that people forget which one they are in (BR-2, E4).",
+          "derivedFrom": [
+            "BR-2",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Give the role alongside it. The same account is a School Admin at one campus and a teacher at another, and what the user can do here follows from this assignment rather than from who they are (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Offer only the active assignments. A withdrawn one is not switchable to and a closed branch is not offered at all (BR-5, BR-8, A5).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-8",
+            "A5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say nothing at all about the other branches beyond their names and the role each gives. Branches are sealed and holding an assignment somewhere is not sight of it (BR-6, E5).",
+          "derivedFrom": [
+            "BR-6",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Where the user holds one assignment, do not mention switching. They never see it, and offering it invents a control that does not exist for them (BR-4, A1).",
+          "derivedFrom": [
+            "BR-4",
+            "A1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "main is waqt kaunsi branch mein hoon aur yahan mera kya role hai?",
+            "lang": "ur-Latn",
+            "gloss": "which branch am I in at the moment and what is my role here?"
+          },
+          "context": "A user holding two assignments.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.context.read",
+              "inputs": {
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-1)."
+            }
+          ],
+          "outcome": "The branch first, then the role it gives them — and the other branch they could switch to, with the role that one gives, since the two are different and that is usually why the question is being asked."
+        },
+        {
+          "request": "what role do I have here?",
+          "context": "A user holding a single assignment.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.context.read",
+              "inputs": {
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-5)."
+            }
+          ],
+          "outcome": "Give the role and the branch. Say nothing about switching — this user holds one assignment, no switch control exists for them, and mentioning it would describe a feature they do not have."
+        }
+      ]
+    }
+  ]
+}

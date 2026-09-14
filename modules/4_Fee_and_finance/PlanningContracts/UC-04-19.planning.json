@@ -1,0 +1,1230 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-19",
+    "name": "Record a movement as a voucher, approved by a chain that matches its size, and paid separately",
+    "module": "Finance",
+    "file": "../UseCases/UC-04-19.json",
+    "featureRef": "4.19 Accounting vouchers for money in and out"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-19-PC-1",
+      "intent": {
+        "name": "finance.voucher.create",
+        "summary": "Enter a movement as a voucher — both sides in one entry, with what the money was for. One step, and it posts nothing.",
+        "routesHere": [
+          "enter a payment voucher for the electricity bill, 18,000",
+          {
+            "text": "bijli ka bill ka voucher bana do — 18,000",
+            "lang": "ur-Latn",
+            "gloss": "make a voucher for the electricity bill — 18,000"
+          },
+          {
+            "text": "journal voucher daal do",
+            "lang": "ur-Latn",
+            "gloss": "enter a journal voucher"
+          },
+          {
+            "text": "cash bank mein jama karwaya, contra voucher banao",
+            "lang": "ur-Latn",
+            "gloss": "cash was deposited into the bank, make a contra voucher"
+          },
+          "raise a receipt voucher for the canteen rent"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "voucher approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the voucher"
+            },
+            "goesTo": "finance.voucher.approve — UC-04-19-PC-2",
+            "note": "Creating and authorising are separate hands (BR-10)."
+          },
+          {
+            "request": {
+              "text": "paisa de diya hai, record kar do",
+              "lang": "ur-Latn",
+              "gloss": "the money has been paid, record it"
+            },
+            "goesTo": "finance.voucher.pay — UC-04-19-PC-3",
+            "note": "Approving a payment and making it are separate acts (BR-8)."
+          },
+          {
+            "request": {
+              "text": "fees ki payment record karo",
+              "lang": "ur-Latn",
+              "gloss": "record a fee payment"
+            },
+            "goesTo": "fee.payment.record — UC-04-05",
+            "note": "A fee receipt has its own route; this is for movements that do not."
+          },
+          {
+            "request": {
+              "text": "posted voucher theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix a posted voucher"
+            },
+            "goesTo": "finance.voucher.create, as a further voucher",
+            "note": "A posted voucher is never edited or deleted. A correction is a further voucher, so the ledger reads as a history (BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.voucher.create",
+            "inputs": {
+              "voucher_type": "$request.voucher_type",
+              "amount": "$request.amount",
+              "debit_account_id": "$request.debit_account_phrase",
+              "credit_account_id": "$request.credit_account_phrase",
+              "voucher_date": "$request.voucher_date",
+              "description": "$request.description",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Both sides of the movement are captured in a single entry (BR-1), and the voucher reaches the ledger only on final approval — a draft posts nothing (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. Matching debit and credit accounts, unbalanced sides, a closed period and a missing chart of accounts are all enforced by the API and arrive as errors. A budget line the voucher would exceed is flagged and pushed up a level, never blocked (BR-9).",
+        "atomicity": "One write: the voucher at Draft with both its sides, and the audit entry. Nothing reaches the ledger — a draft or a voucher awaiting approval posts nothing (BR-5). Where a budget line applies, its remaining balance is checked and shown now, so an overspend is visible before submission rather than after (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "finance.voucher.create",
+          "method": "POST",
+          "path": "/api/v1/vouchers",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "voucher_type + amount + debit_account_id + credit_account_id + voucher_date + description, so a repeat does not create a second voucher for the same movement",
+          "purpose": "Create a draft voucher capturing both sides of a movement, with its accounts, date, amount and description.",
+          "parameters": [
+            {
+              "name": "voucher_type",
+              "source": "request",
+              "sourceRef": "$request.voucher_type",
+              "required": true,
+              "type": "enum: Payment voucher | Receipt voucher | Journal voucher | Contra voucher",
+              "notes": "What kind of movement this is. Read from what the actor stated."
+            },
+            {
+              "name": "amount",
+              "source": "request",
+              "sourceRef": "$request.amount",
+              "required": true,
+              "type": "money",
+              "notes": "Greater than zero. It decides which approval the voucher needs (BR-3), so a figure a planner supplied would also choose the approval chain."
+            },
+            {
+              "name": "debit_account_id",
+              "source": "resolved",
+              "sourceRef": "$request.debit_account_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "ledger_account",
+                "fromPhrase": "$request.debit_account_phrase",
+                "onNoMatch": "Refuse. No such account in the chart of accounts.",
+                "onAmbiguous": "Ask, naming the candidates with code and name."
+              },
+              "notes": "From the chart of accounts. Must differ from the credit account (BR-6, E1)."
+            },
+            {
+              "name": "credit_account_id",
+              "source": "resolved",
+              "sourceRef": "$request.credit_account_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "ledger_account",
+                "fromPhrase": "$request.credit_account_phrase",
+                "onNoMatch": "Refuse. No such account in the chart of accounts.",
+                "onAmbiguous": "Ask, naming the candidates with code and name."
+              },
+              "notes": "From the chart of accounts. Must differ from the debit account."
+            },
+            {
+              "name": "voucher_date",
+              "source": "request",
+              "sourceRef": "$request.voucher_date",
+              "required": true,
+              "type": "date",
+              "notes": "When the movement occurred. Not in the future, and within an open period — a movement cannot be posted into a closed one (BR-13, E3)."
+            },
+            {
+              "name": "description",
+              "source": "request",
+              "sourceRef": "$request.description",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters. What the money was for, in terms a reader can follow. The actor's own words."
+            },
+            {
+              "name": "payee",
+              "source": "request",
+              "sourceRef": "$request.payee",
+              "required": false,
+              "type": "string",
+              "notes": "Who the money is paid to. Required in substance for a payment voucher."
+            },
+            {
+              "name": "supporting_document_id",
+              "source": "resolved",
+              "sourceRef": "$request.document_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "uploaded_file",
+                "fromPhrase": "$request.document_phrase",
+                "onNoMatch": "Refuse. No uploaded document matches.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The bill, quotation or receipt behind the movement, uploaded on the screen. A payment with no bill behind it is the thing an auditor asks about (BR-12)."
+            },
+            {
+              "name": "budget_line_id",
+              "source": "resolved",
+              "sourceRef": "$request.budget_line_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "budget_line",
+                "fromPhrase": "$request.budget_line_phrase",
+                "onNoMatch": "Refuse. No such budget line.",
+                "onAmbiguous": "Ask, naming the candidates with account or department and remaining balance."
+              },
+              "notes": "The budget line this spends against, where one exists. Its remaining balance is shown before submission (BR-9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The voucher as drafted, and what it will need.",
+            "fields": [
+              {
+                "name": "voucher_id",
+                "type": "string",
+                "description": "The voucher."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. It posts nothing (BR-5)."
+              },
+              {
+                "name": "approval_required",
+                "type": "string",
+                "description": "Derived from the amount and the two thresholds. Never chosen (BR-3)."
+              },
+              {
+                "name": "budget_remaining",
+                "type": "string",
+                "description": "What is left on the line, shown before submission so an overspend is visible (BR-9)."
+              },
+              {
+                "name": "exceeds_budget",
+                "type": "boolean",
+                "description": "True where it would take the line over. Flagged and pushed to the next approval level up, never blocked (BR-9)."
+              },
+              {
+                "name": "has_supporting_document",
+                "type": "boolean",
+                "description": "False is worth reporting — a payment with no bill behind it is what an auditor asks about (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SAME_ACCOUNT",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The debit and credit accounts are the same.",
+              "written": "Nothing.",
+              "notWritten": "No voucher created."
+            },
+            {
+              "code": "UNBALANCED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The two sides do not total the same.",
+              "written": "Nothing.",
+              "notWritten": "No voucher created.",
+              "note": "A voucher that does not balance is not posted (BR-6)."
+            },
+            {
+              "code": "CLOSED_PERIOD",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The voucher date falls in a closed period.",
+              "written": "Nothing.",
+              "notWritten": "No voucher created.",
+              "note": "A movement cannot be posted into a closed one (BR-13). Never move the date to an open period to get past this — the date is when the movement occurred."
+            },
+            {
+              "code": "NO_CHART_OF_ACCOUNTS",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "No chart of accounts exists.",
+              "written": "Nothing.",
+              "notWritten": "No voucher created."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the amount. It decides which approval chain the voucher needs (BR-3), so a figure a planner chose also chooses who gets to authorise it.",
+          "derivedFrom": [
+            "BR-3",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never choose the accounts. Which account is debited and which credited is what the entry means, and a plausible-looking pair puts real money in the wrong place in the books.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-6",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never move the voucher date to get past a closed period. The date is when the movement occurred (BR-13), and redating it to an open period records the movement in the wrong month.",
+          "derivedFrom": [
+            "BR-13",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report an over-budget line rather than treating it as a refusal. An excess is flagged and pushed to the next approval level up, never blocked (BR-9, BR-1 of UC-04-20) — blocking routine spending stalls the office, and the escalation is the deliberate middle ground.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report when no supporting document is attached. A payment with no bill behind it is the thing an auditor asks about first (BR-12).",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never edit a posted voucher. A correction is a further voucher, so the ledger reads as a history (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A draft is not deleted; it is submitted, approved, returned or left. Once posted, a voucher is never edited or deleted — a correction is a further voucher (BR-11). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "bijli ke bill ka payment voucher bana do — 18,000, utilities account se bank ko",
+            "lang": "ur-Latn",
+            "gloss": "make a payment voucher for the electricity bill — 18,000, from the utilities account to the bank"
+          },
+          "context": "Accounts, Johar Town branch, in an open period.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.create",
+              "inputs": {
+                "voucher_type": "Payment voucher",
+                "amount": 18000,
+                "debit_account_id": "$request.debit_account_phrase → Utilities",
+                "credit_account_id": "$request.credit_account_phrase → Bank",
+                "voucher_date": "$request.voucher_date",
+                "description": "Electricity bill for September, K-Electric reference on the attached bill.",
+                "payee": "$request.payee",
+                "supporting_document_id": "$request.document_phrase",
+                "budget_line_id": "$request.budget_line_phrase → Utilities",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Both accounts named by the actor (PR-2). The amount decides the approval chain, so it is theirs too (PR-1)."
+            }
+          ],
+          "outcome": "A Draft. approval_required comes back naming the chain the amount triggers, and budget_remaining shows what is left on the utilities line. Nothing has reached the ledger (BR-5)."
+        },
+        {
+          "request": {
+            "text": "40,000 ka voucher bana do, budget mein sirf 25,000 bacha hai",
+            "lang": "ur-Latn",
+            "gloss": "make a 40,000 voucher, only 25,000 is left in the budget"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.create",
+              "inputs": {
+                "voucher_type": "Payment voucher",
+                "amount": 40000,
+                "debit_account_id": "$request.debit_account_phrase",
+                "credit_account_id": "$request.credit_account_phrase",
+                "voucher_date": "$request.voucher_date",
+                "description": "$request.description",
+                "budget_line_id": "$request.budget_line_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Created, with exceeds_budget true. Report that it is flagged and will go to the next approval level up — not that it is blocked (PR-4). Blocking routine spending stalls the office; the escalation is deliberate."
+        },
+        {
+          "request": {
+            "text": "August ka voucher bana do",
+            "lang": "ur-Latn",
+            "gloss": "make a voucher dated August"
+          },
+          "context": "Accounts, Johar Town branch, where August is closed.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.create",
+              "inputs": {
+                "voucher_type": "Payment voucher",
+                "amount": "$request.amount",
+                "debit_account_id": "$request.debit_account_phrase",
+                "credit_account_id": "$request.credit_account_phrase",
+                "voucher_date": "2026-08-20",
+                "description": "$request.description",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted with the date as given. The API returns CLOSED_PERIOD (E3)."
+            }
+          ],
+          "outcome": "Nothing is created. Report that August is closed — and do not offer to redate it to September (PR-3), because the date is when the movement occurred and moving it records it in the wrong month."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-19-PC-2",
+      "intent": {
+        "name": "finance.voucher.approve",
+        "summary": "Approve a voucher at the level its amount requires, posting it to the ledger and creating the payable. One step.",
+        "routesHere": [
+          "approve this voucher",
+          {
+            "text": "voucher approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the voucher"
+          },
+          {
+            "text": "ye kharcha manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this expense"
+          },
+          {
+            "text": "Principal wali approval de do",
+            "lang": "ur-Latn",
+            "gloss": "give the Principal-level approval"
+          },
+          "authorise the electricity payment voucher"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "voucher wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the voucher back"
+            },
+            "goesTo": "finance.voucher.return — UC-04-19-PC-4"
+          },
+          {
+            "request": {
+              "text": "paisa de do",
+              "lang": "ur-Latn",
+              "gloss": "release the money"
+            },
+            "goesTo": "finance.voucher.pay — UC-04-19-PC-3",
+            "note": "Approving a payment and making it are separate acts, so an approved but unpaid voucher is a visible liability (BR-8)."
+          },
+          {
+            "request": {
+              "text": "threshold badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the threshold"
+            },
+            "goesTo": "Not offered.",
+            "note": "Both thresholds are set by the Principal, not the School Admin — a limit should not be settable by the person it constrains (BR-4, E7). No capability sets them; see OPEN-QUESTIONS."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.voucher.approve",
+            "inputs": {
+              "voucher_id": "$request.voucher_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and the level required is derived from the amount rather than chosen (BR-3). On final approval the voucher posts and a payable is created, because the school now owes the money (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. Approving above the acting user's threshold, and a ledger posting that fails, are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the approval, the ledger posting on final approval, the payable and the audit entry together or not at all (E9). The voucher reaches the ledger only on final approval — an intermediate approval posts nothing (BR-5). Approval creates a payable, since the school now owes the money; the printed voucher is the authorisation to release it rather than a second record to key (BR-7). The money has **not** left — that is a separate act (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "finance.voucher.approve",
+          "method": "POST",
+          "path": "/api/v1/vouchers/{voucher_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "voucher_id + the approving level, so a repeat does not record a second approval at the same level",
+          "purpose": "Record an approval at the acting user's level, posting the voucher and creating the payable once the chain is complete.",
+          "parameters": [
+            {
+              "name": "voucher_id",
+              "source": "resolved",
+              "sourceRef": "$request.voucher_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "voucher",
+                "fromPhrase": "$request.voucher_phrase",
+                "onNoMatch": "Refuse. No voucher matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with number, type, amount, payee and status."
+              },
+              "notes": "The voucher, resolved from how the actor named it — the voucher number, the payee and amount, or the description."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval, and where the voucher now stands.",
+            "fields": [
+              {
+                "name": "voucher_id",
+                "type": "string",
+                "description": "The voucher."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting Principal, Approved, or Posted where the chain is complete."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The acting user."
+              },
+              {
+                "name": "further_approval_required",
+                "type": "string",
+                "description": "The next level, where the chain is not complete (BR-3)."
+              },
+              {
+                "name": "posted",
+                "type": "boolean",
+                "description": "True only on final approval (BR-5)."
+              },
+              {
+                "name": "payable_created",
+                "type": "string",
+                "description": "The payable raised, since the school now owes the money (BR-7)."
+              },
+              {
+                "name": "budget_consumed",
+                "type": "string",
+                "description": "The line this now consumes, so a commitment is visible before the money leaves (UC-04-20 BR-5)."
+              },
+              {
+                "name": "paid",
+                "type": "boolean",
+                "description": "Always false. Approving a payment and making it are separate acts (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ABOVE_ACCOUNTS_THRESHOLD",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to approve a voucher above the lower threshold.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Accounts cannot approve a voucher above the lower threshold, including one they created (BR-10)."
+            },
+            {
+              "code": "ABOVE_SCHOOL_ADMIN_THRESHOLD",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "A School Admin attempted to approve above the higher threshold.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "It needs the Principal's approval (BR-3)."
+            },
+            {
+              "code": "POSTING_FAILED",
+              "mapsTo": "E9",
+              "httpStatus": 500,
+              "meaning": "The ledger posting failed.",
+              "written": "Nothing. The voucher is unchanged.",
+              "notWritten": "All of it.",
+              "note": "Message: \"The voucher could not be posted. Nothing has changed.\""
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the approval level. It is derived from the amount and the two thresholds (BR-3), and a planner selecting one would be selecting who gets to authorise the money.",
+          "derivedFrom": [
+            "BR-3",
+            "E5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never approve a voucher the acting user created where it is above the lower threshold. Creating and authorising are separate hands (BR-10).",
+          "derivedFrom": [
+            "BR-10",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the money has not left. Approval creates a payable and the school now owes it (BR-7); making the payment is a separate act (BR-8), and an approved but unpaid voucher is a visible liability rather than a completed payment.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the next approval level where the chain is not complete. A voucher sitting at Awaiting Principal is not approved, and the supplier is not going to be paid until somebody notices.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain the payment onto the approval. The printed voucher is the authorisation to release the money, not the release (BR-7, BR-8).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A posted voucher is never edited or deleted (BR-11). Where it was wrong, a further voucher corrects it, so the ledger reads as a history. An approved but unpaid voucher can be cancelled through the voucher lifecycle, but nothing here reverses a posting. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "bijli wala voucher approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the electricity voucher"
+          },
+          "context": "School Admin, Johar Town branch, on an 18,000 voucher above the lower threshold and below the higher.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.approve",
+              "inputs": {
+                "voucher_id": "$request.voucher_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved and posted, with a payable created — the school now owes K-Electric PKR 18,000 (BR-7). Report that the money has not left (PR-3); releasing it is a separate act."
+        },
+        {
+          "request": {
+            "text": "120,000 ka voucher approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the 120,000 voucher"
+          },
+          "context": "School Admin, Johar Town branch, where that is above the higher threshold.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.approve",
+              "inputs": {
+                "voucher_id": "$request.voucher_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns ABOVE_SCHOOL_ADMIN_THRESHOLD (E6)."
+            }
+          ],
+          "outcome": "Nothing is approved. Report that it needs the Principal — the level is derived from the amount, not chosen (PR-1), and the voucher is now waiting on them."
+        },
+        {
+          "request": {
+            "text": "main ne banaya tha, khud approve kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I created it, I'll approve it myself"
+          },
+          "context": "Accounts, Johar Town branch, on a voucher above the lower threshold.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.approve",
+              "inputs": {
+                "voucher_id": "$request.voucher_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The API returns ABOVE_ACCOUNTS_THRESHOLD (E5)."
+            }
+          ],
+          "outcome": "Nothing is approved. Report that Accounts cannot approve above the lower threshold, including a voucher they created — creating and authorising are separate hands (PR-2)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-19-PC-3",
+      "intent": {
+        "name": "finance.voucher.pay",
+        "summary": "Record that an approved voucher has been paid, discharging the payable and posting the cash movement. One step.",
+        "routesHere": [
+          "record the electricity voucher as paid, the transfer went today",
+          {
+            "text": "voucher ki payment record kar do",
+            "lang": "ur-Latn",
+            "gloss": "record the voucher payment"
+          },
+          {
+            "text": "paisa de diya hai, voucher paid mark karo",
+            "lang": "ur-Latn",
+            "gloss": "the money has been paid, mark the voucher paid"
+          },
+          {
+            "text": "cheque clear ho gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "the cheque has cleared"
+          },
+          "mark this voucher paid with the transfer reference"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "voucher approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the voucher"
+            },
+            "goesTo": "finance.voucher.approve — UC-04-19-PC-2",
+            "note": "A payment cannot be recorded against an unapproved voucher (E10)."
+          },
+          {
+            "request": {
+              "text": "voucher bana do",
+              "lang": "ur-Latn",
+              "gloss": "make a voucher"
+            },
+            "goesTo": "finance.voucher.create — UC-04-19-PC-1"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.voucher.pay",
+            "inputs": {
+              "voucher_id": "$request.voucher_phrase",
+              "paid_on": "$request.paid_on",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It discharges the payable and posts the cash movement — approving a payment and making it are separate acts, which is why this exists at all (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. A payment against an unapproved voucher is enforced by the API and arrives as an error.",
+        "atomicity": "One write, atomic in itself: the payable discharged, the cash movement posted and the audit entry together or not at all. The approval entry stays as it was — this adds the second half of the story rather than amending the first (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "finance.voucher.pay",
+          "method": "POST",
+          "path": "/api/v1/vouchers/{voucher_id}/pay",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "voucher_id, since a voucher is paid once and a repeat must not post the cash movement twice",
+          "purpose": "Record an approved voucher as paid, discharging the payable and posting the cash movement.",
+          "parameters": [
+            {
+              "name": "voucher_id",
+              "source": "resolved",
+              "sourceRef": "$request.voucher_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "voucher",
+                "fromPhrase": "$request.voucher_phrase",
+                "onNoMatch": "Refuse. No voucher matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with number, type, amount, payee and status."
+              },
+              "notes": "The voucher, resolved from how the actor named it — the voucher number, the payee and amount, or the description."
+            },
+            {
+              "name": "paid_on",
+              "source": "request",
+              "sourceRef": "$request.paid_on",
+              "required": true,
+              "type": "date",
+              "notes": "When the money actually left, recorded separately from approval (BR-8). Only where the request states it — a date defaulted to today misstates when the school's cash went."
+            },
+            {
+              "name": "payment_reference",
+              "source": "request",
+              "sourceRef": "$request.payment_reference",
+              "required": false,
+              "type": "string",
+              "notes": "The cheque number or transfer reference, where the request supplies one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The voucher as paid.",
+            "fields": [
+              {
+                "name": "voucher_id",
+                "type": "string",
+                "description": "The voucher."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Paid. Terminal."
+              },
+              {
+                "name": "paid_on",
+                "type": "date",
+                "description": "When the money actually left (BR-8)."
+              },
+              {
+                "name": "payable_discharged",
+                "type": "string",
+                "description": "The liability now cleared (BR-7)."
+              },
+              {
+                "name": "cash_movement_posted",
+                "type": "string",
+                "description": "The ledger entry for the money leaving."
+              },
+              {
+                "name": "payment_reference",
+                "type": "string",
+                "description": "As supplied."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_APPROVED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The voucher has not been approved.",
+              "written": "Nothing.",
+              "notWritten": "No payment recorded.",
+              "note": "Message: \"This voucher has not been approved.\" Approving it is a separate act by somebody else (BR-8, BR-10)."
+            },
+            {
+              "code": "POSTING_FAILED",
+              "mapsTo": "E9",
+              "httpStatus": 500,
+              "meaning": "The ledger posting failed.",
+              "written": "Nothing. The payable stands.",
+              "notWritten": "All of it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never default the paid date to today. It is when the money actually left, recorded separately from approval (BR-8), and the two differ whenever a cheque waits for collection.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain an approval onto a payment. E10 is BR-10 working — creating, authorising and paying are three hands, and approving a voucher to make a payment record succeed removes the control entirely.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-10",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never record a payment before the money has gone. It discharges the payable and posts the cash movement, and a payable discharged against a transfer that never left overstates the school's cash.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A posted cash movement is never edited or deleted (BR-11). Where the payment was recorded wrongly, a further voucher corrects it. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "bijli wala voucher paid kar do — transfer aaj gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "mark the electricity voucher paid — the transfer went today"
+          },
+          "context": "Accounts, Johar Town branch. Today is 08-09-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.pay",
+              "inputs": {
+                "voucher_id": "$request.voucher_phrase",
+                "paid_on": "2026-09-08",
+                "payment_reference": "$request.payment_reference",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The payable is discharged and the cash movement posts, dated 08-09-2026. The approval entry stays exactly as it was — this is the second half of the story, not an amendment (BR-11)."
+        },
+        {
+          "request": {
+            "text": "voucher paid mark kar do",
+            "lang": "ur-Latn",
+            "gloss": "mark the voucher paid"
+          },
+          "context": "Accounts, Johar Town branch, on a voucher still awaiting the Principal.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.pay",
+              "inputs": {
+                "voucher_id": "$request.voucher_phrase",
+                "paid_on": "$request.paid_on",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_APPROVED (E10)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the voucher is waiting on the Principal — and never approve it to make the payment succeed (PR-2), because creating, authorising and paying are deliberately three hands."
+        },
+        {
+          "request": {
+            "text": "cheque pichle hafte diya tha, ab record kar rahe hain",
+            "lang": "ur-Latn",
+            "gloss": "the cheque was issued last week, we are recording it now"
+          },
+          "context": "Accounts, Johar Town branch. Today is 08-09-2026; the cheque cleared on the 3rd.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.pay",
+              "inputs": {
+                "voucher_id": "$request.voucher_phrase",
+                "paid_on": "2026-09-03",
+                "payment_reference": "$request.payment_reference",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The date the money actually left, not today (PR-1)."
+            }
+          ],
+          "outcome": "Recorded on the 3rd. That date is what reconciliation will match against the bank statement, so today's date would have put it in the wrong place."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-19-PC-4",
+      "intent": {
+        "name": "finance.voucher.return",
+        "summary": "Send a voucher back to Accounts with what to correct. One step, and it posts nothing.",
+        "routesHere": [
+          "return this voucher, there's no bill attached",
+          {
+            "text": "voucher wapas bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the voucher back"
+          },
+          {
+            "text": "bill nahi laga hua, wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "no bill is attached, send it back"
+          },
+          {
+            "text": "galat account mein daala hai",
+            "lang": "ur-Latn",
+            "gloss": "it has gone to the wrong account"
+          },
+          "send it back — the description doesn't say what it was for"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "voucher approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the voucher"
+            },
+            "goesTo": "finance.voucher.approve — UC-04-19-PC-2"
+          },
+          {
+            "request": {
+              "text": "account theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix the account"
+            },
+            "goesTo": "Returning says so.",
+            "note": "Changing the accounts is Accounts' work in their own session."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.voucher.return",
+            "inputs": {
+              "voucher_id": "$request.voucher_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing posts, no payable is created and no money moves."
+          }
+        ],
+        "onFailure": "Stop and report. The reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the status change, the reason and the audit entry together or not at all. The voucher has not reached the ledger and the supplier has not been paid."
+      },
+      "operations": [
+        {
+          "name": "finance.voucher.return",
+          "method": "POST",
+          "path": "/api/v1/vouchers/{voucher_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "voucher_id + return_reason",
+          "purpose": "Send a voucher back to Accounts with the reason it was not approved.",
+          "parameters": [
+            {
+              "name": "voucher_id",
+              "source": "resolved",
+              "sourceRef": "$request.voucher_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "voucher",
+                "fromPhrase": "$request.voucher_phrase",
+                "onNoMatch": "Refuse. No voucher matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with number, type, amount, payee and status."
+              },
+              "notes": "The voucher, resolved from how the actor named it — the voucher number, the payee and amount, or the description."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (E8) — Accounts have to know what to correct. The approver's own words."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The voucher as returned.",
+            "fields": [
+              {
+                "name": "voucher_id",
+                "type": "string",
+                "description": "The voucher."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. Nothing has posted."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "As given, shown to Accounts."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The approver."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": "E8",
+              "httpStatus": 400,
+              "meaning": "A voucher was returned with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned.",
+              "note": "Message: \"Give a reason so Accounts know what to correct.\" Ask; never compose one."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the return reason. Accounts have to know whether the accounts, the amount, the date, the description or the missing bill is the problem (E8).",
+          "derivedFrom": [
+            "E8",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never adjust the voucher on the approver's behalf. Changing an account or an amount is Accounts' work in their own session — and the amount decides the approval chain (BR-3), so changing it changes who approves.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that nothing has posted and nobody has been paid. A returned voucher is a supplier still waiting.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not undone. Accounts correct the voucher and submit it again, which is a fresh approval chain from the level its amount requires."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "voucher wapas bhej do — bill hi nahi laga hua",
+            "lang": "ur-Latn",
+            "gloss": "send the voucher back — there is no bill attached"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.return",
+              "inputs": {
+                "voucher_id": "$request.voucher_phrase",
+                "return_reason": "No supporting bill is attached. A payment with no bill behind it cannot be authorised.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned with the fault named. Nothing has posted and the supplier has not been paid (PR-3). This is exactly what BR-12 exists for."
+        },
+        {
+          "request": {
+            "text": "galat account mein daala hai, wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "it has gone to the wrong account, send it back"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.return",
+              "inputs": {
+                "voucher_id": "$request.voucher_phrase",
+                "return_reason": "The debit account should be Repairs and Maintenance, not Utilities.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approver states which account it should be; Accounts change it (PR-2)."
+            }
+          ],
+          "outcome": "Returned. Correcting the account is Accounts' work, and resubmitting starts the approval chain again."
+        },
+        {
+          "request": {
+            "text": "voucher wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "send the voucher back"
+          },
+          "context": "School Admin, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.return",
+              "inputs": {
+                "voucher_id": "$request.voucher_phrase",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what is wrong with it."
+        }
+      ]
+    }
+  ]
+}

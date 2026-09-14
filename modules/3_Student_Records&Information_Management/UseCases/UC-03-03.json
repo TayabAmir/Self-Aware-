@@ -1,0 +1,1142 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-03-03",
+  "featureRef": "3.3 Bulk student import",
+  "name": "Import many students at once from a spreadsheet",
+  "module": "Student",
+  "alsoAffectsModules": [
+    "Class & Session Structure"
+  ],
+  "priority": "MVP",
+  "priorityReason": "A school going live has hundreds of existing students. Typing them one by one is not a viable start.",
+  "goal": {
+    "actor": "Staff or Accounts",
+    "capability": "to add many students at once from a spreadsheet",
+    "outcome": "a school starts a session with its roll already in the system, instead of a fortnight of typing"
+  },
+  "primaryActor": "Staff",
+  "secondaryActors": [
+    {
+      "actor": "Accounts",
+      "involvement": "Runs imports alongside Staff, usually at the start of a session."
+    },
+    {
+      "actor": "School Admin",
+      "involvement": "Authorises an import above the configured row threshold and reviews what was created."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "A school goes live and its existing roll is loaded through this path rather than through admission.",
+        "source": "UC-26-11"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An authenticated session exists.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "An academic session is open, and the classes and sections referenced in the file exist.",
+      "establishedBy": {
+        "id": "UC-27-01",
+        "name": "Class creation",
+        "link": "UC-27-01.json"
+      }
+    },
+    {
+      "condition": "A numbering pattern is configured, so student IDs and roll numbers can be generated.",
+      "establishedBy": {
+        "id": "UC-02-07",
+        "name": "Eligibility flagging and admission approval",
+        "link": "UC-02-07.json"
+      }
+    },
+    {
+      "condition": "The acting user's role permits importing into that branch.",
+      "establishedBy": {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json"
+      }
+    }
+  ],
+  "postConditions": [
+    "Every valid row exists as a student record, carrying a generated student ID and, where a class was given, a roll number.",
+    "Every rejected row is reported with its row number and the reason, so the file can be corrected and re-uploaded.",
+    "Guardians and family codes are created or reused, so siblings in the same file share one household rather than becoming two.",
+    "The import batch is recorded with who ran it, when, how many rows were read, created and rejected, so the whole run can be traced later.",
+    "Students imported with a class and section are on the Enrolled Student List; those without are on the Registered Student List.",
+    "No partially built student exists. A row either produced a complete record or produced nothing.",
+    "No invite, admission form, test or approval was involved. This is a migration path, and it bypasses admission deliberately."
+  ],
+  "screens": [
+    {
+      "name": "Bulk student import",
+      "route": "/students/import",
+      "sidebar": "Student",
+      "actions": [
+        "Download template",
+        "Upload file",
+        "Validate",
+        "Import valid rows",
+        "Cancel"
+      ],
+      "visibleTo": [
+        "Staff",
+        "Accounts",
+        "School Admin"
+      ]
+    },
+    {
+      "name": "Import validation result",
+      "route": "/students/import/{batchId}/validate",
+      "sidebar": "Student",
+      "columns": [
+        "Row",
+        "Name",
+        "Class",
+        "Section",
+        "Guardian",
+        "Status",
+        "Error"
+      ],
+      "defaultSort": "Row number ascending",
+      "filters": [
+        "Valid only",
+        "Rejected only"
+      ],
+      "actions": [
+        "Download rejected rows",
+        "Import valid rows",
+        "Cancel"
+      ],
+      "visibleTo": [
+        "Staff",
+        "Accounts",
+        "School Admin"
+      ]
+    },
+    {
+      "name": "Import batches",
+      "route": "/students/import/batches",
+      "sidebar": "Student",
+      "columns": [
+        "Batch",
+        "File name",
+        "Run on",
+        "Run by",
+        "Rows read",
+        "Created",
+        "Rejected",
+        "Status"
+      ],
+      "defaultSort": "Run on, newest first",
+      "actions": [
+        "Open",
+        "Download report"
+      ],
+      "visibleTo": [
+        "Staff",
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Import file",
+      "type": "file",
+      "required": "yes",
+      "validation": "XLSX or CSV, up to 10 MB. Must match the current template (BR-2).",
+      "example": "students-2026.xlsx"
+    },
+    {
+      "name": "Template version",
+      "type": "generated",
+      "required": "no",
+      "validation": "Checked against the file. An outdated template is refused (BR-2).",
+      "example": "v3"
+    },
+    {
+      "name": "Full name",
+      "type": "text",
+      "required": "yes",
+      "validation": "Per row. 2 to 120 characters.",
+      "example": "Ayesha Khan"
+    },
+    {
+      "name": "Gender",
+      "type": "enum",
+      "required": "yes",
+      "validation": "Per row.",
+      "example": "Female",
+      "enumValues": [
+        "Male",
+        "Female",
+        "Other"
+      ]
+    },
+    {
+      "name": "Date of birth",
+      "type": "date",
+      "required": "yes",
+      "validation": "Per row. ISO or DD-MM-YYYY. Ambiguous dates are rejected rather than guessed (BR-5).",
+      "example": "14-03-2016"
+    },
+    {
+      "name": "Identity number",
+      "type": "text",
+      "required": "no",
+      "validation": "Per row. 13 digits. Must not already belong to an active student (BR-6).",
+      "example": "3520212345671"
+    },
+    {
+      "name": "Guardian name",
+      "type": "text",
+      "required": "yes",
+      "validation": "Per row.",
+      "example": "Imran Khan"
+    },
+    {
+      "name": "Guardian identity number",
+      "type": "text",
+      "required": "yes",
+      "validation": "Per row. Used to join siblings into one household (BR-7).",
+      "example": "3520298765432"
+    },
+    {
+      "name": "Guardian contact",
+      "type": "text",
+      "required": "yes",
+      "validation": "Per row. Registered mobile format.",
+      "example": "03001234567"
+    },
+    {
+      "name": "Address",
+      "type": "text",
+      "required": "yes",
+      "validation": "Per row. Maximum 250 characters.",
+      "example": "14-B Model Town, Lahore"
+    },
+    {
+      "name": "Class",
+      "type": "text",
+      "required": "no",
+      "validation": "Per row. Must match a class in the current academic session. Blank imports without enrolling (BR-8).",
+      "example": "Grade 4"
+    },
+    {
+      "name": "Section",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Per row. Must belong to the class named and have capacity (BR-9).",
+      "example": "Section B",
+      "requiredWhen": "A class is given"
+    },
+    {
+      "name": "Existing roll number",
+      "type": "text",
+      "required": "no",
+      "validation": "Per row. Where a school is migrating and wants to keep its existing numbers rather than have new ones generated (BR-10).",
+      "example": "2024-0088"
+    },
+    {
+      "name": "Rows read",
+      "type": "generated",
+      "required": "no",
+      "example": 412
+    },
+    {
+      "name": "Rows created",
+      "type": "generated",
+      "required": "no",
+      "example": 398
+    },
+    {
+      "name": "Rows rejected",
+      "type": "generated",
+      "required": "no",
+      "example": 14
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Import batch",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "One per run, holding the file name, the counts and the outcome. Never deleted."
+    },
+    {
+      "entity": "Import row result",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "One per row, holding the outcome and any error. Append only."
+    },
+    {
+      "entity": "Student",
+      "operations": [
+        "create"
+      ],
+      "notes": "One per valid row."
+    },
+    {
+      "entity": "Guardian",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "Created, or reused where the guardian identity number already exists (BR-7)."
+    },
+    {
+      "entity": "Family",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "Created or joined, so siblings in the file share one household."
+    },
+    {
+      "entity": "Enrolment",
+      "operations": [
+        "create"
+      ],
+      "notes": "Only for rows that carried a class and section."
+    },
+    {
+      "entity": "Class",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read to resolve the class and section named in each row."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "The batch, and every record it created."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Staff",
+      "actions": [
+        "view",
+        "create"
+      ],
+      "rowScope": "Own branch. Imports up to the configured row threshold."
+    },
+    {
+      "actor": "Accounts",
+      "actions": [
+        "view",
+        "create"
+      ],
+      "rowScope": "Own branch. Same threshold."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "create",
+        "approve"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Authorises an import above the threshold, and is the only role that may import with existing roll numbers (BR-10)."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches. The batch history only."
+    },
+    {
+      "actor": "Coordinator, Teacher, Parent / Guardian, Student",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "An import creates student records without an inquiry, approval or test. It is a migration path, used when a school goes live or a whole cohort arrives at once, and it is deliberately outside the admission flow."
+    },
+    {
+      "id": "BR-2",
+      "rule": "The file must match the current template. An outdated template is refused with the version it expected, rather than silently misreading columns."
+    },
+    {
+      "id": "BR-3",
+      "rule": "The whole file is validated before anything is created. Nobody discovers on row 300 that the file was wrong."
+    },
+    {
+      "id": "BR-4",
+      "rule": "Valid rows are created and rejected rows are reported with their row number and reason. One bad row never stops the rest, and a rejected row creates nothing."
+    },
+    {
+      "id": "BR-5",
+      "rule": "An ambiguous date is rejected rather than guessed. A date read the wrong way round puts a child in the wrong class and is not visible afterwards."
+    },
+    {
+      "id": "BR-6",
+      "rule": "An identity number already held by an active student rejects that row as a probable duplicate, naming the existing record."
+    },
+    {
+      "id": "BR-7",
+      "rule": "Rows sharing a guardian identity number join one household with a single guardian and family code. Two siblings in one file must not become two families."
+    },
+    {
+      "id": "BR-8",
+      "rule": "A row with no class produces a student at Registered with no roll number. A row with a class and section produces an enrolled student with a roll number."
+    },
+    {
+      "id": "BR-9",
+      "rule": "A row naming a section at capacity is rejected. An import never over-fills a section."
+    },
+    {
+      "id": "BR-10",
+      "rule": "A school migrating may supply its existing roll numbers rather than have new ones generated. Only School Admin may do this, and a supplied number that is already in use rejects the row."
+    },
+    {
+      "id": "BR-11",
+      "rule": "Each row is atomic. A row produces a complete student, guardian, family and enrolment, or it produces nothing at all."
+    },
+    {
+      "id": "BR-12",
+      "rule": "An import above the configured row threshold requires School Admin authorisation before it runs."
+    },
+    {
+      "id": "BR-13",
+      "rule": "Re-uploading a corrected file creates only the rows that did not already succeed. Rows already created are recognised and skipped rather than duplicated."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Import batch",
+      "states": [
+        "Uploaded",
+        "Validating",
+        "Validated",
+        "Awaiting authorisation",
+        "Importing",
+        "Completed",
+        "Cancelled",
+        "Failed"
+      ],
+      "initial": "Uploaded",
+      "terminal": [
+        "Completed",
+        "Cancelled",
+        "Failed"
+      ],
+      "transitions": [
+        {
+          "from": "Uploaded",
+          "to": "Validating",
+          "triggeredBy": "System",
+          "condition": "The file matches the template (BR-2)."
+        },
+        {
+          "from": "Validating",
+          "to": "Validated",
+          "triggeredBy": "System",
+          "condition": "Every row has been checked (BR-3)."
+        },
+        {
+          "from": "Validated",
+          "to": "Awaiting authorisation",
+          "triggeredBy": "System",
+          "condition": "The row count is above the threshold (BR-12)."
+        },
+        {
+          "from": "Awaiting authorisation",
+          "to": "Importing",
+          "triggeredBy": "School Admin",
+          "condition": "Authorised."
+        },
+        {
+          "from": "Validated",
+          "to": "Importing",
+          "triggeredBy": "Staff / Accounts",
+          "condition": "Import valid rows is selected."
+        },
+        {
+          "from": "Importing",
+          "to": "Completed",
+          "triggeredBy": "System",
+          "condition": "Every valid row has been attempted."
+        },
+        {
+          "from": "Validated",
+          "to": "Cancelled",
+          "triggeredBy": "Staff / Accounts",
+          "condition": "The user cancels before importing."
+        },
+        {
+          "from": "Uploaded",
+          "to": "Failed",
+          "triggeredBy": "System",
+          "condition": "The file cannot be read or does not match the template."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Staff / Accounts",
+      "navigation": "Login → Student → Bulk student import → Download template",
+      "userAction": "Downloads the import template.",
+      "function": "downloadImportTemplate()",
+      "systemResponse": "Provides the current template with its version and its column headings.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "Staff / Accounts",
+      "navigation": "Prepares the file outside the system",
+      "userAction": "Fills in one row per student.",
+      "function": "—",
+      "systemResponse": "—",
+      "rules": []
+    },
+    {
+      "step": 3,
+      "actor": "Staff / Accounts",
+      "navigation": "Bulk student import → Upload file",
+      "userAction": "Uploads the completed file.",
+      "function": "uploadImportFile(file)",
+      "systemResponse": "Checks the file type, size and template version, and creates the import batch.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "System",
+      "navigation": "Bulk student import → Import validation result",
+      "userAction": "—",
+      "function": "validateImportRows(batchId)",
+      "systemResponse": "Validates every row before anything is created, and reports each one as valid or rejected with its reason.",
+      "rules": [
+        "BR-3",
+        "BR-5",
+        "BR-6",
+        "BR-9"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "Staff / Accounts",
+      "navigation": "Import validation result → Import valid rows",
+      "userAction": "Reviews the result and imports the valid rows.",
+      "function": "importValidRows(batchId)",
+      "systemResponse": "Checks the row count against the authorisation threshold, then creates the records.",
+      "rules": [
+        "BR-12"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "createStudentFromRow(batchId, rowNumber)",
+      "systemResponse": "Creates the student, guardian, family and, where a class was given, the enrolment. Each row commits whole or not at all.",
+      "rules": [
+        "BR-7",
+        "BR-8",
+        "BR-11"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "System",
+      "navigation": "Import validation result → Import batches",
+      "userAction": "—",
+      "function": "completeImportBatch(batchId)",
+      "systemResponse": "Records how many rows were read, created and rejected, and offers the rejected rows for download.",
+      "rules": [
+        "BR-4"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 5,
+      "condition": "The row count is above the authorisation threshold",
+      "actor": "School Admin",
+      "navigation": "Login → Student → Import batches → Authorise",
+      "behaviour": "Nothing is created until School Admin authorises. The validated file is frozen so it cannot change while awaiting approval (BR-12).",
+      "function": "authoriseImport(batchId)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 4,
+      "condition": "Some rows are rejected",
+      "actor": "Staff / Accounts",
+      "navigation": "Import validation result → Download rejected rows",
+      "behaviour": "The valid rows are still imported. The rejected rows are downloaded with their reasons, corrected, and uploaded again (BR-4, BR-13).",
+      "function": "downloadRejectedRows(batchId)",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 2,
+      "condition": "Several rows share a guardian identity number",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "One guardian and one family code are created and every one of those students joins it, so siblings in the file do not become separate families (BR-7).",
+      "function": "resolveOrCreateGuardian(guardianIdentityNumber)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 2,
+      "condition": "The school is migrating and wants to keep its existing roll numbers",
+      "actor": "School Admin",
+      "navigation": "Bulk student import → Upload file",
+      "behaviour": "The existing roll number column is used and the numbers are kept rather than generated. Only School Admin may run this, and a number already in use rejects the row (BR-10).",
+      "function": "importValidRows(batchId, keepExistingNumbers=true)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 2,
+      "condition": "Rows carry no class",
+      "actor": "Staff / Accounts",
+      "navigation": "Bulk student import → Upload file",
+      "behaviour": "Those students are created at Registered with no roll number, and are placed in a class later (BR-8).",
+      "function": "createStudentFromRow(batchId, rowNumber)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 5,
+      "condition": "A corrected file is uploaded after a partial import",
+      "actor": "Staff / Accounts",
+      "navigation": "Bulk student import → Upload file",
+      "behaviour": "Rows that already succeeded are recognised and skipped, so a re-upload does not duplicate them (BR-13).",
+      "function": "validateImportRows(batchId)",
+      "resumesAtStep": 4
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 3,
+      "condition": "The file is not XLSX or CSV, or is too large",
+      "systemResponse": "The file is not accepted.",
+      "messageShown": "Upload an XLSX or CSV file under 10 MB.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E2",
+      "atStep": 3,
+      "condition": "The file does not match the current template",
+      "systemResponse": "The import is refused rather than columns being misread.",
+      "messageShown": "This file uses an older template. Download the current template and try again.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E3",
+      "atStep": 4,
+      "condition": "A row has an ambiguous date of birth",
+      "systemResponse": "That row is rejected (BR-5).",
+      "messageShown": "Row 42: date of birth could not be read. Use DD-MM-YYYY.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E4",
+      "atStep": 4,
+      "condition": "A row's identity number already belongs to an active student",
+      "systemResponse": "That row is rejected and the existing record is named (BR-6).",
+      "messageShown": "Row 87: a student with this identity number already exists.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E5",
+      "atStep": 4,
+      "condition": "A row names a class or section that does not exist",
+      "systemResponse": "That row is rejected.",
+      "messageShown": "Row 15: Grade 9 Section C does not exist in this academic session.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E6",
+      "atStep": 4,
+      "condition": "A row names a section that is at capacity",
+      "systemResponse": "That row is rejected (BR-9).",
+      "messageShown": "Row 61: Section B is full.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E7",
+      "atStep": 4,
+      "condition": "Every row is rejected",
+      "systemResponse": "Nothing is created and the batch ends at Validated.",
+      "messageShown": "No row in this file could be imported. Download the report to see why.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E8",
+      "atStep": 6,
+      "condition": "A row fails part way through creation",
+      "systemResponse": "That row is rolled back entirely and reported as failed. The rest of the import continues (BR-11).",
+      "messageShown": "Row 203 could not be created and nothing partial was left behind.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E9",
+      "atStep": 5,
+      "condition": "A Staff user attempts an import above the threshold",
+      "systemResponse": "Nothing is created; the batch goes for authorisation.",
+      "messageShown": "This import needs School Admin approval. It has been sent for authorisation.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E10",
+      "atStep": 5,
+      "condition": "A Staff user supplies existing roll numbers",
+      "systemResponse": "The import is refused (BR-10).",
+      "messageShown": "Only a School Admin can import with existing roll numbers.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Import awaiting authorisation",
+      "recipient": "School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "IMPORT_APPROVAL_PENDING",
+      "contents": [
+        "File name",
+        "Rows valid",
+        "Rows rejected",
+        "Requested by"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Import completed",
+      "recipient": "The user who ran it",
+      "channels": [
+        "inApp"
+      ],
+      "template": "IMPORT_COMPLETE",
+      "contents": [
+        "File name",
+        "Rows created",
+        "Rows rejected",
+        "Link to the report"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "Imported students appear on class registers for attendance marking.",
+      "affects": {
+        "id": "UC-05-01",
+        "name": "Student attendance marking",
+        "link": "UC-05-01.json"
+      }
+    },
+    {
+      "effect": "Imported students enter the fee structure for their class and become billable.",
+      "affects": {
+        "id": "UC-04-02",
+        "name": "Fee invoicing",
+        "link": "UC-04-02.json"
+      }
+    },
+    {
+      "effect": "Guardians gain portal access on the contact supplied in the file.",
+      "affects": {
+        "id": "UC-15-01",
+        "name": "Parent and student portal",
+        "link": "UC-15-01.json"
+      }
+    },
+    {
+      "effect": "Imported records become findable by name, student ID and roll number in global search.",
+      "affects": {
+        "id": "UC-01-10",
+        "name": "Global search",
+        "link": "UC-01-10.json"
+      }
+    },
+    {
+      "effect": "Each imported record becomes maintainable in the ordinary way.",
+      "affects": {
+        "id": "UC-03-01",
+        "name": "View and maintain the student record",
+        "link": "UC-03-01.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Import result",
+      "formats": [
+        "excel",
+        "pdf"
+      ],
+      "columns": [
+        "Row",
+        "Name",
+        "Class",
+        "Section",
+        "Guardian",
+        "Outcome",
+        "Student ID",
+        "Error"
+      ],
+      "grouping": "By outcome",
+      "totals": "Rows read, created and rejected"
+    },
+    {
+      "name": "Import batches",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Batch",
+        "File name",
+        "Run on",
+        "Run by",
+        "Rows read",
+        "Created",
+        "Rejected",
+        "Status"
+      ],
+      "grouping": "By run date",
+      "totals": "Batches and records created in the period"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "A file of 412 rows where 14 have errors",
+      "when": "the import runs",
+      "then": "398 students exist, the 14 are reported with their row numbers and reasons, and the file was not abandoned"
+    },
+    {
+      "id": "AC-2",
+      "given": "A file prepared on an older template",
+      "when": "it is uploaded",
+      "then": "the import is refused and the current template is named, rather than columns being misread"
+    },
+    {
+      "id": "AC-3",
+      "given": "A file where three rows share one guardian identity number",
+      "when": "the import runs",
+      "then": "one guardian and one family code exist, and all three students belong to it"
+    },
+    {
+      "id": "AC-4",
+      "given": "A row whose date of birth could be read two ways",
+      "when": "the file is validated",
+      "then": "the row is rejected rather than a date being guessed"
+    },
+    {
+      "id": "AC-5",
+      "given": "A row whose identity number already belongs to an active student",
+      "when": "the file is validated",
+      "then": "the row is rejected and the existing record is named"
+    },
+    {
+      "id": "AC-6",
+      "given": "A row naming a section that is already full",
+      "when": "the file is validated",
+      "then": "the row is rejected and the section is not over-filled"
+    },
+    {
+      "id": "AC-7",
+      "given": "Rows with no class given",
+      "when": "the import runs",
+      "then": "those students exist at Registered with no roll number, and appear on the Registered Student List"
+    },
+    {
+      "id": "AC-8",
+      "given": "A row that fails while its guardian is being created",
+      "when": "the import completes",
+      "then": "no student, guardian or enrolment exists for that row, and every other row was created"
+    },
+    {
+      "id": "AC-9",
+      "given": "A corrected file re-uploaded after a partial import",
+      "when": "the import runs",
+      "then": "only the previously rejected rows are created, and no student is duplicated"
+    },
+    {
+      "id": "AC-10",
+      "given": "A Staff user importing more rows than the threshold allows",
+      "when": "they run the import",
+      "then": "nothing is created and School Admin receives the authorisation request"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Decides who may import and who authorises a large one."
+      },
+      {
+        "id": "UC-27-01",
+        "name": "Class creation",
+        "link": "UC-27-01.json",
+        "why": "Classes named in the file must exist."
+      },
+      {
+        "id": "UC-27-02",
+        "name": "Section creation",
+        "link": "UC-27-02.json",
+        "why": "Sections named in the file must exist and have capacity."
+      },
+      {
+        "id": "UC-02-07",
+        "name": "Eligibility flagging and admission approval",
+        "link": "UC-02-07.json",
+        "why": "Owns the numbering pattern used to generate student IDs and roll numbers."
+      },
+      {
+        "id": "UC-03-01",
+        "name": "View and maintain the student record",
+        "link": "UC-03-01.json",
+        "why": "Maintains the records this creates."
+      },
+      {
+        "id": "UC-26-11",
+        "name": "Data migration",
+        "link": "UC-26-11.json",
+        "why": "The going-live path that uses this import.",
+        "optional": true
+      }
+    ],
+    "masterData": [
+      "Import template and its version",
+      "Classes and sections with capacities",
+      "Numbering patterns",
+      "Row threshold for authorisation"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Creating a student through admission",
+      "handledBy": {
+        "id": "UC-02-07",
+        "name": "Eligibility flagging and admission approval",
+        "link": "UC-02-07.json"
+      }
+    },
+    {
+      "item": "Correcting a record after import",
+      "handledBy": {
+        "id": "UC-03-01",
+        "name": "View and maintain the student record",
+        "link": "UC-03-01.json"
+      }
+    },
+    {
+      "item": "Importing staff, fee or attendance data",
+      "handledBy": {
+        "id": "UC-26-11",
+        "name": "Data migration",
+        "link": "UC-26-11.json"
+      }
+    },
+    {
+      "item": "Placing an imported student into a class later",
+      "handledBy": {
+        "id": "UC-27-03",
+        "name": "Class placement of an admitted student",
+        "link": "UC-27-03.json"
+      }
+    },
+    {
+      "item": "Importing medical information",
+      "handledBy": {
+        "id": "UC-20-01",
+        "name": "Student medical records",
+        "link": "UC-20-01.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Volume",
+        "requirement": "A 2,000-row file is validated within 60 seconds and imported within 5 minutes, reporting progress while it runs."
+      },
+      {
+        "aspect": "Row atomicity",
+        "requirement": "Each row commits whole or not at all. A failure never leaves a student without a guardian, or a guardian without a student."
+      },
+      {
+        "aspect": "Re-runnability",
+        "requirement": "Re-uploading a corrected file is safe. Rows already created are recognised and skipped."
+      },
+      {
+        "aspect": "Error reporting",
+        "requirement": "Every rejected row carries its row number, so the person correcting the file can find it without counting."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "What is the row threshold above which an import needs School Admin authorisation?",
+      "assumption": "200. Not confirmed.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "How does a re-upload recognise a row already created — by identity number, or by name and date of birth?",
+      "assumption": "Identity number where present, otherwise name and date of birth. This matters and is not specified.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should an import be able to update existing students, or only create new ones?",
+      "assumption": "Create only. Updating in bulk needs its own use case and its own safeguards.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should guardian portal accounts be created for imported students, or issued separately afterwards?",
+      "assumption": "Created, on the contact supplied. Not confirmed.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "May an import run mid-session, or only at the start of one?",
+      "assumption": "Any time. The feature does not restrict it.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "bulk-actions",
+      "area": "Bulk actions",
+      "rule": "Any bulk operation reports a per-row result, commits valid rows and lists rejected rows with the reason. A bulk action never fails as a whole because of one bad row."
+    },
+    {
+      "name": "attachments",
+      "area": "Attachments",
+      "rule": "Uploaded files are limited to 10 MB and to PDF, JPG, PNG, DOCX and XLSX unless a use case states otherwise. File type is validated by content, not by extension."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

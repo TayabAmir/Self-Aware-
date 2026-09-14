@@ -1,0 +1,414 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-07",
+    "name": "Contact the families on the overdue list and prompt them to pay",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-07.json",
+    "featureRef": "4.7 Fee reminders"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-07-PC-1",
+      "intent": {
+        "name": "fee.reminder.send",
+        "summary": "Send fee reminders to families on the overdue list, each carrying their own amount and due date, and log every send against the student. One step.",
+        "routesHere": [
+          "send a reminder to everyone overdue in Grade 4",
+          {
+            "text": "jin ki fees baqaya hai unko reminder bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send a reminder to those with fees outstanding"
+          },
+          {
+            "text": "is family ko fees ka reminder karo",
+            "lang": "ur-Latn",
+            "gloss": "send this family a fee reminder"
+          },
+          {
+            "text": "WhatsApp pe sab ko yaad dila do",
+            "lang": "ur-Latn",
+            "gloss": "remind everyone on WhatsApp"
+          },
+          "message the over-90-day defaulters"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "kis ne fees nahi di?",
+              "lang": "ur-Latn",
+              "gloss": "who has not paid?"
+            },
+            "goesTo": "fee.overdue.list — UC-04-06-PC-1",
+            "note": "The list is read first; who gets chased is decided from it."
+          },
+          {
+            "request": {
+              "text": "late fee laga do",
+              "lang": "ur-Latn",
+              "gloss": "apply a late fee"
+            },
+            "goesTo": "fee.latefee.* — UC-04-15",
+            "note": "A reminder changes nothing. It does not charge a late fee, alter the invoice or extend the due date (BR-10)."
+          },
+          {
+            "request": {
+              "text": "in ko koi aur message bhejo",
+              "lang": "ur-Latn",
+              "gloss": "send them some other message"
+            },
+            "goesTo": "The messaging module.",
+            "note": "This is the fee reminder path, and only Accounts use it (BR-1)."
+          },
+          {
+            "request": {
+              "text": "due date badha do",
+              "lang": "ur-Latn",
+              "gloss": "extend the due date"
+            },
+            "goesTo": "Not offered.",
+            "note": "A reminder does not extend a due date, and nothing in this use case does (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.reminder.send",
+            "inputs": {
+              "student_ids": "$request.student_phrase",
+              "channel": "$request.channel",
+              "template_id": "$request.template_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, whether the request names one family or ninety. Each family's own amount outstanding and due date are filled from their invoice (BR-2) — the plan supplies no figure."
+          }
+        ],
+        "onFailure": "Stop and report. Missing contacts, unresolved merge fields, the authorisation threshold and messaging balance are all enforced by the API and arrive as errors. A send above the threshold is not refused — it is held for School Admin authorisation (E4), which is an outcome to report.",
+        "atomicity": "One write per recipient, and the batch does not stop at the first failure: valid recipients are sent and failures are listed. Each send writes a reminder log entry against the student with the amount outstanding at the moment of sending (BR-9), so a message quoting PKR 4,000 stays explicable after the family pays part of it. Delivery status starts at Queued and is never reported optimistically (BR-8) — a run that reports success has queued the reminders, not delivered them. Nothing about the invoice changes (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "fee.reminder.send",
+          "method": "POST",
+          "path": "/api/v1/fee-reminders",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "student_ids + template_id + channel + the send timestamp, so a repeat does not message the same families twice and inflate the reminder history BR-12 reads",
+          "purpose": "Send a templated fee reminder to selected families, resolving each family's own figures, and log every send against the student.",
+          "parameters": [
+            {
+              "name": "student_ids",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No overdue student matches, or none holding a contact for that channel.",
+                "onAmbiguous": "Ask, naming the candidates. For a set, report how many and who before anything is sent — a reminder cannot be unsent."
+              },
+              "notes": "The families to remind, drawn from the overdue list. Families meeting an approved installment plan are excluded and cannot be re-added by selecting all (BR-3); a family who has missed an installment is not excluded (BR-4)."
+            },
+            {
+              "name": "channel",
+              "source": "request",
+              "sourceRef": "$request.channel",
+              "required": true,
+              "type": "enum: WhatsApp | SMS | Email",
+              "notes": "Only channels the student record holds a contact for are offered (BR-5)."
+            },
+            {
+              "name": "template_id",
+              "source": "resolved",
+              "sourceRef": "$request.template_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "message_template",
+                "fromPhrase": "$request.template_phrase",
+                "onNoMatch": "Refuse. No reminder template of that name for this channel.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "A saved reminder template. Required for a send to more than one family (BR-6, E3). Omit only for a single family written to directly."
+            },
+            {
+              "name": "message_body",
+              "source": "request",
+              "sourceRef": "$request.message_body",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 1000 characters, for one family only. Never for several — free text to many cannot be reviewed before it goes or reused after (BR-6)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "A per-recipient result.",
+            "fields": [
+              {
+                "name": "sent",
+                "type": "object[]",
+                "description": "student_id, reminder_id, outstanding_at_send, delivery_status. Queued until the provider says otherwise (BR-8)."
+              },
+              {
+                "name": "failed",
+                "type": "object[]",
+                "description": "student_id and the reason."
+              },
+              {
+                "name": "excluded_on_plan",
+                "type": "object[]",
+                "description": "Families meeting an approved plan, kept out of the send (BR-3)."
+              },
+              {
+                "name": "excluded_paid",
+                "type": "object[]",
+                "description": "Families who paid since the list was run (E6). Not chased."
+              },
+              {
+                "name": "no_contact",
+                "type": "object[]",
+                "description": "Families holding no contact for the channel (E1)."
+              },
+              {
+                "name": "recently_reminded",
+                "type": "object[]",
+                "description": "Families reminded within the configured interval, flagged so the same family is not messaged three times in a week (BR-12)."
+              },
+              {
+                "name": "awaiting_authorisation",
+                "type": "boolean",
+                "description": "True where the selection exceeded the threshold. Nothing has been sent (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_CONTACT",
+              "mapsTo": "E1",
+              "httpStatus": 200,
+              "meaning": "Some selected students hold no contact for any channel.",
+              "written": "Nothing for those.",
+              "notWritten": "No reminder to them.",
+              "treatedAsSuccess": true,
+              "note": "Listed. Adding a contact is a correction to the student record (UC-03-01)."
+            },
+            {
+              "code": "MERGE_FIELD_UNRESOLVED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "A template field cannot be filled for a family.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "The send is blocked rather than going out with a gap where the amount should be. Never fill it in by hand (BR-2)."
+            },
+            {
+              "code": "BULK_REQUIRES_TEMPLATE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A multi-family send was attempted with free text.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent."
+            },
+            {
+              "code": "AWAITING_AUTHORISATION",
+              "mapsTo": "E4",
+              "httpStatus": 202,
+              "meaning": "The selection is above the threshold.",
+              "written": "The send is queued and School Admin is notified.",
+              "notWritten": "Nothing sent yet.",
+              "treatedAsSuccess": true,
+              "note": "Not a failure. Never split the selection to get under the threshold."
+            },
+            {
+              "code": "NO_BALANCE",
+              "mapsTo": "E5",
+              "httpStatus": 402,
+              "meaning": "There is no messaging balance for the channel.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "Never fall back to another channel — the family may hold no contact for it (BR-5)."
+            },
+            {
+              "code": "ALREADY_PAID",
+              "mapsTo": "E6",
+              "httpStatus": 200,
+              "meaning": "Some selected families have paid since the list was run.",
+              "written": "Nothing for those.",
+              "notWritten": "No reminder to them.",
+              "treatedAsSuccess": true,
+              "note": "Listed and skipped. A family who paid this morning is not chased this afternoon (UC-04-06 BR-5)."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "A Staff user attempted to send a reminder.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "Only Accounts send fee reminders (BR-1). In practice the capability is absent from a Staff allow-list."
+            },
+            {
+              "code": "PROVIDER_UNREACHABLE",
+              "mapsTo": "E8",
+              "httpStatus": 503,
+              "meaning": "The provider cannot be reached.",
+              "written": "The reminders are queued.",
+              "notWritten": "Not delivered.",
+              "treatedAsSuccess": true,
+              "note": "Report them as queued, never as sent (BR-8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report what a set resolves to before anything is sent, with the count and the total outstanding. A reminder cannot be unsent, and \"sab ko bhej do\" is a phrase with no number in it.",
+          "derivedFrom": [
+            "BR-11",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply an amount or a due date into a message. Each reminder carries that family's own figures, filled from their invoice — a figure typed into a message is a figure that can be wrong (BR-2), and it is the number the family will act on.",
+          "derivedFrom": [
+            "BR-2",
+            "E2",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never include families meeting an approved plan. They are excluded by the API and cannot be re-added by selecting all (BR-3); a family paying as agreed being chased is the failure that rule exists to prevent.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never split a selection to get under the authorisation threshold. It exists so a School Admin sees a large chase before it goes (BR-7).",
+          "derivedFrom": [
+            "BR-7",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never switch channel because one has no balance or no contact. The channel was chosen, and a family who gave a number and no email is not reachable by email (BR-5).",
+          "derivedFrom": [
+            "BR-5",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report reminders as queued, never as delivered, and report the recently-reminded flag. The school believing a family was told when they were not is what BR-8 prevents, and messaging the same family three times in a week is what BR-12 prevents.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never claim a reminder does anything to the debt. It charges no late fee, alters no invoice and extends no due date (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A reminder cannot be unsent. The log entry, the amount held against it and the delivery status are history. Where the wrong families were chased, the answer is an apology somebody sends, not a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 4 mein jin ki fees baqaya hai unko WhatsApp pe reminder bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send a WhatsApp reminder to those in Grade 4 with fees outstanding"
+          },
+          "context": "Accounts, Johar Town branch. Nine families overdue, two of them meeting an installment plan.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.reminder.send",
+              "inputs": {
+                "student_ids": "$request.student_phrase → the 7 overdue families not on a plan",
+                "channel": "WhatsApp",
+                "template_id": "$request.template_phrase → \"fee reminder\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The seven are reported by name with their amounts before the plan is emitted (PR-1). The two on a plan are excluded by the API and cannot be added back (PR-3)."
+            }
+          ],
+          "outcome": "Seven reminders queued, each carrying that family's own outstanding amount and due date. Report them as queued, and report the two excluded on a plan — the actor asked for Grade 4 and got seven."
+        },
+        {
+          "request": {
+            "text": "is family ko apna message likh ke bhejo — unhone kaha tha agle hafte denge",
+            "lang": "ur-Latn",
+            "gloss": "write this family a message of my own — they said they would pay next week"
+          },
+          "context": "Accounts, Johar Town branch, one family.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.reminder.send",
+              "inputs": {
+                "student_ids": "$request.student_phrase → one family",
+                "channel": "WhatsApp",
+                "message_body": "$request.message_body",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "template_id is omitted because this is one family written to directly, which BR-6 permits. The text is the actor's own, unchanged."
+            }
+          ],
+          "outcome": "One reminder queued with the actor's words, logged against the student with the amount outstanding at the moment of sending (BR-9)."
+        },
+        {
+          "request": {
+            "text": "poore school ke defaulters ko reminder bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send a reminder to every defaulter in the school"
+          },
+          "context": "Accounts, Johar Town branch. 212 families overdue, above the authorisation threshold.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.reminder.send",
+              "inputs": {
+                "student_ids": "$request.student_phrase → the 212 overdue families",
+                "channel": "WhatsApp",
+                "template_id": "$request.template_phrase → \"fee reminder\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as one send. The API returns AWAITING_AUTHORISATION (E4) on the success path."
+            }
+          ],
+          "outcome": "Nothing is sent. Report that it has gone to School Admin for authorisation and that 212 families are in it — and never split it into class-sized sends to avoid that (PR-4)."
+        }
+      ]
+    }
+  ]
+}

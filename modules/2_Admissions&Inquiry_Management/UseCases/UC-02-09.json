@@ -1,0 +1,993 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-02-09",
+  "featureRef": "2.9 Re-admission handling",
+  "name": "Re-admit a former student onto their existing record",
+  "module": "Inquiry / Admission",
+  "alsoAffectsModules": [
+    "Student"
+  ],
+  "priority": "MVP",
+  "priorityReason": "Families leave and return every session. Without this the school ends up with two records for one child.",
+  "goal": {
+    "actor": "a returning family and the school",
+    "capability": "to rejoin without being asked again for what the school already holds",
+    "outcome": "the child comes back onto the same record, with their history still attached"
+  },
+  "primaryActor": "Prospective family",
+  "secondaryActors": [
+    {
+      "actor": "Staff / Accounts",
+      "involvement": "The same actors as a regular admission. The only difference is that no admission form is sent."
+    },
+    {
+      "actor": "School Admin",
+      "involvement": "Reviews the inquiry, confirms the match to the former record, and schedules the admission test."
+    },
+    {
+      "actor": "Principal / Director",
+      "involvement": "Approves the re-admission."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": false,
+    "additional": [
+      {
+        "type": "inbound",
+        "description": "The family ticks Re-admission on the inquiry form and gives the previous student ID.",
+        "source": "UC-02-01"
+      },
+      {
+        "type": "event",
+        "description": "A staff member records a phone or walk-in enquiry and marks it as a re-admission.",
+        "source": "UC-02-10"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "A student record exists at status Left, Struck off or Transferred, carrying the student ID the family quoted.",
+      "establishedBy": {
+        "id": "UC-03-01",
+        "name": "Central student database and profile",
+        "link": "UC-03-01.json"
+      }
+    },
+    {
+      "condition": "An inquiry exists with Re-admission ticked and a previous student ID entered.",
+      "establishedBy": {
+        "id": "UC-02-01",
+        "name": "Online inquiry form submission",
+        "link": "UC-02-01.json"
+      }
+    },
+    {
+      "condition": "An academic session is open and a class with capacity exists to return into.",
+      "establishedBy": {
+        "id": "UC-03-07",
+        "name": "Class, section and academic session structure",
+        "link": "UC-03-07.json"
+      }
+    }
+  ],
+  "postConditions": [
+    "The inquiry is attached to the existing student record, so everyone downstream knows this is a return and not a new child.",
+    "No admission-form invite is issued and no admission form is completed, because the school already holds the information.",
+    "On confirmation the existing student record is reactivated and linked to the new class and academic session.",
+    "The student keeps their original student ID and roll number, so fee, attendance and examination history stay joined to them.",
+    "The previous enrolment is closed rather than deleted, and the gap between leaving and returning stays visible on the record.",
+    "No second student record, guardian account or family code is created.",
+    "Where the previous student ID matched nothing, the inquiry proceeds as an ordinary new admission instead, with the admission form sent as usual."
+  ],
+  "screens": [
+    {
+      "name": "Public inquiry form, re-admission section",
+      "route": "/inquiry",
+      "sidebar": "None — public page",
+      "actions": [
+        "Tick Re-admission",
+        "Enter previous student ID",
+        "Submit"
+      ],
+      "visibleTo": [
+        "Prospective family"
+      ]
+    },
+    {
+      "name": "Inquiry review, re-admission match",
+      "route": "/admissions/inquiries/{id}/review",
+      "sidebar": "Inquiry / Admission",
+      "columns": [
+        "Field",
+        "On the inquiry",
+        "On the former record",
+        "Same?"
+      ],
+      "actions": [
+        "Confirm match",
+        "Reject match and treat as new admission",
+        "Forward to Principal"
+      ],
+      "visibleTo": [
+        "School Admin"
+      ]
+    },
+    {
+      "name": "Former students",
+      "route": "/students?status=left",
+      "sidebar": "Student",
+      "columns": [
+        "Student ID",
+        "Name",
+        "Guardian",
+        "Last class",
+        "Left on",
+        "Reason",
+        "Balance"
+      ],
+      "defaultSort": "Left on, newest first",
+      "filters": [
+        "Status",
+        "Last class",
+        "Left date range"
+      ],
+      "actions": [
+        "Open",
+        "Start re-admission"
+      ],
+      "visibleTo": [
+        "Staff",
+        "Accounts",
+        "School Admin"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Re-admission",
+      "type": "boolean",
+      "required": "yes",
+      "validation": "Ticked on the inquiry form. Everything in this use case follows from it.",
+      "default": false,
+      "example": true
+    },
+    {
+      "name": "Previous student ID",
+      "type": "text",
+      "required": "yes",
+      "validation": "The system-issued student ID held when the child last attended (BR-2).",
+      "example": "STD-2022-0451"
+    },
+    {
+      "name": "Year last attended",
+      "type": "text",
+      "required": "yes",
+      "example": "2023-24"
+    },
+    {
+      "name": "Reason for leaving",
+      "type": "text",
+      "required": "no",
+      "validation": "Maximum 250 characters. As the family states it; the school's own record may differ.",
+      "example": "Family relocated"
+    },
+    {
+      "name": "Matched student record",
+      "type": "generated",
+      "required": "no",
+      "validation": "The former student the previous ID resolved to, shown for confirmation before anything proceeds (BR-3).",
+      "example": "STD-2022-0451 — Hamza Sheikh, left Grade 4 in 2023-24"
+    },
+    {
+      "name": "Match confirmed",
+      "type": "boolean",
+      "required": "yes",
+      "validation": "Set by the School Admin at review. An unconfirmed match does not proceed as a re-admission (BR-3).",
+      "default": false,
+      "example": true
+    },
+    {
+      "name": "Return class",
+      "type": "lookup",
+      "required": "conditional",
+      "validation": "Defaults to the class above the one they left, and may be changed. It is a suggestion, never applied silently (BR-6).",
+      "default": "The class above the one left",
+      "example": "Grade 5",
+      "requiredWhen": "The re-admission is being approved",
+      "lookupSource": "Classes with capacity"
+    },
+    {
+      "name": "Return section",
+      "type": "lookup",
+      "required": "conditional",
+      "example": "Section A",
+      "requiredWhen": "The re-admission is being approved",
+      "lookupSource": "Sections of the return class"
+    },
+    {
+      "name": "Outstanding balance",
+      "type": "generated",
+      "required": "no",
+      "validation": "Carried from the previous enrolment and shown to the Principal before the decision (BR-8).",
+      "example": "PKR 12,500"
+    },
+    {
+      "name": "Updated guardian contact",
+      "type": "text",
+      "required": "no",
+      "validation": "Where the family's number changed while they were away. Replaces the guardian's sign-in contact (BR-9).",
+      "example": "03005556677"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Inquiry",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Marked as a re-admission and linked to the matched student record."
+    },
+    {
+      "entity": "Student",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Read to match; reactivated on confirmation. No new student is created."
+    },
+    {
+      "entity": "Enrolment",
+      "operations": [
+        "create"
+      ],
+      "notes": "A new enrolment for the return class and session. The previous one is closed, not deleted."
+    },
+    {
+      "entity": "Guardian",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Re-linked; contact updated where it changed. No second guardian is created."
+    },
+    {
+      "entity": "Student history",
+      "operations": [
+        "create"
+      ],
+      "notes": "Records the leave, the gap and the return as one continuous timeline."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "The match, its confirmation, and the reactivation."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Prospective family",
+      "actions": [
+        "create"
+      ],
+      "rowScope": "Their own inquiry only.",
+      "notes": "Ticks Re-admission and supplies the previous student ID. Sees nothing of the matched record."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "edit"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Confirms or rejects the match, and is the only role that may do so."
+    },
+    {
+      "actor": "Staff, Accounts",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "See that the inquiry is a re-admission and which record it matched. Cannot confirm the match."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view",
+        "approve"
+      ],
+      "rowScope": "All branches.",
+      "notes": "Approves the re-admission, with the leaving reason and any balance shown before deciding."
+    },
+    {
+      "actor": "Coordinator, Teacher",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Cannot re-admit."
+    },
+    {
+      "actor": "Student, Parent / Guardian",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access to this screen."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "A re-admission reuses the existing student record. A second record for the same child is the failure this use case exists to prevent."
+    },
+    {
+      "id": "BR-2",
+      "rule": "The previous student ID entered by the family is matched against former student records. A match is a proposal, not a fact."
+    },
+    {
+      "id": "BR-3",
+      "rule": "The match is confirmed by the School Admin at review before anything proceeds. An unconfirmed or mismatched ID is resolved there, not later."
+    },
+    {
+      "id": "BR-4",
+      "rule": "Because the school already holds the information, no admission-form invite is issued and no admission form is completed. Every other step — review, approval, test scheduling, marking and decision — happens exactly as for a new admission."
+    },
+    {
+      "id": "BR-5",
+      "rule": "On confirmation the existing record is reactivated and linked to the new class and academic session. The student keeps their original student ID and roll number, so their history stays joined to them."
+    },
+    {
+      "id": "BR-6",
+      "rule": "The return class defaults to the class above the one they left, which is usually right and is always overridable. It is a suggestion, never applied silently."
+    },
+    {
+      "id": "BR-7",
+      "rule": "The previous enrolment is closed, not deleted. Attendance, marks and fee history from it stay attached and readable."
+    },
+    {
+      "id": "BR-8",
+      "rule": "Any outstanding balance from the previous enrolment is shown to the Principal before the decision, because it is a fact that bears on whether the school wants the family back."
+    },
+    {
+      "id": "BR-9",
+      "rule": "Where the guardian's contact changed while they were away, updating it here also changes their sign-in contact, since a guardian ID is tied to the family code."
+    },
+    {
+      "id": "BR-10",
+      "rule": "A student who transferred to another branch is handled by inter-branch transfer, not here."
+    },
+    {
+      "id": "BR-11",
+      "rule": "The gap between leaving and returning is preserved on the record. A re-admission never rewrites history to look continuous."
+    },
+    {
+      "id": "BR-12",
+      "rule": "Where the previous student ID matches nothing and the family cannot supply a correct one, the inquiry continues as an ordinary new admission and the admission form is sent as usual."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Student",
+      "states": [
+        "Left",
+        "Struck off",
+        "Transferred",
+        "Re-admission in progress",
+        "Enrolled"
+      ],
+      "initial": "Left",
+      "terminal": [],
+      "transitions": [
+        {
+          "from": "Left",
+          "to": "Re-admission in progress",
+          "triggeredBy": "School Admin",
+          "condition": "The match is confirmed at inquiry review (BR-3)."
+        },
+        {
+          "from": "Struck off",
+          "to": "Re-admission in progress",
+          "triggeredBy": "School Admin",
+          "condition": "The match is confirmed, with the striking-off shown to the approver."
+        },
+        {
+          "from": "Re-admission in progress",
+          "to": "Enrolled",
+          "triggeredBy": "Principal / Director",
+          "condition": "The re-admission is approved and a return class and section with capacity are assigned (UC-02-07)."
+        },
+        {
+          "from": "Re-admission in progress",
+          "to": "Left",
+          "triggeredBy": "Principal / Director",
+          "condition": "Refused. The record returns to its previous status."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Prospective family",
+      "navigation": "Public website → Inquiry form → Re-admission section",
+      "userAction": "Ticks Re-admission and enters the previous student ID, year last attended and reason for leaving.",
+      "function": "submitInquiry(payload, readmission=true)",
+      "systemResponse": "Shows the extra fields that case needs and records the inquiry as a re-admission.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "matchFormerStudent(previousStudentId, childName, dateOfBirth)",
+      "systemResponse": "Matches the entry against former student records and attaches the proposed match to the inquiry.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "School Admin",
+      "navigation": "Login → Inquiry / Admission → Inquiry review → Re-admission match",
+      "userAction": "Compares the inquiry against the matched record, field by field, and confirms the match.",
+      "function": "confirmReadmissionMatch(inquiryId, studentId)",
+      "systemResponse": "Links the inquiry to the existing student record and marks it a confirmed re-admission.",
+      "rules": [
+        "BR-3"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Forward to Principal",
+      "userAction": "Reviews and forwards the inquiry in the ordinary way.",
+      "function": "forwardInquiryToPrincipal(inquiryId, reviewNote)",
+      "systemResponse": "Sets the inquiry to Forwarded to Principal, exactly as for a new admission.",
+      "rules": [
+        "BR-4"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "Principal / Director",
+      "navigation": "Login → Inquiry / Admission → Inquiry decision",
+      "userAction": "Approves the inquiry.",
+      "function": "approveInquiry(inquiryId, approvedClassId, decisionNote)",
+      "systemResponse": "Approves it, and issues no admission-form invite because the school already holds the information.",
+      "rules": [
+        "BR-4"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "School Admin",
+      "navigation": "Login → Inquiry / Admission → Applicants awaiting a test → Schedule test",
+      "userAction": "Schedules the admission test as for any other applicant.",
+      "function": "openApplicantForScheduling(applicantId)",
+      "systemResponse": "Sends the date and time to the number on the inquiry, exactly as for a new admission.",
+      "rules": [
+        "BR-4"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "Principal / Director",
+      "navigation": "Applicant decision → Approve admission",
+      "userAction": "Approves the admission after the test is marked.",
+      "function": "reactivateStudent(studentId, returnClassId, returnSectionId)",
+      "systemResponse": "Reactivates the existing record, closes the previous enrolment, creates the new one, and keeps the original student ID and roll number.",
+      "rules": [
+        "BR-1",
+        "BR-5",
+        "BR-7",
+        "BR-11"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 2,
+      "condition": "The previous student ID matches nothing",
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Reject match and treat as new admission",
+      "behaviour": "The admin resolves it — by correcting the ID, or by treating the inquiry as an ordinary new admission, in which case the admission form is sent as usual (BR-12).",
+      "function": "rejectReadmissionMatch(inquiryId, resolution)",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 3,
+      "condition": "The matched record was struck off rather than simply left",
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Re-admission match",
+      "behaviour": "The striking-off and its reason are carried onto the inquiry, so the Principal sees it before approving (BR-8).",
+      "function": "confirmReadmissionMatch(inquiryId, studentId)",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 7,
+      "condition": "An outstanding balance is carried from the previous enrolment",
+      "actor": "Principal / Director",
+      "navigation": "Applicant decision → Outstanding balance",
+      "behaviour": "The balance is shown before the decision. The Principal decides with it in view; how it is settled is a fee matter, not an admission one (BR-8).",
+      "function": "reactivateStudent(studentId, returnClassId, returnSectionId)"
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 1,
+      "condition": "A staff member records the re-admission enquiry by phone or in person",
+      "actor": "Staff / Accounts",
+      "navigation": "Login → Inquiry / Admission → Add New Inquiry → Re-admission",
+      "behaviour": "The same fields are captured on the internal screen, and the source is stamped Phone or Walk-in rather than Online Form.",
+      "function": "createInquiry(payload, source, readmission=true)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 3,
+      "condition": "The guardian's contact changed while the family was away",
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Update guardian contact",
+      "behaviour": "The new number is captured and replaces the guardian's sign-in contact on approval. The previous value stays in the audit trail (BR-9).",
+      "function": "updateGuardianContact(guardianId, newContact)",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 2,
+      "condition": "The matched student transferred to another branch rather than leaving",
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Inter-branch transfer",
+      "behaviour": "Re-admission is refused here and inter-branch transfer is the correct path (BR-10).",
+      "function": "rejectReadmissionMatch(inquiryId, 'transferred')"
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 2,
+      "condition": "The previous student ID matches no record",
+      "systemResponse": "The inquiry is still created and flagged for the reviewer to resolve (BR-12).",
+      "messageShown": "We could not find that student ID. You can still submit, and the school will check it.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E2",
+      "atStep": 3,
+      "condition": "The matched record is currently enrolled",
+      "systemResponse": "The match is refused.",
+      "messageShown": "This student is currently enrolled in Grade 5 Section A. This is not a re-admission.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E3",
+      "atStep": 3,
+      "condition": "The matched record's name and date of birth differ from the inquiry",
+      "systemResponse": "The difference is shown field by field and the match is not confirmed automatically.",
+      "messageShown": "The details on this inquiry do not match the record for STD-2022-0451. Check before confirming.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 3,
+      "condition": "A Staff user attempts to confirm the match",
+      "systemResponse": "The action is refused.",
+      "messageShown": "Only a School Admin can confirm a re-admission match.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 7,
+      "condition": "The return section is at capacity",
+      "systemResponse": "The re-admission is not completed into it.",
+      "messageShown": "Section A is full. Choose another section, or approve without a section and place the student later.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 7,
+      "condition": "The section filled while the decision was pending",
+      "systemResponse": "Nothing is reactivated.",
+      "messageShown": "Section A filled while this was awaiting approval. Choose another section.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 7,
+      "condition": "Reactivation fails part way",
+      "systemResponse": "No enrolment is created, the record stays at Re-admission in progress, and nothing partial is left behind.",
+      "messageShown": "The re-admission could not be completed. The record is unchanged.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E8",
+      "atStep": 2,
+      "condition": "The matched student transferred to another branch",
+      "systemResponse": "Re-admission is refused (BR-10).",
+      "messageShown": "This student transferred to the Johar Town branch. Use inter-branch transfer instead.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Re-admission match confirmed",
+      "recipient": "Principal / Director",
+      "channels": [
+        "inApp"
+      ],
+      "template": "READMISSION_AWAITING_APPROVAL",
+      "contents": [
+        "Student ID",
+        "Child name",
+        "Last class",
+        "Left on",
+        "Leaving reason",
+        "Outstanding balance"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Re-admission completed",
+      "recipient": "Parent / Guardian",
+      "channels": [
+        "whatsapp"
+      ],
+      "template": "STUDENT_READMITTED",
+      "contents": [
+        "Student name",
+        "Class and section",
+        "Student ID",
+        "Roll number",
+        "Return date"
+      ],
+      "retry": "Per the Messaging module policy.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "No admission-form invite is issued for this inquiry.",
+      "affects": {
+        "id": "UC-02-04",
+        "name": "Admission form completion",
+        "link": "UC-02-04.json"
+      }
+    },
+    {
+      "effect": "The applicant enters test scheduling directly from approval.",
+      "affects": {
+        "id": "UC-02-05",
+        "name": "Admission test scheduling",
+        "link": "UC-02-05.json"
+      }
+    },
+    {
+      "effect": "The student reappears on class registers for attendance marking.",
+      "affects": {
+        "id": "UC-05-01",
+        "name": "Student attendance marking",
+        "link": "UC-05-01.json"
+      }
+    },
+    {
+      "effect": "The student re-enters the fee structure for the return class and becomes billable, with any carried balance visible.",
+      "affects": {
+        "id": "UC-04-02",
+        "name": "Fee invoicing",
+        "link": "UC-04-02.json"
+      }
+    },
+    {
+      "effect": "The guardian's portal access resumes on the existing guardian ID.",
+      "affects": {
+        "id": "UC-15-01",
+        "name": "Parent and student portal",
+        "link": "UC-15-01.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Re-admissions",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Student ID",
+        "Student",
+        "Left on",
+        "Returned on",
+        "Gap in months",
+        "Previous class",
+        "Return class",
+        "Balance carried",
+        "Approved by"
+      ],
+      "grouping": "By return class",
+      "totals": "Count per class and total balance carried"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "A family ticking Re-admission and entering STD-2022-0451",
+      "when": "the inquiry is submitted",
+      "then": "the former student record is proposed as a match and shown to the School Admin for confirmation"
+    },
+    {
+      "id": "AC-2",
+      "given": "A confirmed re-admission inquiry",
+      "when": "the Principal approves the inquiry",
+      "then": "no admission-form invite is issued and the applicant goes straight to test scheduling"
+    },
+    {
+      "id": "AC-3",
+      "given": "A confirmed re-admission",
+      "when": "the admission is approved after the test",
+      "then": "the existing record is reactivated with its original student ID and roll number, and no second student record exists"
+    },
+    {
+      "id": "AC-4",
+      "given": "A re-admitted student with attendance and results from the previous enrolment",
+      "when": "the record is opened",
+      "then": "the earlier attendance and results are still attached and readable, and the gap between leaving and returning is visible"
+    },
+    {
+      "id": "AC-5",
+      "given": "A previous student ID matching nothing",
+      "when": "the School Admin reviews it",
+      "then": "the inquiry continues as an ordinary new admission and the admission form is sent as usual"
+    },
+    {
+      "id": "AC-6",
+      "given": "A matched student who transferred to another branch",
+      "when": "re-admission is attempted",
+      "then": "it is refused and inter-branch transfer is named as the correct path"
+    },
+    {
+      "id": "AC-7",
+      "given": "A former student who left owing PKR 12,500",
+      "when": "the Principal opens the decision",
+      "then": "the outstanding balance is shown before the decision is taken"
+    },
+    {
+      "id": "AC-8",
+      "given": "A student who left Grade 4",
+      "when": "the return class is offered",
+      "then": "Grade 5 is the default and can be changed"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-02-01",
+        "name": "Online inquiry form submission",
+        "link": "UC-02-01.json",
+        "why": "Where the family ticks Re-admission and gives the previous student ID."
+      },
+      {
+        "id": "UC-02-02",
+        "name": "Inquiry review by School Admin",
+        "link": "UC-02-02.json",
+        "why": "Where the match is confirmed or rejected."
+      },
+      {
+        "id": "UC-02-03",
+        "name": "Inquiry approval and admission-form invite",
+        "link": "UC-02-03.json",
+        "why": "Approves the inquiry, and issues no invite for a re-admission."
+      },
+      {
+        "id": "UC-02-05",
+        "name": "Admission test scheduling",
+        "link": "UC-02-05.json",
+        "why": "The applicant enters scheduling directly."
+      },
+      {
+        "id": "UC-02-07",
+        "name": "Eligibility flagging and admission approval",
+        "link": "UC-02-07.json",
+        "why": "Reactivates the record instead of creating one."
+      },
+      {
+        "id": "UC-03-01",
+        "name": "Central student database and profile",
+        "link": "UC-03-01.json",
+        "why": "Owns the record being reactivated."
+      },
+      {
+        "id": "UC-23-02",
+        "name": "Inter-branch student transfer",
+        "link": "UC-23-02.json",
+        "why": "Handles a transferred student instead of this use case.",
+        "optional": true
+      }
+    ],
+    "masterData": [
+      "Former student records",
+      "Classes and sections with capacities"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Registering a child who never attended this school",
+      "handledBy": {
+        "id": "UC-02-01",
+        "name": "Online inquiry form submission",
+        "link": "UC-02-01.json"
+      }
+    },
+    {
+      "item": "Moving a student between branches",
+      "handledBy": {
+        "id": "UC-23-02",
+        "name": "Inter-branch student transfer",
+        "link": "UC-23-02.json"
+      }
+    },
+    {
+      "item": "Marking a student as left in the first place",
+      "handledBy": {
+        "id": "UC-03-01",
+        "name": "Central student database and profile",
+        "link": "UC-03-01.json"
+      }
+    },
+    {
+      "item": "Settling or writing off the carried balance",
+      "handledBy": {
+        "id": "UC-04-11",
+        "name": "Fee reversal and write-off",
+        "link": "UC-04-11.json"
+      }
+    },
+    {
+      "item": "The admission test itself",
+      "handledBy": {
+        "id": "UC-02-06",
+        "name": "Admission test marking",
+        "link": "UC-02-06.json"
+      }
+    },
+    {
+      "item": "Issuing a replacement ID card",
+      "handledBy": {
+        "id": "UC-13-01",
+        "name": "Student ID card generation",
+        "link": "UC-13-01.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "History integrity",
+        "requirement": "Reactivation never rewrites or merges previous enrolment rows. The gap is preserved and visible on the record."
+      },
+      {
+        "aspect": "Atomicity",
+        "requirement": "Reactivation, the closure of the previous enrolment and the new enrolment commit together or not at all."
+      },
+      {
+        "aspect": "Match latency",
+        "requirement": "The former-student match returns within 2 seconds, so the family is not left waiting on the public form."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "How long after leaving may a child be re-admitted onto the same record?",
+      "assumption": "No limit. The record is theirs.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "Does a struck-off student need a higher approval than one who simply left?",
+      "assumption": "Same approval, with the striking-off shown to the Principal (BR-8). Not confirmed.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    },
+    {
+      "question": "Must a re-admitted student sit the admission test again, or may the school waive it?",
+      "assumption": "They sit it. The feature routes them to scheduling like any other applicant.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should the carried balance block the re-admission, or only be shown?",
+      "assumption": "Only shown. Settling it is a fee matter.",
+      "confirmWith": "Accounts",
+      "blocksBuild": false
+    },
+    {
+      "question": "Are the original student ID and roll number always kept, even after several years?",
+      "assumption": "Yes (BR-5).",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    }
+  ]
+}

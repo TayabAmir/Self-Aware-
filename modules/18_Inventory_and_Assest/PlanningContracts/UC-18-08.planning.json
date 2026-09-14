@@ -1,0 +1,1549 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-18-08",
+    "name": "Record where an asset is and who holds it, and move it when that changes",
+    "module": "Inventory, Assets & Point-of-Sale",
+    "file": "../UseCases/UC-18-08.json",
+    "featureRef": "18.8 Assigning or reassigning an asset"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-18-08-PC-1",
+      "intent": {
+        "name": "asset.assign",
+        "summary": "Record who holds an asset, or which room or department it belongs to.",
+        "routesHere": [
+          "assign the projector to the physics laboratory",
+          {
+            "text": "projector physics lab ke naam kar dein",
+            "lang": "ur-Latn",
+            "gloss": "assign the projector to the physics lab"
+          },
+          {
+            "text": "ye laptop Imran ko de dein, unke naam laga dein",
+            "lang": "ur-Latn",
+            "gloss": "give this laptop to Imran, put it in his name"
+          },
+          {
+            "text": "ye printer accounts department ko de dein",
+            "lang": "ur-Latn",
+            "gloss": "assign this printer to the accounts department"
+          },
+          "put the new microscope on the lab's record"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "register se hata dein",
+              "lang": "ur-Latn",
+              "gloss": "take it off the register"
+            },
+            "goesTo": "asset.disposal.raise — UC-18-11.",
+            "note": "An asset is never deleted. Disposal is its own route with its own approval (UC-18-07 BR-8)."
+          },
+          {
+            "request": {
+              "text": "ye kisi aur ke paas hai ab",
+              "lang": "ur-Latn",
+              "gloss": "somebody else has it now"
+            },
+            "goesTo": "asset.reassign — this use case.",
+            "note": "Moving an asset from one holder to another is a reassignment, and where it is being taken away from a person it carries a reason (BR-2, BR-10)."
+          },
+          {
+            "request": {
+              "text": "doosre campus bhej dein",
+              "lang": "ur-Latn",
+              "gloss": "send it to the other campus"
+            },
+            "goesTo": "asset.campus.transfer — this use case.",
+            "note": "A move between campuses is recorded as a campus transfer rather than an ordinary reassignment, because the two mean different things to a group (BR-4, E7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.assign",
+            "inputs": {
+              "asset_id": "$request.asset_phrase",
+              "assignment_type": "$request.assignment_type",
+              "assigned_to_id": "$request.assignee_phrase",
+              "assigned_on": "$request.assigned_on",
+              "authorised_by_id": "$request.authoriser_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. An asset is assigned to one thing at a time — assigning it somewhere else ends the previous assignment rather than creating a second (BR-7, E1)."
+          }
+        ],
+        "onFailure": "Stop and report. A disposed asset, a person who has left, a date in the future or no authoriser each refuses the assignment outright.",
+        "atomicity": "One write and the end of any previous assignment. The history is kept in full and an assignment is never deleted, so where an asset has been can always be traced (BR-6, E9)."
+      },
+      "operations": [
+        {
+          "name": "asset.assign",
+          "method": "POST",
+          "path": "/api/v1/asset-assignments",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "asset + assignee + date, so a double press does not end and restart the same assignment twice",
+          "purpose": "Assign an asset to a room, a person or a department.",
+          "parameters": [
+            {
+              "name": "asset_id",
+              "source": "resolved",
+              "sourceRef": "$request.asset_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset",
+                "fromPhrase": "$request.asset_phrase",
+                "onNoMatch": "Refuse. No asset on the register matches. An asset that has been disposed of cannot be assigned (BR-9, E2).",
+                "onAmbiguous": "Ask, naming the assets that match with their identifiers, locations and current holders — two projectors of the same model are told apart only by their tags."
+              },
+              "notes": "The asset, named by its tag, its serial number or what it is and where it sits."
+            },
+            {
+              "name": "assignment_type",
+              "source": "request",
+              "sourceRef": "$request.assignment_type",
+              "required": true,
+              "type": "enum: Room|Person|Department",
+              "notes": "What the asset is assigned to (BR-1). **The three are not interchangeable**: only a person assignment names a custodian and only a person assignment puts the asset on an exit handover checklist. Whether anybody is the custodian of a departmental asset is an open question this use case raises and does not answer (BR-5, OQ-2)."
+            },
+            {
+              "name": "assigned_to_id",
+              "source": "resolved",
+              "sourceRef": "$request.assignee_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "assignment_target",
+                "fromPhrase": "$request.assignee_phrase",
+                "onNoMatch": "Refuse. No active room, person or department matches. An asset cannot be assigned to somebody who has left — the custodian must be an active record (BR-8, E3).",
+                "onAmbiguous": "Ask, naming the candidates and saying which are rooms, which people and which departments — the three carry different consequences, and only a person assignment puts the asset on an exit checklist."
+              },
+              "notes": "The room, person or department. **A person named here is the custodian of that asset** (BR-1) and it appears on their exit handover checklist if they leave (BR-5)."
+            },
+            {
+              "name": "assigned_on",
+              "source": "request",
+              "sourceRef": "$request.assigned_on",
+              "required": true,
+              "type": "date",
+              "notes": "The date of the assignment. Not in the future (BR-3, E5)."
+            },
+            {
+              "name": "authorised_by_id",
+              "source": "resolved",
+              "sourceRef": "$request.authoriser_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.authoriser_phrase",
+                "onNoMatch": "Refuse. No School Admin or Principal matches.",
+                "onAmbiguous": "Ask, naming the candidates with their roles."
+              },
+              "notes": "Who authorised it. Recorded on every assignment (BR-3, E4) — an asset that moved with nobody's name against the move is an asset nobody can be asked about. Whether any School Admin or Principal is acceptable, or a named person, is an open question this use case raises and does not answer (OQ-1)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who now answers for the asset, and what that means.",
+            "fields": [
+              {
+                "name": "assignment_id",
+                "type": "string",
+                "description": "The assignment."
+              },
+              {
+                "name": "asset",
+                "type": "string",
+                "description": "Which asset."
+              },
+              {
+                "name": "assigned_to",
+                "type": "string",
+                "description": "The room, person or department."
+              },
+              {
+                "name": "assignment_type",
+                "type": "string",
+                "description": "Room, person or department (BR-1)."
+              },
+              {
+                "name": "custodian",
+                "type": "string",
+                "description": "The person, where it is a person assignment. A room or a department assignment names none (BR-1, A5, OQ-2)."
+              },
+              {
+                "name": "previous_assignment",
+                "type": "string",
+                "description": "What it was assigned to before. That assignment has ended rather than a second being created (BR-7, E1)."
+              },
+              {
+                "name": "authorised_by",
+                "type": "string",
+                "description": "Who authorised the move (BR-3)."
+              },
+              {
+                "name": "on_exit_checklist",
+                "type": "boolean",
+                "description": "True only for a person assignment. It appears on their exit handover checklist alongside anything returnable issued to them from stock, and has to be returned or reassigned before the leaving date (BR-5, E8)."
+              },
+              {
+                "name": "days_held_by_previous",
+                "type": "integer",
+                "description": "How long the previous holder had it."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "PREVIOUS_ASSIGNMENT_ENDED",
+              "mapsTo": "E1",
+              "httpStatus": 200,
+              "meaning": "The asset was assigned elsewhere.",
+              "written": "The previous assignment ends and this one begins.",
+              "notWritten": "No second assignment is created.",
+              "treatedAsSuccess": true,
+              "note": "An asset is assigned to one thing at a time (BR-7)."
+            },
+            {
+              "code": "ASSET_DISPOSED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The asset has been disposed of.",
+              "written": "Nothing.",
+              "notWritten": "It cannot be assigned.",
+              "note": "Its assignment ended at disposal (BR-9)."
+            },
+            {
+              "code": "PERSON_HAS_LEFT",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The person named has left the school.",
+              "written": "Nothing.",
+              "notWritten": "The assignment is refused.",
+              "note": "The custodian must be an active record (BR-8)."
+            },
+            {
+              "code": "NO_AUTHORISER",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No authorising person was recorded.",
+              "written": "Nothing.",
+              "notWritten": "The assignment is not saved.",
+              "note": "An asset that moved with nobody's name against the move is an asset nobody can be asked about (BR-3)."
+            },
+            {
+              "code": "DATE_IN_FUTURE",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The assignment date is in the future.",
+              "written": "Nothing.",
+              "notWritten": "It is not saved."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say which of the three kinds this is, and what follows. A person assignment names a custodian and puts the asset on their exit checklist; a room or department assignment names nobody and puts it on no checklist at all — an expensive machine assigned to a department can leave the school with somebody and be caught by nothing (BR-1, BR-5, OQ-2).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-5",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say what the previous assignment was. Assigning ends it rather than adding a second, so this quietly takes the asset away from whoever had it — and where that was a person, the reason belongs on a reassignment (BR-7, BR-10, E1).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-10",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never assign to somebody who has left. The custodian must be an active record, and an asset in a departed person's name is one nobody can be asked about (BR-8, E3).",
+          "derivedFrom": [
+            "BR-8",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Always record who authorised it. It is required on every assignment and it is the only name against the movement (BR-3, E4).",
+          "derivedFrom": [
+            "BR-3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never record a campus move as an ordinary assignment. It is a transfer, and the two mean different things to a group (BR-4, E7).",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "asset.reassign",
+        "statement": "An assignment made in error is corrected by assigning it where it should be, which ends this one. Nothing is deleted — the history stays complete so where an asset has been can be traced (BR-6, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye laptop Imran Sultan ke naam kar dein, Principal ne manzoori di hai",
+            "lang": "ur-Latn",
+            "gloss": "assign this laptop to Imran Sultan, the Principal authorised it"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.assign",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the laptop named",
+                "assignment_type": "Person",
+                "assigned_to_id": "$request.assignee_phrase → Imran Sultan",
+                "assigned_on": "today",
+                "authorised_by_id": "$request.authoriser_phrase → the Principal",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A person assignment, so he is the custodian (PR-1)."
+            }
+          ],
+          "outcome": "Report him as custodian. Say what that carries: if he leaves, the laptop appears on his exit handover checklist alongside anything returnable he holds from stock, and the exit cannot complete until it is returned or reassigned."
+        },
+        {
+          "request": {
+            "text": "ye printer accounts department ko de dein",
+            "lang": "ur-Latn",
+            "gloss": "assign this printer to the accounts department"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.assign",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the printer",
+                "assignment_type": "Department",
+                "assigned_to_id": "$request.assignee_phrase → Accounts",
+                "assigned_on": "today",
+                "authorised_by_id": "$request.authoriser_phrase → asked",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A department assignment names no custodian (PR-1)."
+            }
+          ],
+          "outcome": "Ask who is authorising it — it is required on every assignment and is the only name against the movement. After: say plainly that a department assignment names nobody as custodian, so this printer appears on no exit checklist. Whether a departmental asset should have a custodian at all is a question the specification raises and leaves open."
+        },
+        {
+          "request": {
+            "text": "ye projector Sana ke naam kar dein",
+            "lang": "ur-Latn",
+            "gloss": "assign this projector to Sana"
+          },
+          "context": "School Admin, Sana having resigned last month.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.assign",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the projector",
+                "assignment_type": "Person",
+                "assigned_to_id": "$request.assignee_phrase → Sana, no longer active",
+                "assigned_on": "today",
+                "authorised_by_id": "$request.authoriser_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused at resolution. She has left (PR-3)."
+            }
+          ],
+          "outcome": "It cannot be assigned to her — she is no longer an active record, and an asset in a departed person's name is one nobody can be asked about. Choose an active custodian, or assign it to the room it sits in and accept that a room assignment names nobody."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-08-PC-2",
+      "intent": {
+        "name": "asset.reassign",
+        "summary": "Move an asset to a different room, person or department — with a reason where it is being taken from a person.",
+        "routesHere": [
+          "reassign the laptop from Imran to Sana",
+          {
+            "text": "ye laptop Imran se le kar Sana ko de dein",
+            "lang": "ur-Latn",
+            "gloss": "take this laptop from Imran and give it to Sana"
+          },
+          {
+            "text": "projector ab chemistry lab mein rakhna hai",
+            "lang": "ur-Latn",
+            "gloss": "the projector is to go to the chemistry lab now"
+          },
+          {
+            "text": "ye staff member ja rahe hain, unke assets kisi aur ke naam kar dein",
+            "lang": "ur-Latn",
+            "gloss": "this staff member is leaving, reassign their assets"
+          },
+          "move the printer to the front office"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "doosre campus bhej dein",
+              "lang": "ur-Latn",
+              "gloss": "send it to the other campus"
+            },
+            "goesTo": "asset.campus.transfer — this use case.",
+            "note": "A move between campuses is a transfer rather than an ordinary reassignment, and recording it as the latter is corrected to the former (BR-4, E7)."
+          },
+          {
+            "request": {
+              "text": "kisi ke naam na karein, bas khali kar dein",
+              "lang": "ur-Latn",
+              "gloss": "do not assign it to anybody, just leave it free"
+            },
+            "goesTo": "Not offered.",
+            "note": "An asset moves from one assignment to another. The lifecycle has no route from Assigned back to Unassigned — only disposal ends an assignment without a new one (BR-7, BR-9)."
+          },
+          {
+            "request": {
+              "text": "halat kharab hai, marammat karwani hai",
+              "lang": "ur-Latn",
+              "gloss": "it is in poor condition, it needs repair"
+            },
+            "goesTo": "asset.maintenance.record — UC-18-09.",
+            "note": "Sending an asset for repair is maintenance with its own record and its own cost, not a reassignment."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.reassign",
+            "inputs": {
+              "asset_id": "$request.asset_phrase",
+              "assignment_type": "$request.assignment_type",
+              "assigned_to_id": "$request.assignee_phrase",
+              "assigned_on": "$request.assigned_on",
+              "authorised_by_id": "$request.authoriser_phrase",
+              "reassignment_reason": "$request.reassignment_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The previous assignment ends and this one begins — an asset is assigned to one thing at a time (BR-7, E1)."
+          }
+        ],
+        "onFailure": "Stop and report. A reassignment away from a person with no reason is refused (E6), and a disposed asset cannot be reassigned at all (E2).",
+        "atomicity": "One write and the end of the previous assignment. Both stay in the history, which is kept in full so where an asset has been can be traced (BR-6, E9)."
+      },
+      "operations": [
+        {
+          "name": "asset.reassign",
+          "method": "POST",
+          "path": "/api/v1/assets/{asset_id}/reassign",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "asset + new assignee + date, so a double press does not end and restart the same assignment twice",
+          "purpose": "Move an asset to a different room, person or department.",
+          "parameters": [
+            {
+              "name": "asset_id",
+              "source": "resolved",
+              "sourceRef": "$request.asset_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset",
+                "fromPhrase": "$request.asset_phrase",
+                "onNoMatch": "Refuse. No assigned asset matches. An asset that has been disposed of cannot be reassigned (BR-9, E2).",
+                "onAmbiguous": "Ask, naming the assets that match with their identifiers, locations and current holders."
+              },
+              "notes": "The asset, named by its tag, its serial number or what it is and where it sits."
+            },
+            {
+              "name": "assignment_type",
+              "source": "request",
+              "sourceRef": "$request.assignment_type",
+              "required": true,
+              "type": "enum: Room|Person|Department",
+              "notes": "What it is moving to. Moving from a person to a room takes it off somebody's exit checklist and puts it on nobody's (BR-1, BR-5)."
+            },
+            {
+              "name": "assigned_to_id",
+              "source": "resolved",
+              "sourceRef": "$request.assignee_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "assignment_target",
+                "fromPhrase": "$request.assignee_phrase",
+                "onNoMatch": "Refuse. No active room, person or department matches. An asset cannot be assigned to somebody who has left (BR-8, E3).",
+                "onAmbiguous": "Ask, naming the candidates and saying which are rooms, which people and which departments."
+              },
+              "notes": "The room, person or department it moves to. A person named here becomes the custodian (BR-1, BR-8, E3)."
+            },
+            {
+              "name": "assigned_on",
+              "source": "request",
+              "sourceRef": "$request.assigned_on",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the future (BR-3, E5)."
+            },
+            {
+              "name": "authorised_by_id",
+              "source": "resolved",
+              "sourceRef": "$request.authoriser_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.authoriser_phrase",
+                "onNoMatch": "Refuse. No School Admin or Principal matches.",
+                "onAmbiguous": "Ask, naming the candidates with their roles."
+              },
+              "notes": "Who authorised it. Recorded on every reassignment (BR-3, E4)."
+            },
+            {
+              "name": "reassignment_reason",
+              "source": "request",
+              "sourceRef": "$request.reassignment_reason",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 500 characters. **Required where the asset is being moved away from a person** (BR-10, E6) — it is the movement most often asked about afterwards."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What moved, from whom, and what that changes.",
+            "fields": [
+              {
+                "name": "assignment_id",
+                "type": "string",
+                "description": "The new assignment."
+              },
+              {
+                "name": "previous_holder",
+                "type": "string",
+                "description": "Who or what had it, and for how long (BR-7)."
+              },
+              {
+                "name": "moved_to",
+                "type": "string",
+                "description": "Where it is now."
+              },
+              {
+                "name": "reassignment_reason",
+                "type": "string",
+                "description": "Why it was taken away from its custodian, where it was (BR-10)."
+              },
+              {
+                "name": "authorised_by",
+                "type": "string",
+                "description": "Who authorised the move (BR-3)."
+              },
+              {
+                "name": "custodian_now",
+                "type": "string",
+                "description": "The new person, or none where it moved to a room or a department (BR-1, A5)."
+              },
+              {
+                "name": "left_exit_checklist",
+                "type": "string",
+                "description": "Where the asset moved off a person, it is no longer on that person's exit handover checklist. Where it moved to a room or a department, it is now on nobody's (BR-5, OQ-2)."
+              },
+              {
+                "name": "still_assigned_to_previous",
+                "type": "object[]",
+                "description": "Anything else still assigned to the previous holder. Moving one asset off somebody does not move the rest (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "An asset was reassigned away from a person with no reason.",
+              "written": "Nothing.",
+              "notWritten": "The reassignment is not saved.",
+              "note": "It is the movement most often asked about afterwards (BR-10)."
+            },
+            {
+              "code": "ASSET_DISPOSED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The asset has been disposed of.",
+              "written": "Nothing.",
+              "notWritten": "It cannot be reassigned (BR-9)."
+            },
+            {
+              "code": "PERSON_HAS_LEFT",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The person it is being moved to has left the school.",
+              "written": "Nothing.",
+              "notWritten": "The reassignment is refused (BR-8)."
+            },
+            {
+              "code": "NO_AUTHORISER",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No authorising person was recorded.",
+              "written": "Nothing.",
+              "notWritten": "Not saved (BR-3)."
+            },
+            {
+              "code": "DATE_IN_FUTURE",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The date is in the future.",
+              "written": "Nothing.",
+              "notWritten": "Not saved."
+            },
+            {
+              "code": "CAMPUS_MOVE",
+              "mapsTo": "E7",
+              "httpStatus": 200,
+              "meaning": "The move takes the asset to another campus.",
+              "written": "It is recorded as a campus transfer instead.",
+              "notWritten": "Not as an ordinary reassignment.",
+              "treatedAsSuccess": true,
+              "note": "The two mean different things to a group (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason for taking an asset away from a person. It is the movement most often asked about afterwards, and \"reassigned\" is not an answer to why somebody's equipment was moved (BR-10, E6).",
+          "derivedFrom": [
+            "BR-10",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say what leaves the exit checklist. Moving an asset from a person to a room takes it off their handover list and puts it on nobody's — the school has not lost track of it, but nothing will now catch it when anybody leaves (BR-5, OQ-2).",
+          "derivedFrom": [
+            "BR-5",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say what else the previous holder still has. Somebody handing back one machine on their last week usually has others, and moving one does not move the rest (BR-5, E8).",
+          "derivedFrom": [
+            "BR-5",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never record a campus move as a reassignment. It is a transfer and is recorded as one whether or not it was asked for that way (BR-4, E7).",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Record who authorised it, every time. An asset that moved with nobody's name against the move is an asset nobody can be asked about (BR-3, E4).",
+          "derivedFrom": [
+            "BR-3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "asset.reassign",
+        "statement": "It is moved back, which is another reassignment with its own reason and its own authoriser. Nothing is deleted — both movements stay in the history so where the asset has been can be traced (BR-6, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye laptop Imran se le kar Sana ko de dein, Imran doosre campus ja rahe hain",
+            "lang": "ur-Latn",
+            "gloss": "take this laptop from Imran and give it to Sana, Imran is moving to the other campus"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.reassign",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the laptop",
+                "assignment_type": "Person",
+                "assigned_to_id": "$request.assignee_phrase → Sana Iqbal",
+                "assigned_on": "today",
+                "authorised_by_id": "$request.authoriser_phrase → asked",
+                "reassignment_reason": "as they gave it — Imran is moving to the other campus",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Away from a person, so the reason is required and theirs (PR-1)."
+            }
+          ],
+          "outcome": "Ask who is authorising it. After: report Sana as the new custodian and Imran off the hook for this one — and say that he still has two other assets assigned to him, which moving this one has not touched."
+        },
+        {
+          "request": {
+            "text": "projector ab chemistry lab mein rakhna hai",
+            "lang": "ur-Latn",
+            "gloss": "the projector is to go to the chemistry lab now"
+          },
+          "context": "School Admin, projector currently assigned to a teacher.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.reassign",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the projector",
+                "assignment_type": "Room",
+                "assigned_to_id": "$request.assignee_phrase → Chemistry laboratory",
+                "assigned_on": "today",
+                "authorised_by_id": "$request.authoriser_phrase → asked",
+                "reassignment_reason": "$request.reassignment_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. It is being taken away from a person (PR-1)."
+            }
+          ],
+          "outcome": "Ask why it is being moved away from its custodian — the reason is required for exactly this movement. And say what the move does: once it belongs to a room rather than a person, nobody is its custodian and it will appear on no exit handover checklist at all."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-08-PC-3",
+      "intent": {
+        "name": "asset.campus.transfer",
+        "summary": "Move an asset to another campus, recorded as a transfer rather than an ordinary reassignment.",
+        "routesHere": [
+          "transfer the projector to the Model Town campus",
+          {
+            "text": "ye projector Model Town campus bhej dein",
+            "lang": "ur-Latn",
+            "gloss": "send this projector to the Model Town campus"
+          },
+          {
+            "text": "ye saman doosre campus transfer kar dein",
+            "lang": "ur-Latn",
+            "gloss": "transfer this equipment to the other campus"
+          },
+          "move the spare laptops to the second campus"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "bas kamre ka naam badal dein",
+              "lang": "ur-Latn",
+              "gloss": "just change the room"
+            },
+            "goesTo": "asset.reassign — this use case.",
+            "note": "Moving within a campus is an ordinary reassignment. Moving between campuses is a transfer, and the two mean different things to a group (BR-4, E7)."
+          },
+          {
+            "request": {
+              "text": "transfer ki manzoori kis se leni hai?",
+              "lang": "ur-Latn",
+              "gloss": "who approves a transfer?"
+            },
+            "goesTo": "Not answerable here.",
+            "note": "Nothing here requires an approval for a campus transfer. Whether it should need one, as an inter-branch student transfer does, is an open question this use case raises and does not answer (OQ-5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.campus.transfer",
+            "inputs": {
+              "asset_id": "$request.asset_phrase",
+              "to_campus_id": "$request.campus_phrase",
+              "assignment_type": "$request.assignment_type",
+              "assigned_to_id": "$request.assignee_phrase",
+              "transferred_on": "$request.transferred_on",
+              "authorised_by_id": "$request.authoriser_phrase",
+              "reassignment_reason": "$request.reassignment_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, recorded as a transfer. It also ends the old assignment and begins a new one at the receiving campus (BR-4, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A disposed asset cannot be transferred, and a transfer away from a person carries a reason like any other move away from a custodian (BR-9, BR-10).",
+        "atomicity": "One write, marked as a campus transfer rather than a reassignment. **No approval is required** — nothing in this use case asks for one, and whether it should is unanswered (OQ-5)."
+      },
+      "operations": [
+        {
+          "name": "asset.campus.transfer",
+          "method": "POST",
+          "path": "/api/v1/assets/{asset_id}/campus-transfer",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "asset + receiving campus + date, so a double press does not record the same transfer twice",
+          "purpose": "Record an asset moving between campuses.",
+          "parameters": [
+            {
+              "name": "asset_id",
+              "source": "resolved",
+              "sourceRef": "$request.asset_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset",
+                "fromPhrase": "$request.asset_phrase",
+                "onNoMatch": "Refuse. No assigned asset matches, or it has been disposed of (BR-9, E2).",
+                "onAmbiguous": "Ask, naming the assets that match with their identifiers, locations and current holders."
+              },
+              "notes": "The asset, named by its tag, its serial number or what it is and where it sits."
+            },
+            {
+              "name": "to_campus_id",
+              "source": "resolved",
+              "sourceRef": "$request.campus_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "campus",
+                "fromPhrase": "$request.campus_phrase",
+                "onNoMatch": "Refuse. No such campus.",
+                "onAmbiguous": "Ask, naming the campuses."
+              },
+              "notes": "The campus it is moving to (BR-4, BR-5)."
+            },
+            {
+              "name": "assignment_type",
+              "source": "request",
+              "sourceRef": "$request.assignment_type",
+              "required": true,
+              "type": "enum: Room|Person|Department",
+              "notes": "What it is assigned to at the receiving campus (BR-1)."
+            },
+            {
+              "name": "assigned_to_id",
+              "source": "resolved",
+              "sourceRef": "$request.assignee_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "assignment_target",
+                "fromPhrase": "$request.assignee_phrase",
+                "onNoMatch": "Refuse. No active room, person or department matches at that campus (BR-8, E3).",
+                "onAmbiguous": "Ask, naming the candidates at the receiving campus."
+              },
+              "notes": "The room, person or department at the receiving campus."
+            },
+            {
+              "name": "transferred_on",
+              "source": "request",
+              "sourceRef": "$request.transferred_on",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the future (BR-3, E5)."
+            },
+            {
+              "name": "authorised_by_id",
+              "source": "resolved",
+              "sourceRef": "$request.authoriser_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.authoriser_phrase",
+                "onNoMatch": "Refuse. No School Admin or Principal matches.",
+                "onAmbiguous": "Ask, naming the candidates with their roles."
+              },
+              "notes": "Who authorised the transfer. Recorded like any other movement (BR-3, E4)."
+            },
+            {
+              "name": "reassignment_reason",
+              "source": "request",
+              "sourceRef": "$request.reassignment_reason",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required where the transfer takes the asset away from a person (BR-10, E6)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What moved between campuses and what it now belongs to.",
+            "fields": [
+              {
+                "name": "transfer_id",
+                "type": "string",
+                "description": "The transfer."
+              },
+              {
+                "name": "recorded_as",
+                "type": "string",
+                "description": "Campus transfer. Not an ordinary reassignment — the two mean different things to a group (BR-4, E7)."
+              },
+              {
+                "name": "from_campus",
+                "type": "string",
+                "description": "Where it was."
+              },
+              {
+                "name": "to_campus",
+                "type": "string",
+                "description": "Where it is."
+              },
+              {
+                "name": "previous_holder",
+                "type": "string",
+                "description": "Who or what had it before, and for how long (BR-7)."
+              },
+              {
+                "name": "assigned_to",
+                "type": "string",
+                "description": "What it belongs to at the receiving campus."
+              },
+              {
+                "name": "authorised_by",
+                "type": "string",
+                "description": "Who authorised it (BR-3)."
+              },
+              {
+                "name": "approval_required",
+                "type": "boolean",
+                "description": "False. Nothing here requires an approval for a campus transfer, unlike an inter-branch student transfer — whether it should is unanswered (OQ-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ASSET_DISPOSED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The asset has been disposed of.",
+              "written": "Nothing.",
+              "notWritten": "It cannot be transferred (BR-9)."
+            },
+            {
+              "code": "PERSON_HAS_LEFT",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The person at the receiving campus has left.",
+              "written": "Nothing.",
+              "notWritten": "Refused (BR-8)."
+            },
+            {
+              "code": "NO_AUTHORISER",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No authorising person was recorded.",
+              "written": "Nothing.",
+              "notWritten": "Not saved (BR-3)."
+            },
+            {
+              "code": "DATE_IN_FUTURE",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The date is in the future.",
+              "written": "Nothing.",
+              "notWritten": "Not saved."
+            },
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "The transfer takes the asset away from a person and no reason was given.",
+              "written": "Nothing.",
+              "notWritten": "Not saved (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that this is recorded as a transfer, not a reassignment. To a group with several campuses the two are different facts, and the distinction is the reason this act exists at all (BR-4, E7).",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say plainly that nothing approves it. A student moving between branches is approved and an asset worth more than a term's fees is not — the specification raises this and does not settle it (OQ-5).",
+          "derivedFrom": [
+            "OQ-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Give the reason where it leaves a person. A transfer away from a custodian is still a movement away from a custodian, and it is the kind most often asked about afterwards (BR-10, E6).",
+          "derivedFrom": [
+            "BR-10",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Record who authorised it. It is the only name against the asset leaving one campus for another (BR-3, E4).",
+          "derivedFrom": [
+            "BR-3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "asset.campus.transfer",
+        "statement": "It is transferred back, which is another transfer with its own record. Nothing is deleted and both movements stay in the history (BR-6, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye projector Model Town campus bhej dein, wahan lab mein lagega",
+            "lang": "ur-Latn",
+            "gloss": "send this projector to the Model Town campus, it will go in the lab there"
+          },
+          "context": "School Admin, Johar Town branch, projector currently assigned to a teacher.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.campus.transfer",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the Epson projector",
+                "to_campus_id": "$request.campus_phrase → Model Town",
+                "assignment_type": "Room",
+                "assigned_to_id": "$request.assignee_phrase → the physics laboratory at Model Town",
+                "transferred_on": "today",
+                "authorised_by_id": "$request.authoriser_phrase → asked",
+                "reassignment_reason": "asked — it is moving away from a person",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Recorded as a transfer, not a reassignment (PR-1)."
+            }
+          ],
+          "outcome": "Ask who authorised it and why it is leaving its current custodian. After: report it recorded as a campus transfer — and say the thing worth knowing: no approval was needed. A student moving between branches goes through an approval and a projector worth PKR 68,000 does not, which the specification raises and leaves open."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-08-PC-4",
+      "intent": {
+        "name": "asset.assignments.read",
+        "summary": "See who holds what, where each asset is, and what is assigned to somebody who is leaving.",
+        "routesHere": [
+          "what assets is Imran holding?",
+          {
+            "text": "Imran ke naam kaunse assets hain?",
+            "lang": "ur-Latn",
+            "gloss": "which assets are in Imran's name?"
+          },
+          {
+            "text": "physics lab mein kaunse assets lage hue hain?",
+            "lang": "ur-Latn",
+            "gloss": "which assets are assigned to the physics lab?"
+          },
+          {
+            "text": "ye teacher ja rahe hain, unke naam kya kya hai?",
+            "lang": "ur-Latn",
+            "gloss": "this teacher is leaving, what is in their name?"
+          },
+          "list everything that has no custodian"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye asset kahan kahan raha hai?",
+              "lang": "ur-Latn",
+              "gloss": "where has this asset been?"
+            },
+            "goesTo": "asset.assignment.history.read — this use case.",
+            "note": "Where an asset has been over time is the other question, and the history is kept in full (BR-6)."
+          },
+          {
+            "request": {
+              "text": "stock mein unke paas kya hai?",
+              "lang": "ur-Latn",
+              "gloss": "what stock do they hold?"
+            },
+            "goesTo": "stock.person.holdings.read — UC-18-05.",
+            "note": "Returnable items issued from stock are a separate record. Both appear on the same exit handover checklist (BR-5)."
+          },
+          {
+            "request": {
+              "text": "kisi aur ke naam kar dein",
+              "lang": "ur-Latn",
+              "gloss": "reassign it to somebody else"
+            },
+            "goesTo": "asset.reassign — this use case.",
+            "note": "Reading and moving are separate acts."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.assignments.read",
+            "inputs": {
+              "assignee_phrase": "$request.assignee_phrase",
+              "assignment_type": "$request.assignment_type",
+              "unassigned_only": "$request.unassigned_only",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. Nothing moves by looking."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written, and no assignment is ever deleted from what it reads (BR-6, E9)."
+      },
+      "operations": [
+        {
+          "name": "asset.assignments.read",
+          "method": "GET",
+          "path": "/api/v1/asset-assignments",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List current asset assignments by holder, room or department.",
+          "parameters": [
+            {
+              "name": "assignee_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.assignee_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "assignment_target",
+                "fromPhrase": "$request.assignee_phrase",
+                "onNoMatch": "Refuse. No room, person or department matches.",
+                "onAmbiguous": "Ask, naming the candidates and saying which are rooms, which people and which departments."
+              },
+              "notes": "Where the question is about one person, room or department."
+            },
+            {
+              "name": "assignment_type",
+              "source": "request",
+              "sourceRef": "$request.assignment_type",
+              "required": false,
+              "type": "enum: Room|Person|Department",
+              "notes": "Where the question is about one kind of holder (BR-1)."
+            },
+            {
+              "name": "unassigned_only",
+              "source": "request",
+              "sourceRef": "$request.unassigned_only",
+              "required": false,
+              "type": "boolean",
+              "notes": "Assets on the register that nobody answers for. Registering assigns to nobody and nothing forces the next step (UC-18-07 BR-9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who holds what, and what nobody holds.",
+            "fields": [
+              {
+                "name": "assignments",
+                "type": "object[]",
+                "description": "Asset, identifier, assigned to, kind of holder, assigned on, authorised by and days held."
+              },
+              {
+                "name": "by_person",
+                "type": "object[]",
+                "description": "Assets in individual names. These are the ones with a custodian and the ones that appear on an exit checklist (BR-1, BR-5)."
+              },
+              {
+                "name": "by_room_or_department",
+                "type": "object[]",
+                "description": "Assets with no custodian at all. Nobody answers for these and they appear on nobody's exit checklist — whether a departmental asset should have a custodian is unanswered (BR-1, A5, OQ-2)."
+              },
+              {
+                "name": "unassigned",
+                "type": "object[]",
+                "description": "On the register, assigned to nothing. Registering assigns to nobody and nothing chases the next step (UC-18-07 BR-9, E8)."
+              },
+              {
+                "name": "held_by_leavers",
+                "type": "object[]",
+                "description": "Assets assigned to people serving notice or already gone. An asset assigned to a person is not released by that person leaving, and the exit cannot complete while any remain (BR-5, E8)."
+              },
+              {
+                "name": "held_longest",
+                "type": "object[]",
+                "description": "Assets one person has held for a very long time. Days held is shown and **nothing acts on it** — whether it should be flagged for review is unanswered (OQ-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the assignment register.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned.",
+              "note": "The use case writes no exception for it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Separate the assets with a custodian from the ones without. A person assignment names somebody who can be asked; a room or department assignment names nobody, and the school finds that out only when something goes missing (BR-1, A5, OQ-2).",
+          "derivedFrom": [
+            "BR-1",
+            "A5",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name anything held by somebody who is leaving. An asset assigned to a person is not released by that person leaving, and the exit cannot complete while any remain (BR-5, E8).",
+          "derivedFrom": [
+            "BR-5",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name the assets nobody has ever been assigned. Registering assigns to nobody and nothing forces an assignment afterwards, so an asset can sit unattributed indefinitely (UC-18-07 BR-9).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Give the days held, and say that nothing acts on them. A laptop held by one person for four years is visible here and triggers nothing anywhere (OQ-4).",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye teacher agle hafte ja rahe hain, unke naam kya kya hai?",
+            "lang": "ur-Latn",
+            "gloss": "this teacher is leaving next week, what is in their name?"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.assignments.read",
+              "inputs": {
+                "assignee_phrase": "$request.assignee_phrase → the teacher named",
+                "assignment_type": "omitted",
+                "unassigned_only": "false",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One person (PR-2)."
+            }
+          ],
+          "outcome": "List the two assets in their name with the days each has been held. Say that both are on their exit handover checklist and the exit cannot complete until they are returned or reassigned — and that anything returnable they hold from stock is on the same checklist and is a separate record."
+        },
+        {
+          "request": {
+            "text": "kis kis cheez ka koi zimmedar nahi hai?",
+            "lang": "ur-Latn",
+            "gloss": "which things have nobody answering for them?"
+          },
+          "context": "Principal, all branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.assignments.read",
+              "inputs": {
+                "assignee_phrase": "omitted",
+                "assignment_type": "omitted",
+                "unassigned_only": "true",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The unassigned, and the ones assigned to rooms and departments (PR-1, PR-3)."
+            }
+          ],
+          "outcome": "Give two lists, because they are different problems. The assets assigned to nothing at all — registered and never assigned, which nothing chases. And the assets assigned to rooms and departments, which do have a location but no custodian: nobody can be asked about them and they appear on no exit checklist when anybody leaves."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-08-PC-5",
+      "intent": {
+        "name": "asset.assignment.history.read",
+        "summary": "Trace where an asset has been and who has held it, from registration to now.",
+        "routesHere": [
+          "where has this projector been?",
+          {
+            "text": "ye projector kahan kahan raha hai?",
+            "lang": "ur-Latn",
+            "gloss": "where has this projector been?"
+          },
+          {
+            "text": "ye laptop kis kis ke paas raha hai?",
+            "lang": "ur-Latn",
+            "gloss": "who has held this laptop?"
+          },
+          {
+            "text": "ye asset yahan kaise pahuncha aur kis ne manzoori di thi?",
+            "lang": "ur-Latn",
+            "gloss": "how did this asset get here and who authorised it?"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "abhi kis ke paas hai?",
+              "lang": "ur-Latn",
+              "gloss": "who has it now?"
+            },
+            "goesTo": "asset.assignments.read — this use case.",
+            "note": "Where it is now is the other question."
+          },
+          {
+            "request": {
+              "text": "is ki marammat ka record dikhayein",
+              "lang": "ur-Latn",
+              "gloss": "show its repair record"
+            },
+            "goesTo": "asset.maintenance.read — UC-18-09.",
+            "note": "What has been done to the asset is maintenance, not movement."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.assignment.history.read",
+            "inputs": {
+              "asset_id": "$request.asset_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read of a complete record. An assignment is never deleted, so where an asset has been can always be traced (BR-6, E9)."
+          }
+        ],
+        "onFailure": "Stop and report. An asset that cannot be identified returns no history — two identical machines are told apart only by their tags.",
+        "atomicity": "A read. The history is kept in full and cannot be edited or deleted (BR-6, E9)."
+      },
+      "operations": [
+        {
+          "name": "asset.assignment.history.read",
+          "method": "GET",
+          "path": "/api/v1/assets/{asset_id}/assignment-history",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return the full assignment history of one asset.",
+          "parameters": [
+            {
+              "name": "asset_id",
+              "source": "resolved",
+              "sourceRef": "$request.asset_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset",
+                "fromPhrase": "$request.asset_phrase",
+                "onNoMatch": "Refuse. No asset matches, assigned, unassigned or disposed of.",
+                "onAmbiguous": "Ask, naming the assets that match with their identifiers and current holders."
+              },
+              "notes": "The asset, including one already disposed of — its assignment ended at disposal and the history stays (BR-9, UC-18-07 BR-8)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Everywhere the asset has been.",
+            "fields": [
+              {
+                "name": "asset_id",
+                "type": "string",
+                "description": "The asset."
+              },
+              {
+                "name": "assignments",
+                "type": "object[]",
+                "description": "Each holder in turn: what kind, from when to when, days held, who authorised it and the reason it moved on (BR-3, BR-6, BR-10)."
+              },
+              {
+                "name": "campus_transfers",
+                "type": "object[]",
+                "description": "Movements between campuses, recorded as transfers rather than reassignments (BR-4)."
+              },
+              {
+                "name": "moves_without_reason",
+                "type": "object[]",
+                "description": "Movements away from a room or a department, which carry no reason — only a move away from a person does (BR-10)."
+              },
+              {
+                "name": "unassigned_periods",
+                "type": "object[]",
+                "description": "Stretches when the asset was assigned to nothing at all, which is where it was registered and never assigned (UC-18-07 BR-9)."
+              },
+              {
+                "name": "current",
+                "type": "object",
+                "description": "Where it is now, or the disposal that ended its assignment (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the assignment history.",
+              "written": "Nothing.",
+              "notWritten": "No history is returned.",
+              "note": "The use case writes no exception for it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Give the reasons alongside the movements. A move away from a person carries one and a move away from a room does not, so a history is a mixture of explained and unexplained movements and it is worth saying which is which (BR-10, E6).",
+          "derivedFrom": [
+            "BR-10",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name who authorised each move. That is the whole point of recording it — an asset that moved with nobody's name against the move is one nobody can be asked about (BR-3, E4).",
+          "derivedFrom": [
+            "BR-3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Distinguish a campus transfer from a reassignment in the history. They read the same as movements and mean different things to a group (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Name the stretches when it was assigned to nothing. An asset registered and never assigned sat with nobody answering for it, and that period is invisible in a list of holders (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing. The record it reads is never deleted (BR-6, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye projector kahan kahan raha hai aur kis ne manzoori di thi?",
+            "lang": "ur-Latn",
+            "gloss": "where has this projector been and who authorised the moves?"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.assignment.history.read",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the Epson projector",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-2)."
+            }
+          ],
+          "outcome": "Give each holder in turn with the dates, the days held and the authoriser. Mark which moves carry a reason and which do not — only a move away from a person does, so the two moves between rooms have no explanation recorded at all. Note the four months after registration when it was assigned to nothing."
+        }
+      ]
+    }
+  ]
+}

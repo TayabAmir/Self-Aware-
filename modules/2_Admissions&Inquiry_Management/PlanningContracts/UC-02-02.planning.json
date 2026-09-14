@@ -1,0 +1,366 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-02-02",
+    "name": "Review a submitted inquiry and forward it to the Principal",
+    "module": "Admissions & Inquiry Management",
+    "file": "../UseCases/UC-02-02.json",
+    "featureRef": "2.2 Inquiry review by School Admin"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-02-02-PC-1",
+      "intent": {
+        "name": "inquiry.review",
+        "summary": "Record the School Admin's review of a submitted inquiry and move it — forwarded to the Principal, returned to Staff, or held for the family to be contacted. One step.",
+        "routesHere": [
+          "forward the Ahmed Raza inquiry to the principal",
+          {
+            "text": "ye inquiry principal ko bhej do",
+            "lang": "ur-Latn",
+            "gloss": "forward this inquiry to the principal"
+          },
+          {
+            "text": "is inquiry ko wapas bhejo, guardian relationship missing hai",
+            "lang": "ur-Latn",
+            "gloss": "send this inquiry back, the guardian relationship is missing"
+          },
+          "return this one — the date of birth doesn't match the class",
+          {
+            "text": "family se poochna hai, inquiry rok lo",
+            "lang": "ur-Latn",
+            "gloss": "we need to ask the family, hold the inquiry"
+          },
+          "review this inquiry and put it up to the principal"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is inquiry ko approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve this inquiry"
+            },
+            "goesTo": "inquiry.approve — UC-02-03-PC-1",
+            "note": "Review decides only whether the Principal should be asked; it decides no admission (BR-9). Approving is the Principal's act."
+          },
+          {
+            "request": {
+              "text": "ye inquiry band kar do",
+              "lang": "ur-Latn",
+              "gloss": "close this enquiry"
+            },
+            "goesTo": "inquiry.close — UC-02-11-PC-1",
+            "note": "Returning an inquiry never closes it — a family waiting on the school is not a closed inquiry (BR-6)."
+          },
+          {
+            "request": {
+              "text": "family ko call karke bata do kya kya chahiye",
+              "lang": "ur-Latn",
+              "gloss": "call the family and tell them what is needed"
+            },
+            "goesTo": "inquiry.review with outcome Contact family, then inquiry.message — UC-02-12",
+            "note": "Recording that the family must be contacted and actually contacting them are two acts. The first is here; the second is a message."
+          },
+          {
+            "request": "correct the guardian's phone number on this inquiry",
+            "goesTo": "A correction on the inquiry, recorded with its previous value (BR-5).",
+            "note": "UC-02-02 allows the reviewer to correct obvious errors, but no capability for it is specified here. See the open question."
+          },
+          {
+            "request": "check whether this child is already a student",
+            "goesTo": "Part of this capability.",
+            "note": "The duplicate check runs server-side during review (BR-3) and comes back on the response. It is not a separate call."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "inquiry.review",
+            "inputs": {
+              "inquiry_id": "$request.inquiry_phrase",
+              "outcome": "$request.outcome",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The duplicate check against current students, former students and other open inquiries runs inside it (BR-3) and comes back on the response — the plan does not call for it separately."
+          }
+        ],
+        "onFailure": "Stop and report. Completeness, the reviewer's role, and whether the inquiry has already been forwarded are all enforced by the API and arrive as errors; the plan does not test for them beforehand.",
+        "atomicity": "One write. The review record, the status change, the reviewer and the audit entry are written together or not at all. The review is recorded even where nothing changed (BR-1), so a run that reports no movement has still left a trace of the check. Nothing is sent to the family."
+      },
+      "operations": [
+        {
+          "name": "inquiry.review",
+          "method": "POST",
+          "path": "/api/v1/inquiries/{inquiry_id}/review",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "inquiry_id + outcome, so a repeated call returns ALREADY_FORWARDED rather than recording a second review",
+          "purpose": "Record a School Admin's review and move the inquiry — forward, return, or hold for contact — with the duplicate check run as part of it.",
+          "parameters": [
+            {
+              "name": "inquiry_id",
+              "source": "resolved",
+              "sourceRef": "$request.inquiry_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "inquiry",
+                "fromPhrase": "$request.inquiry_phrase",
+                "onNoMatch": "Refuse. No inquiry matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with child name, guardian and status."
+              },
+              "notes": "The inquiry, resolved from how the actor named it — a reference, the child's name, or the guardian's number."
+            },
+            {
+              "name": "outcome",
+              "source": "request",
+              "sourceRef": "$request.outcome",
+              "required": true,
+              "type": "enum: Forward to Principal | Return to Staff | Contact family",
+              "notes": "What the admin decided. Forwarding is a recommendation, not a decision (BR-9)."
+            },
+            {
+              "name": "missing_items",
+              "source": "request",
+              "sourceRef": "$request.missing_items",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required for Return to Staff and Contact family (BR-4, E2): 'incomplete' with no detail sends the inquiry round in a circle. Omit for a forward."
+            },
+            {
+              "name": "review_note",
+              "source": "request",
+              "sourceRef": "$request.review_note",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 500 characters. Anything the Principal should know before deciding. Never shown to the family."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The inquiry as it now stands, and what the duplicate check found.",
+            "fields": [
+              {
+                "name": "inquiry_id",
+                "type": "string",
+                "description": "The inquiry reviewed."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Under review, Returned for information, or Forwarded to Principal."
+              },
+              {
+                "name": "reviewed_by",
+                "type": "string",
+                "description": "The acting School Admin."
+              },
+              {
+                "name": "reviewed_on",
+                "type": "datetime",
+                "description": "DD-MM-YYYY HH:mm, school-local."
+              },
+              {
+                "name": "duplicate_matches",
+                "type": "object[]",
+                "description": "Any current student, former student or other open inquiry matching this child (BR-3). Empty is a result, not an absence of one."
+              },
+              {
+                "name": "duplicate_check_ran",
+                "type": "boolean",
+                "description": "False where the check could not run, in which case the inquiry is marked unverified (E5)."
+              },
+              {
+                "name": "readmission_match_confirmed",
+                "type": "boolean",
+                "description": "For a re-admission, whether the previous student ID has been confirmed. Forwarding without it is refused (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REQUIRED_FIELD_MISSING",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A required field on the inquiry is still empty, so it cannot be forwarded.",
+              "written": "Nothing.",
+              "notWritten": "Not forwarded.",
+              "note": "The message names the field. An incomplete inquiry reaching the Principal wastes the one decision that matters (BR-2). Never re-emit with the outcome changed to get past it."
+            },
+            {
+              "code": "MISSING_ITEMS_REQUIRED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "Return or Contact was chosen with no missing items named.",
+              "written": "Nothing.",
+              "notWritten": "Not moved.",
+              "note": "Message: \"Name what is missing. The person receiving this needs to know what to do.\""
+            },
+            {
+              "code": "ALREADY_FORWARDED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The inquiry has already been forwarded to the Principal.",
+              "written": "Nothing.",
+              "notWritten": "No second review recorded.",
+              "note": "The message names the date. Not a failure to retry."
+            },
+            {
+              "code": "FORWARD_NOT_PERMITTED",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "A Staff user attempted to forward.",
+              "written": "Nothing.",
+              "notWritten": "Not forwarded.",
+              "note": "Only a School Admin may forward. In practice the capability is absent from a Staff allow-list and never planned with."
+            },
+            {
+              "code": "DUPLICATE_CHECK_UNAVAILABLE",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "The duplicate check could not run.",
+              "written": "The review is recorded and the inquiry is marked unverified.",
+              "notWritten": "No duplicate result.",
+              "treatedAsSuccess": true,
+              "note": "Not a failure of the review. Report that the inquiry is marked unverified rather than that the review failed."
+            },
+            {
+              "code": "INQUIRY_CLOSED",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The inquiry was closed as declined since it was listed.",
+              "written": "Nothing.",
+              "notWritten": "Not reviewed.",
+              "note": "Re-opening is inquiry.reopen and a separate decision, never chained onto this."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never name the missing items yourself. Return to Staff and Contact family both refuse without them (E2), and a list a planner composed describes what it thinks is absent rather than what the reviewer decided is absent.",
+          "derivedFrom": [
+            "BR-4",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never change the outcome to get past a refusal. A forward refused for an incomplete field is not a return; it is an incomplete inquiry, and forwarding it as something else moves it while leaving the gap.",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never re-emit the review after ALREADY_FORWARDED. A second review is not recorded and the inquiry has moved on; the answer is where it is now.",
+          "derivedFrom": [
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never treat an empty duplicate_matches as the same thing as duplicate_check_ran false. The first says the child is not on file; the second says nobody looked. Reporting the second as the first is how a duplicate enrolment gets created (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain an approval onto a forward. Review decides only whether the Principal should be asked (BR-9), and the Principal's decision is a separate capability with a separate allow-list entry.",
+          "derivedFrom": [
+            "BR-9",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Carry the actor's own words into review_note and missing_items. The Principal and the Staff member read them, and a planner's paraphrase loses what the reviewer actually noticed.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-review. A review is a record of a check that happened, and it is recorded even when nothing changed (BR-1). A forward made in error is answered by the Principal's decision, or by the inquiry being returned afterwards — both further recorded acts, never a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ahmed Raza wali inquiry principal ko bhej do, sab theek hai",
+            "lang": "ur-Latn",
+            "gloss": "forward the Ahmed Raza inquiry to the principal, everything is in order"
+          },
+          "context": "School Admin, Johar Town branch. The inquiry is at Pending review.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.review",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Ahmed Raza\"",
+                "outcome": "Forward to Principal",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "missing_items is omitted, because it is required only for a return or a contact (BR-4). The duplicate check runs inside the call."
+            }
+          ],
+          "outcome": "The inquiry moves to Forwarded to Principal with the reviewer and date recorded, and duplicate_matches comes back empty — meaning the check ran and found nothing, which is not the same as no check (PR-4)."
+        },
+        {
+          "request": {
+            "text": "is inquiry ko wapas bhej do — guardian ka relationship nahi likha aur date of birth galat lag rahi hai",
+            "lang": "ur-Latn",
+            "gloss": "send this inquiry back — the guardian relationship is not filled in and the date of birth looks wrong"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.review",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "outcome": "Return to Staff",
+                "missing_items": "Guardian relationship not filled in; date of birth looks wrong.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The missing items are the reviewer's own words, carried across. The plan does not compose a tidier list (PR-1, PR-6)."
+            }
+          ],
+          "outcome": "The inquiry returns to Staff at Returned for information and stays in the queue — returning never closes it (BR-6). The Staff member reads exactly what the reviewer wrote."
+        },
+        {
+          "request": "forward the Sana Malik re-admission to the principal",
+          "context": "School Admin, Johar Town branch, on an inquiry marked Re-admission whose previous student ID has not been confirmed.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.review",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Sana Malik\"",
+                "outcome": "Forward to Principal",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged; it does not test for the unconfirmed match beforehand. The API refuses it under BR-7."
+            }
+          ],
+          "outcome": "Nothing is written. Report that the previous student ID must be confirmed first, which is readmission.match.confirm (UC-02-09) — a separate plan and a separate decision."
+        }
+      ]
+    }
+  ]
+}

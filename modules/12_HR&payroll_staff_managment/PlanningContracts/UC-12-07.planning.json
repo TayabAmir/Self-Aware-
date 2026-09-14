@@ -1,0 +1,1200 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-12-07",
+    "name": "Request staff leave, route it up the configured chain, and have it reach attendance and pay",
+    "module": "HR and payroll",
+    "file": "../UseCases/UC-12-07.json",
+    "featureRef": "12.7 Staff leave management"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-12-07-PC-1",
+      "intent": {
+        "name": "staff.leave.request",
+        "summary": "Request leave, checked against the monthly paid allowance before it goes. One step, and the employee is told what is paid before they submit.",
+        "routesHere": [
+          "request casual leave for the 14th and 15th",
+          {
+            "text": "mujhe 14 aur 15 ki casual chhutti chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need casual leave for the 14th and 15th"
+          },
+          {
+            "text": "bimari ki chhutti ki darkhwast deni hai",
+            "lang": "ur-Latn",
+            "gloss": "I want to request sick leave"
+          },
+          {
+            "text": "teen din ki chhutti chahiye, kitni paid hogi",
+            "lang": "ur-Latn",
+            "gloss": "I need three days off, how much of it is paid"
+          },
+          "apply for annual leave next week"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the leave"
+            },
+            "goesTo": "staff.leave.approve — UC-12-07-PC-2",
+            "note": "Nobody approves their own leave. The chain exists for that reason (BR-3, E7)."
+          },
+          {
+            "request": {
+              "text": "bache ki chhutti ki darkhwast deni hai",
+              "lang": "ur-Latn",
+              "gloss": "I want to request leave for my child"
+            },
+            "goesTo": "leave.request.submit — UC-05-11",
+            "note": "Student leave is a different thing entirely, with its own approval and its own effect on attendance."
+          },
+          {
+            "request": {
+              "text": "darkhwast wapas le lo",
+              "lang": "ur-Latn",
+              "gloss": "withdraw the request"
+            },
+            "goesTo": "staff.leave.cancel — UC-12-07-PC-4",
+            "note": "A request may be cancelled before its start date and the allowance is restored (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.leave.request",
+            "inputs": {
+              "staff_id": "$session.staff_id",
+              "leave_type": "$request.leave_type",
+              "from_date": "$request.from_date",
+              "to_date": "$request.to_date",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The request is checked against the monthly paid leave allowance on the employee's record, and the remaining paid leave is shown before they submit (BR-2) — an employee should know whether the days are paid before they take them."
+          }
+        ],
+        "onFailure": "Stop and report. Dates out of order, a range with no working day, an overlap with approved leave and a missing reason all arrive as errors.",
+        "atomicity": "One write: the request, its counted days and the paid-versus-unpaid split together or not at all. Nothing is authorised — the days are not written into attendance until the approver approves it (BR-7). Off-days and holidays in the range are excluded and not consumed, because an employee should not spend leave on a day the school was shut (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "staff.leave.request",
+          "method": "POST",
+          "path": "/api/v1/staff-leave-requests",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff_id + from_date + to_date, since an employee carries one request per date range",
+          "purpose": "Submit a staff leave request, checked against the monthly paid allowance.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The requesting employee's own record. Any employee may request leave; it is not a privilege of one classification (BR-1)."
+            },
+            {
+              "name": "leave_type",
+              "source": "request",
+              "sourceRef": "$request.leave_type",
+              "required": true,
+              "type": "enum: Casual | Sick | Annual | Unpaid | Bereavement | Maternity or paternity",
+              "notes": "What the leave is for. The employee's own word — a type chosen for them describes their circumstances."
+            },
+            {
+              "name": "from_date",
+              "source": "request",
+              "sourceRef": "$request.from_date",
+              "required": true,
+              "type": "date",
+              "notes": "The first day of the leave."
+            },
+            {
+              "name": "to_date",
+              "source": "request",
+              "sourceRef": "$request.to_date",
+              "required": true,
+              "type": "date",
+              "notes": "On or after the from date (E1)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters, written by the employee (E4). What the approver weighs."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The request, with what is paid and what is not.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "days_counted",
+                "type": "integer",
+                "description": "The working days it covers, with off-days and holidays excluded (BR-8)."
+              },
+              {
+                "name": "dates_excluded",
+                "type": "date[]",
+                "description": "Closed days inside the range, not consumed by the leave (BR-8)."
+              },
+              {
+                "name": "allowance_remaining",
+                "type": "number",
+                "description": "How much paid leave is left this month, from the figure on the staff record (BR-2)."
+              },
+              {
+                "name": "paid_days",
+                "type": "integer",
+                "description": "Days covered by the remaining allowance (BR-6)."
+              },
+              {
+                "name": "unpaid_days",
+                "type": "integer",
+                "description": "Days beyond it, which payroll deducts at the daily rate (BR-6, UC-12-03 BR-4)."
+              },
+              {
+                "name": "approver",
+                "type": "string",
+                "description": "The right approver for this employee under the configured chain (BR-4). Never the requester (BR-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DATES_OUT_OF_ORDER",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The to date is before the from date.",
+              "written": "Nothing.",
+              "notWritten": "No request submitted."
+            },
+            {
+              "code": "NO_WORKING_DAY",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The range contains no working day.",
+              "written": "Nothing.",
+              "notWritten": "No request submitted.",
+              "note": "An employee should not spend leave on a day the school was shut (BR-8)."
+            },
+            {
+              "code": "OVERLAPS_APPROVED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The dates overlap leave already approved for this employee.",
+              "written": "Nothing.",
+              "notWritten": "No request submitted.",
+              "note": "The message names the covered dates (BR-11)."
+            },
+            {
+              "code": "NO_REASON",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No reason is given.",
+              "written": "Nothing.",
+              "notWritten": "No request submitted."
+            },
+            {
+              "code": "NO_LEAVE_ALLOWANCE",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The employee's staff record carries no leave allowance.",
+              "written": "Nothing.",
+              "notWritten": "No request submitted.",
+              "note": "The request cannot be assessed — paid and unpaid days cannot be told apart (BR-2, UC-12-01 BR-4)."
+            },
+            {
+              "code": "SELF_APPROVER",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The employee is their own approver under the configured chain.",
+              "written": "Nothing.",
+              "notWritten": "The request cannot be routed.",
+              "note": "The configuration is flagged. Nobody approves their own leave (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the leave type. Casual, sick, annual and unpaid describe different circumstances (BR-6), and one picked for an employee is the school characterising why they were away.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the reason. It is what the approver weighs (E4), and a refusal is answered against it.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the paid and unpaid split before anything else. An employee should know whether the days are paid before they take them (BR-2), and unpaid days are deducted at the daily rate.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the days excluded as closed. Off-days and holidays are not consumed by the leave (BR-8), so a Thursday-to-Monday request may count two days rather than five.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never approve in the same plan. Nobody approves their own leave, and the chain exists for that reason (BR-3, E7).",
+          "derivedFrom": [
+            "BR-3",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report a self-approver configuration as a configuration fault, not a refusal of the leave. The chain has put the employee at both ends and somebody has to fix it (E5).",
+          "derivedFrom": [
+            "BR-3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A request is approved, rejected, or cancelled by the employee before it starts, which restores the allowance (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mujhe 14 aur 15 ki casual chhutti chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need casual leave on the 14th and 15th"
+          },
+          "context": "Teacher, Johar Town branch, allowance 2 a month, none taken.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.request",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "leave_type": "Casual",
+                "from_date": "2026-09-14",
+                "to_date": "2026-09-15",
+                "reason": "as the employee wrote it",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The type is the employee's own word (PR-1)."
+            }
+          ],
+          "outcome": "Submitted. Report that both days are within the allowance and paid (PR-3), and that it goes to the configured approver — it is not authorised until they approve it."
+        },
+        {
+          "request": {
+            "text": "teen din ki chhutti chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need three days off"
+          },
+          "context": "Teacher, Johar Town branch, allowance 2, one already taken this month.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.request",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "leave_type": "$request.leave_type",
+                "from_date": "$request.from_date",
+                "to_date": "$request.to_date",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The type and the reason are asked for rather than assumed (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Once the type and reason are given, report that one day is paid and two are unpaid, deducted at the daily rate (PR-3) — that is roughly two days' salary, and it is worth knowing before the leave is taken rather than on the payslip."
+        },
+        {
+          "request": {
+            "text": "chhutti ki darkhwast do aur khud hi manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "submit the leave request and approve it yourself"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.request",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "leave_type": "$request.leave_type",
+                "from_date": "$request.from_date",
+                "to_date": "$request.to_date",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The request only. The approval is not chained (PR-5)."
+            }
+          ],
+          "outcome": "Submitted. Report that the School Admin's own leave goes to the Principal under the configured chain — nobody approves their own, which is the entire reason the chain exists."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-07-PC-2",
+      "intent": {
+        "name": "staff.leave.approve",
+        "summary": "Approve a staff leave request, which codes the days in attendance and makes the employee unavailable. The configured approver only, one step.",
+        "routesHere": [
+          "approve this leave request",
+          {
+            "text": "ye chhutti manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this leave"
+          },
+          {
+            "text": "darkhwast manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the request"
+          },
+          {
+            "text": "chhutti de do",
+            "lang": "ur-Latn",
+            "gloss": "grant the leave"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti rad kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject the leave"
+            },
+            "goesTo": "staff.leave.reject — UC-12-07-PC-3"
+          },
+          {
+            "request": {
+              "text": "hazri mein chhutti laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark the leave in attendance"
+            },
+            "goesTo": "staff.leave.approve, which does it",
+            "note": "Approved leave is written into the attendance record and codes those days as leave rather than absent (BR-7)."
+          },
+          {
+            "request": {
+              "text": "in dinon ka cover laga do",
+              "lang": "ur-Latn",
+              "gloss": "arrange cover for those days"
+            },
+            "goesTo": "Not offered here.",
+            "note": "Approved leave makes the employee unavailable, which blocks a timetable assignment in that slot and is read when arranging cover (BR-12). Arranging it is a separate act."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.leave.approve",
+            "inputs": {
+              "request_id": "$request.leave_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches attendance, payroll and the timetable. Approved leave is written into the attendance record and codes those days as leave rather than absent — the two are treated differently by payroll and by any disciplinary process (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. An approver acting on their own request is refused by the API.",
+        "atomicity": "One write, atomic in itself: the approval, the attendance days coded as leave, the reduced allowance and the message to the employee together or not at all. Days within the allowance are paid; days beyond it are unpaid and deducted by payroll at the daily rate (BR-6). The employee becomes unavailable for those days, which blocks a timetable assignment in that slot and is read when arranging cover (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "staff.leave.approve",
+          "method": "POST",
+          "path": "/api/v1/staff-leave-requests/{request_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a request carries one approval and a repeat must not write the days twice",
+          "purpose": "Approve the leave request and write the days into attendance.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.leave_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_leave_request",
+                "fromPhrase": "$request.leave_phrase",
+                "onNoMatch": "Refuse. No leave request matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the dates, the type and the status."
+              },
+              "notes": "The leave request, resolved from the employee and the dates."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval and what it did.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved."
+              },
+              {
+                "name": "days_written",
+                "type": "date[]",
+                "description": "Days now coded as leave in attendance rather than absent (BR-7)."
+              },
+              {
+                "name": "paid_days",
+                "type": "integer",
+                "description": "Within the allowance, paid in full (BR-6)."
+              },
+              {
+                "name": "unpaid_days",
+                "type": "integer",
+                "description": "Beyond it, deducted by payroll at the daily rate (BR-6)."
+              },
+              {
+                "name": "allowance_remaining",
+                "type": "number",
+                "description": "What is left this month after this."
+              },
+              {
+                "name": "attendance_amended",
+                "type": "date[]",
+                "description": "Days already marked, amended to leave with the original kept (E9)."
+              },
+              {
+                "name": "unavailable_slots",
+                "type": "integer",
+                "description": "Timetable slots the employee now cannot be assigned to (BR-12)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The configured approver."
+              },
+              {
+                "name": "employee_notified",
+                "type": "string",
+                "description": "Delivery status. The employee is told either way (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SELF_APPROVAL",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "The actor is the employee whose request it is.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Nobody approves their own leave (BR-3)."
+            },
+            {
+              "code": "NOT_CONFIGURED_APPROVER",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "The actor is not the approver for this employee under the configured chain.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Staff leave goes to the School Admin, theirs to the Principal, and the Principal's to the Super Admin (BR-4)."
+            },
+            {
+              "code": "ALREADY_MARKED",
+              "mapsTo": "E9",
+              "httpStatus": 200,
+              "meaning": "A leave day arrives after attendance was already marked.",
+              "written": "The leave is approved and the attendance amended.",
+              "notWritten": "Nothing lost — the original mark is kept.",
+              "treatedAsSuccess": true,
+              "note": "Report which days were amended."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a request the actor made. E7 is BR-3 working, and the configured chain exists precisely so that nobody signs off their own absence.",
+          "derivedFrom": [
+            "BR-3",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the paid and unpaid days at approval. The unpaid ones are deducted by payroll at the daily rate (BR-6), and the approver is agreeing to leave that costs the employee money.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where attendance was already marked and has been amended. The original mark is kept (E9), and whoever marked the employee absent should know it now reads as leave.",
+          "derivedFrom": [
+            "BR-7",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the timetable slots the employee can no longer be assigned to. Approved leave makes them unavailable and blocks an assignment in that slot (BR-12) — somebody has to arrange cover.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain cover onto the approval. Who covers a period is a decision about a class, taken against a clash check of its own.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. The employee may cancel before the start date, which restores the allowance; after it has begun, days already passed stand and only the remaining days can be cancelled (BR-10, E10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye chhutti manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this leave"
+          },
+          "context": "School Admin, Johar Town branch, on a teacher's request for two days within the allowance.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.approve",
+              "inputs": {
+                "request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved. Both days are coded as leave in attendance rather than absent, both are paid, and the allowance is spent for the month. Report the timetable slots now blocked (PR-4) — somebody has to arrange cover for those periods."
+        },
+        {
+          "request": {
+            "text": "meri apni chhutti manzoor kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I will approve my own leave"
+          },
+          "context": "School Admin, Johar Town branch, on their own request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.approve",
+              "inputs": {
+                "request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns SELF_APPROVAL (E7)."
+            }
+          ],
+          "outcome": "Not approved. Report that the School Admin's own leave goes to the Principal under the configured chain — the chain exists so that nobody authorises their own absence."
+        },
+        {
+          "request": {
+            "text": "teen din ki chhutti manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the three days of leave"
+          },
+          "context": "School Admin, Johar Town branch, where the employee has one day of allowance left.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.approve",
+              "inputs": {
+                "request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved. Report that one day is paid and two are unpaid, deducted at the daily rate (PR-2) — the approver is granting leave that costs the employee roughly two days' salary, and that is worth saying before the payslip does."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-07-PC-3",
+      "intent": {
+        "name": "staff.leave.reject",
+        "summary": "Reject a staff leave request with the written reason. The configured approver only, one step.",
+        "routesHere": [
+          "reject this leave — the exams are that week",
+          {
+            "text": "ye chhutti rad kar do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "reject this leave with the reason"
+          },
+          {
+            "text": "us hafte chhutti nahi de sakte",
+            "lang": "ur-Latn",
+            "gloss": "we cannot give leave that week"
+          },
+          {
+            "text": "darkhwast manzoor nahi",
+            "lang": "ur-Latn",
+            "gloss": "the request is not approved"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the leave"
+            },
+            "goesTo": "staff.leave.approve — UC-12-07-PC-2"
+          },
+          {
+            "request": {
+              "text": "kam din ki chhutti de do",
+              "lang": "ur-Latn",
+              "gloss": "grant fewer days"
+            },
+            "goesTo": "Not offered.",
+            "note": "A request is approved or rejected as it stands. Shorter leave is a fresh request from the employee."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.leave.reject",
+            "inputs": {
+              "request_id": "$request.leave_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A rejection carries a written reason — an employee refused leave with no explanation cannot plan around it or appeal it (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. A rejection with no reason is not recorded at all.",
+        "atomicity": "One write: the rejection, its reason and the message to the employee together or not at all. The allowance is untouched, nothing is written into attendance, and the employee remains available for the timetable. They are told either way — a request that disappears is worse than one that is refused (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "staff.leave.reject",
+          "method": "POST",
+          "path": "/api/v1/staff-leave-requests/{request_id}/reject",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a request carries one decision",
+          "purpose": "Reject the leave request with the reason.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.leave_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_leave_request",
+                "fromPhrase": "$request.leave_phrase",
+                "onNoMatch": "Refuse. No leave request matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the dates, the type and the status."
+              },
+              "notes": "The leave request, resolved from the employee and the dates."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (BR-5, E6). The employee is told it and plans or appeals around it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The rejection.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Rejected. Terminal."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given, and sent to the employee (BR-5)."
+              },
+              {
+                "name": "rejected_by",
+                "type": "string",
+                "description": "The configured approver."
+              },
+              {
+                "name": "allowance_remaining",
+                "type": "number",
+                "description": "Unchanged. Nothing was consumed."
+              },
+              {
+                "name": "employee_notified",
+                "type": "string",
+                "description": "Delivery status. The employee is told either way (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "The approver rejected with no reason.",
+              "written": "Nothing.",
+              "notWritten": "The decision is not recorded.",
+              "note": "An employee refused leave with no explanation cannot plan around it or appeal it (BR-5)."
+            },
+            {
+              "code": "SELF_APPROVAL",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "The actor is the employee whose request it is.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. The employee plans or appeals around it (BR-5), and a reason a planner wrote is the school refusing somebody in words nobody chose.",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never soften the reason on the way through. Somebody who has arranged something around those days needs the school's actual answer.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the allowance is untouched. Nothing was consumed, so the employee still has their paid days for the month.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never reject part of a request. It is approved or rejected as it stands, and shorter leave is a fresh request from the employee.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A rejection is terminal. An employee who still needs the leave submits a fresh request."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye chhutti rad kar do — us hafte imtihan hain",
+            "lang": "ur-Latn",
+            "gloss": "reject this leave — the exams are that week"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.reject",
+              "inputs": {
+                "request_id": "$request.leave_phrase",
+                "reason": "The examinations run that week and the papers cannot be invigilated without you.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the approver's own words (PR-1)."
+            }
+          ],
+          "outcome": "Rejected and the employee is told why. Report that their allowance is untouched (PR-3) — the paid days are still theirs for the month."
+        },
+        {
+          "request": {
+            "text": "chhutti rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "reject the leave"
+          },
+          "context": "School Admin, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.reject",
+              "inputs": {
+                "request_id": "$request.leave_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The decision is not recorded at all without a reason (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the employee should be told — the request stays pending meanwhile, and a refusal with no explanation gives them nothing to plan or appeal around."
+        },
+        {
+          "request": {
+            "text": "teen din ki jagah ek din ki chhutti de do",
+            "lang": "ur-Latn",
+            "gloss": "grant one day instead of three"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.reject",
+              "inputs": {
+                "request_id": "$request.leave_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted for a partial approval — there is no capability for one (PR-4)."
+            }
+          ],
+          "outcome": "Report that a request is approved or rejected as it stands. Rejecting with that reason and asking the employee to submit a one-day request is the route — and the second of those is theirs to do."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-07-PC-4",
+      "intent": {
+        "name": "staff.leave.cancel",
+        "summary": "Cancel a leave request before it starts, restoring the allowance. One step.",
+        "routesHere": [
+          "cancel my leave, I will come in after all",
+          {
+            "text": "meri chhutti cancel kar do, main aa jaunga",
+            "lang": "ur-Latn",
+            "gloss": "cancel my leave, I will come in"
+          },
+          {
+            "text": "chhutti ki zaroorat nahi rahi",
+            "lang": "ur-Latn",
+            "gloss": "the leave is no longer needed"
+          },
+          {
+            "text": "baqi dinon ki chhutti cancel kar do",
+            "lang": "ur-Latn",
+            "gloss": "cancel the remaining days of leave"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti rad kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject the leave"
+            },
+            "goesTo": "staff.leave.reject — UC-12-07-PC-3",
+            "note": "Rejecting is the approver's decision; cancelling is the employee's."
+          },
+          {
+            "request": {
+              "text": "tareekhein badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the dates"
+            },
+            "goesTo": "staff.leave.cancel then staff.leave.request",
+            "note": "Changing the dates is cancelling one request and submitting another, which is checked against the allowance again."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.leave.cancel",
+            "inputs": {
+              "request_id": "$request.leave_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A request may be cancelled before its start date and the allowance is restored — an employee who came in after all should not have spent leave (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report, with one exception: a cancellation after the leave has begun is handled rather than refused — days already passed stand and the remaining days are cancelled (E10).",
+        "atomicity": "One write: the cancellation, the restored allowance and the reverted attendance days together or not at all. Days already passed stand as leave; only the remaining days come back (BR-10, E10). The employee becomes available again for the timetable on the days that reverted (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "staff.leave.cancel",
+          "method": "POST",
+          "path": "/api/v1/staff-leave-requests/{request_id}/cancel",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a request is cancelled once",
+          "purpose": "Cancel a leave request, restoring the allowance for days not yet taken.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.leave_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_leave_request",
+                "fromPhrase": "$request.leave_phrase",
+                "onNoMatch": "Refuse. No leave request matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the dates, the type and the status."
+              },
+              "notes": "The leave request, resolved from the employee and the dates."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The cancellation.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Cancelled. Terminal."
+              },
+              {
+                "name": "days_reverted",
+                "type": "date[]",
+                "description": "Leave days removed from attendance. The employee is markable normally again (BR-10)."
+              },
+              {
+                "name": "days_retained",
+                "type": "date[]",
+                "description": "Days already passed, which stand as leave (E10)."
+              },
+              {
+                "name": "allowance_restored",
+                "type": "number",
+                "description": "Paid days returned to the month's allowance (BR-10)."
+              },
+              {
+                "name": "allowance_remaining",
+                "type": "number",
+                "description": "What the employee now has left this month."
+              },
+              {
+                "name": "slots_available_again",
+                "type": "integer",
+                "description": "Timetable slots the employee can be assigned to again (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_BEGUN",
+              "mapsTo": "E10",
+              "httpStatus": 200,
+              "meaning": "The employee cancelled after the leave had begun.",
+              "written": "The remaining days are cancelled.",
+              "notWritten": "Days already passed stand.",
+              "treatedAsSuccess": true,
+              "note": "Not a refusal. Report both lists (BR-10)."
+            },
+            {
+              "code": "NOT_CANCELLABLE",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The request is rejected or already cancelled.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never cancel on the school's behalf. Cancelling is the employee's act; refusing leave is the approver's, and they are different records with different meanings (BR-5, BR-10).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report which days reverted and which stand. Once the leave has begun only the remaining days are cancelled (E10), and an employee expecting the whole request withdrawn will be surprised by a spent allowance.",
+          "derivedFrom": [
+            "BR-10",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the allowance restored. It is the point of cancelling — an employee who came in after all should not have spent leave (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain a fresh request onto a cancellation. Changing the dates is two acts, and the new dates are the employee's to state and are checked against the allowance again.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Cancelled is terminal. Leave needed after all is a fresh request, assessed against the allowance as it now stands."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "meri chhutti cancel kar do, main aa jaunga",
+            "lang": "ur-Latn",
+            "gloss": "cancel my leave, I will come in"
+          },
+          "context": "Teacher, Johar Town branch, two days before the leave starts.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.cancel",
+              "inputs": {
+                "request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Cancelled. Both days revert, the paid allowance is restored (PR-3), and the employee can be assigned to those timetable slots again — worth telling whoever arranged cover."
+        },
+        {
+          "request": {
+            "text": "baqi dinon ki chhutti cancel kar do, kal se aa jaunga",
+            "lang": "ur-Latn",
+            "gloss": "cancel the remaining leave, I will come in from tomorrow"
+          },
+          "context": "Teacher, Johar Town branch, on a three-day leave that started yesterday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.cancel",
+              "inputs": {
+                "request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns ALREADY_BEGUN (E10) on the success path."
+            }
+          ],
+          "outcome": "Tomorrow's day reverts; yesterday's and today's stand as leave. Report both lists and the allowance actually restored (PR-2) — one day comes back, not three."
+        },
+        {
+          "request": {
+            "text": "is mulazim ki chhutti cancel kar do, hum nahi de rahe",
+            "lang": "ur-Latn",
+            "gloss": "cancel this employee's leave, we are not granting it"
+          },
+          "context": "School Admin, Johar Town branch, on a submitted request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leave.cancel",
+              "inputs": {
+                "request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The school refusing leave is a rejection with a reason (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that cancelling is the employee's act and rejecting is the approver's — and that a rejection carries a written reason the employee is told, so they can plan or appeal around it."
+        }
+      ]
+    }
+  ]
+}

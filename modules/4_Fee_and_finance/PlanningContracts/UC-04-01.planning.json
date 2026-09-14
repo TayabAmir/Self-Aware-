@@ -1,0 +1,1420 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-01",
+    "name": "Build a fee structure for a class or section and have it approved before it can be billed",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-01.json",
+    "featureRef": "4.1 Fee assignment & structure management"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-01-PC-1",
+      "intent": {
+        "name": "fee.structure.create",
+        "summary": "Build a draft fee structure for a class or one of its sections, with an amount against each fee type or each subject. One step, and it bills nobody.",
+        "routesHere": [
+          "build a fee structure for Grade 4 — tuition 5000 monthly, exam 1500 per term",
+          {
+            "text": "Grade 4 ke liye fee structure bana do — tuition 5000 mahana",
+            "lang": "ur-Latn",
+            "gloss": "build a fee structure for Grade 4 — tuition 5000 monthly"
+          },
+          {
+            "text": "Grade 9 ka subject wise structure banao, har subject ka rate alag hai",
+            "lang": "ur-Latn",
+            "gloss": "build Grade 9's subject wise structure, each subject has its own rate"
+          },
+          "create a section-scoped structure for 4-B, they pay a transport charge the others don't",
+          {
+            "text": "nayi fee list banao is class ke liye",
+            "lang": "ur-Latn",
+            "gloss": "make a new fee list for this class"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "structure approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the structure"
+            },
+            "goesTo": "fee.structure.approve — UC-04-01-PC-3",
+            "note": "Building the price list and agreeing to it are separate acts by separate people (BR-6)."
+          },
+          {
+            "request": {
+              "text": "fees badha do",
+              "lang": "ur-Latn",
+              "gloss": "raise the fees"
+            },
+            "goesTo": "fee.structure.revise — UC-04-01-PC-4",
+            "note": "A change to an approved structure creates a new version with its own reason and effective date (BR-8, BR-9)."
+          },
+          {
+            "request": {
+              "text": "invoice bana do",
+              "lang": "ur-Latn",
+              "gloss": "raise the invoices"
+            },
+            "goesTo": "fee.invoice.issue — UC-04-02-PC-2",
+            "note": "Approving a structure raises no invoice. A structure is a price list; billing is a separate, deliberate act (BR-12)."
+          },
+          {
+            "request": {
+              "text": "is student ko discount de do",
+              "lang": "ur-Latn",
+              "gloss": "give this student a discount"
+            },
+            "goesTo": "fee.concession.record — UC-04-13",
+            "note": "A reduction for one student is a concession against the structure, not a change to it."
+          },
+          {
+            "request": {
+              "text": "naya fee type bana do",
+              "lang": "ur-Latn",
+              "gloss": "create a new fee type"
+            },
+            "goesTo": "The fee type list, maintained elsewhere.",
+            "note": "The use case's own open question asks who maintains it."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.structure.create",
+            "inputs": {
+              "class_id": "$request.class_phrase",
+              "scope": "$request.scope",
+              "structure_type": "$request.structure_type",
+              "lines": "$request.lines",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. It creates a draft — not billable, and it bills nobody (BR-1, BR-12). Submitting it for approval is a separate act."
+          }
+        ],
+        "onFailure": "Stop and report. Whether every subject is priced, whether an amount is above zero, and whether the class carries subjects at all are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the structure and all its lines together or not at all. It is a Draft, so nothing is billable against it and no invoice can find it (BR-1). No money moves and no family is affected until it is approved and then billed, which are two further acts."
+      },
+      "operations": [
+        {
+          "name": "fee.structure.create",
+          "method": "POST",
+          "path": "/api/v1/fee-structures",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "class_id + scope + section_id + structure_type + session_id, so a repeat does not create a second draft for the same class and scope",
+          "purpose": "Create a draft fee structure for a class or one of its sections, with an amount against each fee type or each subject.",
+          "parameters": [
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No active class of that name this session.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "An active class in the current academic session."
+            },
+            {
+              "name": "scope",
+              "source": "request",
+              "sourceRef": "$request.scope",
+              "required": true,
+              "type": "enum: All sections | One section",
+              "notes": "Whether it applies to every section of the class or to one. A section-scoped structure overrides the class one for that section (BR-2)."
+            },
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No such section under that class.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the scope is one section, omitted otherwise."
+            },
+            {
+              "name": "structure_type",
+              "source": "request",
+              "sourceRef": "$request.structure_type",
+              "required": true,
+              "type": "enum: Fixed | Subject Wise",
+              "notes": "Fixed prices the class as a whole; Subject Wise prices each subject. A class may carry both — a tuition fee charged to everybody and a per-subject laboratory charge are not alternatives (BR-3)."
+            },
+            {
+              "name": "lines",
+              "source": "request",
+              "sourceRef": "$request.lines",
+              "required": true,
+              "type": "object[]",
+              "notes": "One entry per fee type (Fixed) or per subject (Subject Wise), each with an amount and a recurrence. Every amount is greater than zero and comes from the request — a free subject is expressed by not pricing it, never by pricing it at zero (BR-4). Amounts are held in the smallest currency unit and displayed as PKR (money convention). A figure spoken as \"paanch hazaar\" is not converted into a parameter by the planner — it is asked for as a number."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The draft as created.",
+            "fields": [
+              {
+                "name": "structure_id",
+                "type": "string",
+                "description": "The structure."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. Not billable (BR-1)."
+              },
+              {
+                "name": "version",
+                "type": "integer",
+                "description": "1 for a new structure."
+              },
+              {
+                "name": "lines",
+                "type": "object[]",
+                "description": "fee_type or subject, amount, recurrence."
+              },
+              {
+                "name": "unpriced_subjects",
+                "type": "string[]",
+                "description": "Subjects the class carries that carry no amount. Empty on success for a Subject Wise structure (BR-5)."
+              },
+              {
+                "name": "total_per_recurrence",
+                "type": "object",
+                "description": "What the structure comes to at each recurrence, for reading back before submitting."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SUBJECT_UNPRICED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A subject the class carries was left unpriced in a Subject Wise structure.",
+              "written": "Nothing.",
+              "notWritten": "No structure created.",
+              "note": "The message names the subject. Every subject the class carries is priced (BR-5) — never price it at zero to get past this."
+            },
+            {
+              "code": "AMOUNT_NOT_POSITIVE",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "An amount of zero or less was entered.",
+              "written": "Nothing.",
+              "notWritten": "No structure created.",
+              "note": "A subject that carries no charge is left off, not priced at zero (BR-4)."
+            },
+            {
+              "code": "CLASS_HAS_NO_SUBJECTS",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "A Subject Wise structure was attempted for a class carrying no subjects.",
+              "written": "Nothing.",
+              "notWritten": "No structure created.",
+              "note": "Attaching subjects is a change to the class (UC-27-01), not a step to chain here."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply an amount the request did not state. A price list is what every family is billed from, and a figure a planner chose becomes real money on somebody's invoice.",
+          "derivedFrom": [
+            "BR-4",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never price a subject at zero to get past SUBJECT_UNPRICED. A free subject is expressed by leaving it off the structure (BR-4); zero says the school charges nothing for it, which is a different statement and appears as a line on every invoice.",
+          "derivedFrom": [
+            "BR-4",
+            "E1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never guess the structure type or the recurrence. Fixed and Subject Wise are priced differently and billed differently, and Monthly, Per term and Annual decide what an invoice run produces for a period — a wrong recurrence bills a family twelve times for an annual charge.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain a submission or an approval onto a creation. Building the price list and agreeing to it are separate acts by separate people (BR-6), and Accounts cannot approve their own.",
+          "derivedFrom": [
+            "BR-6",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "class_id, branch_id and session_id come from the resolved class and $session. A structure belongs to the academic session the controller holds.",
+          "derivedFrom": [
+            "BR-7",
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A draft is not billable and affects nobody, but nothing here deletes one either — the lifecycle runs Draft, Awaiting approval, Approved, Returned, Superseded, with no removal. A draft raised in error is left, or replaced by a version once approved. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 4 ke liye fee structure bana do — tuition 5000 mahana, exam fee 1500 har term",
+            "lang": "ur-Latn",
+            "gloss": "build a fee structure for Grade 4 — tuition 5000 monthly, exam fee 1500 per term"
+          },
+          "context": "Accounts, Johar Town branch, academic session 2025-26. Grade 4 is a Fixed class.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.create",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Grade 4\"",
+                "scope": "All sections",
+                "structure_type": "Fixed",
+                "lines": "$request.lines → [{fee_type: Tuition, amount: 5000, recurrence: Monthly}, {fee_type: Examination, amount: 1500, recurrence: Per term}]",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Both amounts come from the request. Nothing is derived from last year's structure or from another class (PR-1)."
+            }
+          ],
+          "outcome": "A Draft structure exists for Grade 4, all sections, with two lines. Nothing is billable against it and no family is affected (BR-1). Submitting it for approval is the next act, by the same person; approving it is not."
+        },
+        {
+          "request": {
+            "text": "4-B ka apna structure banao — baaqi Grade 4 jaisa hi, plus transport 2000 mahana",
+            "lang": "ur-Latn",
+            "gloss": "build 4-B its own structure — the same as the rest of Grade 4, plus transport 2000 monthly"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.create",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Grade 4\"",
+                "scope": "One section",
+                "section_id": "$request.section_phrase → \"section B\"",
+                "structure_type": "Fixed",
+                "lines": "$request.lines → the lines the actor states, including Transport 2000 Monthly",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "\"The same as the rest of Grade 4\" is not a line the plan can fill in. The actor states every line, because a section-scoped structure overrides the class one entirely for that section (BR-2, PR-1)."
+            }
+          ],
+          "outcome": "A Draft section-scoped structure for 4-B. It will override Grade 4's for that section once approved, so every line the section pays has to be on it — not only the transport charge."
+        },
+        {
+          "request": {
+            "text": "Grade 9 ka subject wise structure banao",
+            "lang": "ur-Latn",
+            "gloss": "build Grade 9's subject wise structure"
+          },
+          "context": "Accounts, Johar Town branch. Grade 9 carries six subjects and the request prices five.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.create",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Grade 9\"",
+                "scope": "All sections",
+                "structure_type": "Subject Wise",
+                "lines": "$request.lines → the five priced subjects",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Emitted as stated. The API returns SUBJECT_UNPRICED (E1) naming the sixth."
+            }
+          ],
+          "outcome": "Nothing is created. Report that Chemistry carries no amount and ask what it should be — never price it at zero, which would put a zero line on every Grade 9 invoice (PR-2)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-01-PC-2",
+      "intent": {
+        "name": "fee.structure.submit",
+        "summary": "Send a draft fee structure for approval, with the date it takes effect from. One step.",
+        "routesHere": [
+          "submit the Grade 4 structure for approval, effective 1 August",
+          {
+            "text": "Grade 4 ka structure approval ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send Grade 4's structure for approval"
+          },
+          {
+            "text": "structure taiyar hai, School Admin ko bhejo, 1 August se lagoo hoga",
+            "lang": "ur-Latn",
+            "gloss": "the structure is ready, send it to School Admin, effective from 1 August"
+          },
+          "put this structure up for approval"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "structure approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the structure"
+            },
+            "goesTo": "fee.structure.approve — UC-04-01-PC-3",
+            "note": "Accounts submit; School Admin decides. Accounts cannot approve their own (BR-6)."
+          },
+          {
+            "request": {
+              "text": "structure bana do",
+              "lang": "ur-Latn",
+              "gloss": "build the structure"
+            },
+            "goesTo": "fee.structure.create — UC-04-01-PC-1"
+          },
+          {
+            "request": {
+              "text": "approved structure change karna hai",
+              "lang": "ur-Latn",
+              "gloss": "I need to change an approved structure"
+            },
+            "goesTo": "fee.structure.revise — UC-04-01-PC-4"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.structure.submit",
+            "inputs": {
+              "structure_id": "$request.structure_phrase",
+              "effective_from": "$request.effective_from",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The effective date is required and cannot be before the academic session starts — without it, what a student owed in September cannot be worked out in March (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. The effective date and any overlapping approved structure are enforced by the API and arrive as errors.",
+        "atomicity": "One write: the structure moves to Awaiting approval with its effective date and the audit entry, together or not at all. It is still not billable (BR-1) and no family is affected. School Admin is notified."
+      },
+      "operations": [
+        {
+          "name": "fee.structure.submit",
+          "method": "POST",
+          "path": "/api/v1/fee-structures/{structure_id}/submit",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "structure_id, since a structure is submitted once and a repeat finds it already awaiting approval",
+          "purpose": "Move a draft structure to Awaiting approval with the date it takes effect from, and notify the approver.",
+          "parameters": [
+            {
+              "name": "structure_id",
+              "source": "resolved",
+              "sourceRef": "$request.structure_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "fee_structure",
+                "fromPhrase": "$request.structure_phrase",
+                "onNoMatch": "Refuse. No structure matches for that class and scope in this academic session.",
+                "onAmbiguous": "Ask, naming the candidates with class, scope, version, status and effective date."
+              },
+              "notes": "The fee structure, resolved from how the actor named it — the class, the scope, the version."
+            },
+            {
+              "name": "effective_from",
+              "source": "request",
+              "sourceRef": "$request.effective_from",
+              "required": true,
+              "type": "date",
+              "notes": "The date the structure applies from. Not before the academic session starts (BR-7, E3). Only where the request states it — a date invented here decides what every family owed from that day."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The structure as submitted.",
+            "fields": [
+              {
+                "name": "structure_id",
+                "type": "string",
+                "description": "The structure."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval."
+              },
+              {
+                "name": "effective_from",
+                "type": "date",
+                "description": "DD-MM-YYYY."
+              },
+              {
+                "name": "submitted_by",
+                "type": "string",
+                "description": "The acting user, who may not also approve it (BR-6)."
+              },
+              {
+                "name": "supersedes_version",
+                "type": "integer",
+                "description": "The version this would close, where one exists (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "EFFECTIVE_DATE_BEFORE_SESSION",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The effective date is before the academic session starts.",
+              "written": "Nothing.",
+              "notWritten": "Not submitted.",
+              "note": "Never substitute the session start date. The date came from the actor."
+            },
+            {
+              "code": "OVERLAPPING_STRUCTURE",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "An approved structure already covers the same class, scope and period.",
+              "written": "Nothing.",
+              "notWritten": "Not submitted.",
+              "note": "The message names the existing one and its dates. Two approved structures may not overlap (BR-11) — the new version's effective date closes the previous one, so the date is what needs changing."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the effective date. It decides what every family owed from that day, and it is the field that makes an invoice raised months later explicable (BR-7). E3 refusing one before the session start is not a prompt to use the session start.",
+          "derivedFrom": [
+            "BR-7",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never adjust the effective date to get past OVERLAPPING_STRUCTURE. Two approved structures for the same class and scope may not overlap (BR-11), and moving the date silently changes which price list applied in the gap.",
+          "derivedFrom": [
+            "BR-11",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain an approval. Accounts submit and School Admin decides; one plan doing both erases the separation BR-6 exists to create.",
+          "derivedFrom": [
+            "BR-6",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-submit. A structure awaiting approval is either approved or returned, both by the School Admin, and a return sends it back to Draft with a reason. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 4 ka structure approval ke liye bhej do, 1 August se lagoo hoga",
+            "lang": "ur-Latn",
+            "gloss": "send Grade 4's structure for approval, effective from 1 August"
+          },
+          "context": "Accounts, Johar Town branch, academic session 2025-26 which began on 01-08-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.submit",
+              "inputs": {
+                "structure_id": "$request.structure_phrase → \"Grade 4, all sections\"",
+                "effective_from": "2026-08-01",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The structure moves to Awaiting approval and the School Admin is notified. It is still not billable, and Accounts cannot approve it themselves (BR-6)."
+        },
+        {
+          "request": {
+            "text": "structure bhej do approval ke liye",
+            "lang": "ur-Latn",
+            "gloss": "send the structure for approval"
+          },
+          "context": "Accounts, Johar Town branch, with no effective date in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.submit",
+              "inputs": {
+                "structure_id": "$request.structure_phrase",
+                "effective_from": "$request.effective_from — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: effective_from is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask which date it applies from. This is the ordinary case — BR-7 exists so the date comes from a person."
+        },
+        {
+          "request": "submit the revised Grade 4 structure, effective 1 January",
+          "context": "Accounts, Johar Town branch, where the current approved structure runs from 01-08-2026 with no end.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.submit",
+              "inputs": {
+                "structure_id": "$request.structure_phrase → \"Grade 4, version 2\"",
+                "effective_from": "2027-01-01",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "supersedes_version comes back as 1: the new effective date closes the previous version rather than overlapping it (BR-11)."
+            }
+          ],
+          "outcome": "Version 2 is awaiting approval, effective 01-01-2027, and version 1 will close the day before. Invoices already raised under version 1 are untouched (BR-10)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-01-PC-3",
+      "intent": {
+        "name": "fee.structure.approve",
+        "summary": "Approve a fee structure so invoices can be raised against it from its effective date. School Admin only, one step.",
+        "routesHere": [
+          "approve the Grade 4 fee structure",
+          {
+            "text": "Grade 4 ka fee structure approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve Grade 4's fee structure"
+          },
+          {
+            "text": "fee list manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the fee list"
+          },
+          "sign off the structure Accounts sent up"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "structure wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the structure back"
+            },
+            "goesTo": "fee.structure.return — UC-04-01-PC-4",
+            "note": "Returning needs a reason so Accounts know what to correct (E5)."
+          },
+          {
+            "request": {
+              "text": "structure bana do",
+              "lang": "ur-Latn",
+              "gloss": "build a structure"
+            },
+            "goesTo": "fee.structure.create — UC-04-01-PC-1"
+          },
+          {
+            "request": {
+              "text": "invoice bana do",
+              "lang": "ur-Latn",
+              "gloss": "raise the invoices"
+            },
+            "goesTo": "fee.invoice.issue — UC-04-02-PC-2",
+            "note": "Approving a structure raises no invoice. It is a price list; billing is a separate act (BR-12)."
+          },
+          {
+            "request": {
+              "text": "approved structure ka rate change kar do",
+              "lang": "ur-Latn",
+              "gloss": "change the rate on an approved structure"
+            },
+            "goesTo": "fee.structure.revise — UC-04-01-PC-4",
+            "note": "An approved structure is not edited. A change creates a new version through the same approval (BR-8, BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.structure.approve",
+            "inputs": {
+              "structure_id": "$request.structure_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Approving makes the structure the basis for every invoice raised for that class or section from its effective date (BR-1) — and raises no invoice itself (BR-12)."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the acting user built the structure themselves, and whether an approved structure already covers the period, are enforced by the API and arrive as errors.",
+        "atomicity": "One write: the approval, the status change and the audit entry together or not at all. It makes the structure billable and raises no invoice (BR-12). No invoice already issued is touched (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "fee.structure.approve",
+          "method": "POST",
+          "path": "/api/v1/fee-structures/{structure_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "structure_id, since a structure carries one approval and a repeat finds it already approved",
+          "purpose": "Record the School Admin's approval, making the structure billable from its effective date.",
+          "parameters": [
+            {
+              "name": "structure_id",
+              "source": "resolved",
+              "sourceRef": "$request.structure_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "fee_structure",
+                "fromPhrase": "$request.structure_phrase",
+                "onNoMatch": "Refuse. No structure matches for that class and scope in this academic session.",
+                "onAmbiguous": "Ask, naming the candidates with class, scope, version, status and effective date."
+              },
+              "notes": "The fee structure, resolved from how the actor named it — the class, the scope, the version."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision, and what it made billable.",
+            "fields": [
+              {
+                "name": "structure_id",
+                "type": "string",
+                "description": "The structure."
+              },
+              {
+                "name": "decided_by",
+                "type": "string",
+                "description": "The acting School Admin, who may not be the person who built it (BR-6)."
+              },
+              {
+                "name": "effective_from",
+                "type": "date",
+                "description": "The date it becomes billable from."
+              },
+              {
+                "name": "superseded_version",
+                "type": "integer",
+                "description": "The version this one closed, where any (BR-11)."
+              },
+              {
+                "name": "invoices_raised",
+                "type": "integer",
+                "description": "Always zero. Approving a structure raises no invoice (BR-12)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to approve their own structure.",
+              "written": "Nothing.",
+              "notWritten": "Not decided.",
+              "note": "Building the price list and agreeing to it are separate acts by separate people (BR-6). In practice approve is absent from an Accounts allow-list."
+            },
+            {
+              "code": "OVERLAPPING_STRUCTURE",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "An approved structure already covers the same class, scope and period.",
+              "written": "Nothing.",
+              "notWritten": "Not approved."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a structure the acting user built. E4 is BR-6 working — the price list and the agreement to it are separate acts by separate people — and it is enforced by the allow-list before a plan is even built.",
+          "derivedFrom": [
+            "BR-6",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain an invoice run onto an approval. A structure is a price list, and billing against it is a separate, deliberate act with its own authorisation (BR-12).",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the effective date with the approval. It decides which invoices this structure governs, and a family billed under the previous version is not re-billed because the price list moved (BR-10).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. A structure approved in error is changed by creating a new version through fee.structure.revise, which goes through the same approval and keeps the previous version so invoices raised under it stay explicable (BR-8). Invoices already issued are never recalculated (BR-10). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 4 ka structure approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve Grade 4's structure"
+          },
+          "context": "School Admin, Johar Town branch. Accounts submitted it, effective 01-08-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.approve",
+              "inputs": {
+                "structure_id": "$request.structure_phrase → \"Grade 4, all sections\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "return_reason is omitted — it is required only on a return."
+            }
+          ],
+          "outcome": "The structure is Approved and billable from 01-08-2026. invoices_raised comes back zero, which is correct: approving raises nothing (BR-12). Billing is the next deliberate act."
+        },
+        {
+          "request": {
+            "text": "main ne khud banaya tha, khud hi approve kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I built it myself, I'll just approve it"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.approve",
+              "inputs": {
+                "structure_id": "$request.structure_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "In practice approve is absent from an Accounts allow-list, so this plan is never built. Where attempted the API returns CANNOT_APPROVE_OWN (E4)."
+            }
+          ],
+          "outcome": "Nothing is decided. Report that a School Admin has to approve it — the separation is the point of the rule, not an obstacle (PR-2)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-01-PC-4",
+      "intent": {
+        "name": "fee.structure.return",
+        "summary": "Send a submitted fee structure back to Accounts with what to correct. School Admin only, one step.",
+        "routesHere": [
+          "return this structure — the exam fee should be per term not annual",
+          {
+            "text": "structure wapas bhej do, transport ka rate galat hai",
+            "lang": "ur-Latn",
+            "gloss": "send the structure back, the transport rate is wrong"
+          },
+          {
+            "text": "ye structure theek nahi, Accounts ko wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "this structure is not right, send it back to Accounts"
+          },
+          "send it back, the tuition line is missing"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "structure approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the structure"
+            },
+            "goesTo": "fee.structure.approve — UC-04-01-PC-3"
+          },
+          {
+            "request": {
+              "text": "structure bana do",
+              "lang": "ur-Latn",
+              "gloss": "build a structure"
+            },
+            "goesTo": "fee.structure.create — UC-04-01-PC-1"
+          },
+          {
+            "request": {
+              "text": "invoice bana do",
+              "lang": "ur-Latn",
+              "gloss": "raise the invoices"
+            },
+            "goesTo": "fee.invoice.issue — UC-04-02-PC-2",
+            "note": "Approving a structure raises no invoice. It is a price list; billing is a separate act (BR-12)."
+          },
+          {
+            "request": {
+              "text": "approved structure ka rate change kar do",
+              "lang": "ur-Latn",
+              "gloss": "change the rate on an approved structure"
+            },
+            "goesTo": "fee.structure.revise — UC-04-01-PC-4",
+            "note": "An approved structure is not edited. A change creates a new version through the same approval (BR-8, BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.structure.return",
+            "inputs": {
+              "structure_id": "$request.structure_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A return without a reason is refused, because Accounts have to know what to correct (E5)."
+          }
+        ],
+        "onFailure": "Stop and report. The reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the status change, the reason and the audit entry together or not at all. Nothing becomes billable, no invoice exists and no family is affected. Accounts are notified with the reason."
+      },
+      "operations": [
+        {
+          "name": "fee.structure.return",
+          "method": "POST",
+          "path": "/api/v1/fee-structures/{structure_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "structure_id + return_reason, so a repeat does not record a second return",
+          "purpose": "Send a submitted structure back to Accounts with the reason it was not approved.",
+          "parameters": [
+            {
+              "name": "structure_id",
+              "source": "resolved",
+              "sourceRef": "$request.structure_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "fee_structure",
+                "fromPhrase": "$request.structure_phrase",
+                "onNoMatch": "Refuse. No structure matches for that class and scope in this academic session.",
+                "onAmbiguous": "Ask, naming the candidates with class, scope, version, status and effective date."
+              },
+              "notes": "The fee structure, resolved from how the actor named it — the class, the scope, the version."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (E5) — Accounts have to know what to correct. The School Admin's own words."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The structure as returned.",
+            "fields": [
+              {
+                "name": "structure_id",
+                "type": "string",
+                "description": "The structure."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It goes back to Accounts and stays not billable."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "As given, shown to Accounts."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The acting School Admin."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to approve their own structure.",
+              "written": "Nothing.",
+              "notWritten": "Not decided.",
+              "note": "Building the price list and agreeing to it are separate acts by separate people (BR-6). In practice approve is absent from an Accounts allow-list."
+            },
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned.",
+              "note": "Message: \"Give a reason so Accounts know what to correct.\" Ask for it; never compose one."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the return reason. Accounts read it to know what to correct, and a reason a planner wrote describes what it guessed was wrong rather than what the approver objected to (E5).",
+          "derivedFrom": [
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never return a structure to avoid deciding on it. A return sends it back for correction with a specific fault named; where the approver simply has not decided, the structure waits.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain a revision onto a return. Correcting the structure is Accounts' work, in their own session, and a returned structure goes back to Draft for them to change.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not undone. Accounts correct the structure and submit it again, which is a fresh submission and a fresh decision. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "structure wapas bhej do — transport 2000 nahi, 1500 hona chahiye",
+            "lang": "ur-Latn",
+            "gloss": "send the structure back — transport should be 1500, not 2000"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.return",
+              "inputs": {
+                "structure_id": "$request.structure_phrase",
+                "return_reason": "Transport should be 1500, not 2000.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the School Admin's own words, carried across (PR-1)."
+            }
+          ],
+          "outcome": "The structure returns to Accounts at Returned with exactly that reason. Nothing is billable and no invoice exists."
+        },
+        {
+          "request": {
+            "text": "ye structure theek nahi lag raha, wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "this structure does not look right, send it back"
+          },
+          "context": "School Admin, Johar Town branch, with no specific fault named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.return",
+              "inputs": {
+                "structure_id": "$request.structure_phrase",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: return_reason is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what is wrong with it. E5 exists so Accounts are told what to correct rather than guessing."
+        },
+        {
+          "request": "send it back, the tuition line is missing entirely",
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.return",
+              "inputs": {
+                "structure_id": "$request.structure_phrase",
+                "return_reason": "The tuition line is missing entirely.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned with the fault named. Accounts add the line and submit again — a fresh submission with a fresh effective date."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-01-PC-5",
+      "intent": {
+        "name": "fee.structure.revise",
+        "summary": "Create a new version of an approved fee structure, with the reason it changed and the date the new prices apply from. One step, and it leaves issued invoices alone.",
+        "routesHere": [
+          "revise the Grade 4 structure — tuition goes to 5500 from January",
+          {
+            "text": "Grade 4 ki fees badha do, January se 5500",
+            "lang": "ur-Latn",
+            "gloss": "raise Grade 4's fees, 5500 from January"
+          },
+          {
+            "text": "approved structure mein rate change karna hai",
+            "lang": "ur-Latn",
+            "gloss": "I need to change a rate on an approved structure"
+          },
+          {
+            "text": "naya subject add hua hai, structure ka naya version banao",
+            "lang": "ur-Latn",
+            "gloss": "a new subject has been added, make a new version of the structure"
+          },
+          "create version 2 of this structure for the coming session"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "structure approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the structure"
+            },
+            "goesTo": "fee.structure.approve — UC-04-01-PC-3",
+            "note": "A revision goes through the same approval as the original (BR-9), so this creates a draft and the decision follows."
+          },
+          {
+            "request": {
+              "text": "purane invoice bhi update kar do",
+              "lang": "ur-Latn",
+              "gloss": "update the invoices already raised too"
+            },
+            "goesTo": "Not offered.",
+            "note": "A structure change never recalculates invoices already issued. A family given a bill is not re-billed because the price list moved afterwards (BR-10)."
+          },
+          {
+            "request": {
+              "text": "ek student ki fees kam kar do",
+              "lang": "ur-Latn",
+              "gloss": "reduce one student's fees"
+            },
+            "goesTo": "fee.concession.record — UC-04-13",
+            "note": "A reduction for one student is a concession, not a change to the price list everybody is billed from."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.structure.revise",
+            "inputs": {
+              "structure_id": "$request.structure_phrase",
+              "change_reason": "$request.change_reason",
+              "lines": "$request.lines",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it produces a Draft. The previous version is kept so an invoice raised under it remains explicable (BR-8), and the new version goes through the same approval as the original (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. The change reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write, atomic in itself: the new version at Draft with its lines, and the audit entry. The previous approved version is untouched and stays billable until the new one is approved and takes effect — its effective date closes the old one (BR-11). No invoice already issued is recalculated (BR-10), so no family's existing bill changes."
+      },
+      "operations": [
+        {
+          "name": "fee.structure.revise",
+          "method": "POST",
+          "path": "/api/v1/fee-structures/{structure_id}/revise",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "structure_id + version, so a repeat does not create two versions of the same change",
+          "purpose": "Create a new draft version of an approved structure with the reason it changed, keeping the previous version.",
+          "parameters": [
+            {
+              "name": "structure_id",
+              "source": "resolved",
+              "sourceRef": "$request.structure_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "fee_structure",
+                "fromPhrase": "$request.structure_phrase",
+                "onNoMatch": "Refuse. No structure matches for that class and scope in this academic session.",
+                "onAmbiguous": "Ask, naming the candidates with class, scope, version, status and effective date."
+              },
+              "notes": "The fee structure, resolved from how the actor named it — the class, the scope, the version."
+            },
+            {
+              "name": "change_reason",
+              "source": "request",
+              "sourceRef": "$request.change_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required when changing an approved structure (BR-9, E7). The actor's own words — a fee rise is read back later by whoever asks why."
+            },
+            {
+              "name": "lines",
+              "source": "request",
+              "sourceRef": "$request.lines",
+              "required": true,
+              "type": "object[]",
+              "notes": "The lines of the new version, each with its amount and recurrence. Every amount comes from the request. Amounts are held in the smallest currency unit and displayed as PKR (money convention). A figure spoken as \"paanch hazaar\" is not converted into a parameter by the planner — it is asked for as a number."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The new version as drafted.",
+            "fields": [
+              {
+                "name": "structure_id",
+                "type": "string",
+                "description": "The new version's structure id."
+              },
+              {
+                "name": "version",
+                "type": "integer",
+                "description": "Incremented from the previous."
+              },
+              {
+                "name": "previous_version",
+                "type": "integer",
+                "description": "Kept, so invoices raised under it remain explicable (BR-8)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. It goes through the same approval as the original (BR-9)."
+              },
+              {
+                "name": "invoices_recalculated",
+                "type": "integer",
+                "description": "Always zero (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CHANGE_REASON_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A new version was created with no reason.",
+              "written": "Nothing.",
+              "notWritten": "No version created.",
+              "note": "Message: \"Give a reason for changing an approved structure.\" Ask for it; never compose one."
+            },
+            {
+              "code": "AMOUNT_NOT_POSITIVE",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "An amount of zero or less was entered.",
+              "written": "Nothing.",
+              "notWritten": "No version created."
+            },
+            {
+              "code": "SUBJECT_UNPRICED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A subject the class carries was left unpriced.",
+              "written": "Nothing.",
+              "notWritten": "No version created.",
+              "note": "A subject added to the class after the structure was approved is unpriced until the structure is versioned (BR-5, A6) — this is where it gets its price."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the change reason. A fee rise is read back later by whoever asks why families are paying more, and BR-9 requires it for that reason.",
+          "derivedFrom": [
+            "BR-9",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never carry forward the previous version's amounts. The new version states every line, because a revision that copies what it does not mention silently re-approves prices nobody looked at.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never offer to recalculate issued invoices. A structure change never touches them (BR-10) — a family given a bill is not re-billed because the price list moved, and nothing here does it.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain the approval. A revision goes through the same approval as the original (BR-9), by someone who did not build it.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A version is not deleted. Where a revision was wrong, another version is created — the previous ones are all kept, which is what makes an invoice raised under any of them explicable (BR-8). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 4 ki tuition January se 5500 kar do — board ne fees revise ki hain",
+            "lang": "ur-Latn",
+            "gloss": "raise Grade 4's tuition to 5500 from January — the board has revised the fees"
+          },
+          "context": "Accounts, Johar Town branch, on the approved version 1.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.revise",
+              "inputs": {
+                "structure_id": "$request.structure_phrase → \"Grade 4, all sections, v1\"",
+                "change_reason": "The board has revised the fees.",
+                "lines": "$request.lines → every line of the new version, with tuition at 5500",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Every line is stated, not only the one that moved (PR-2). The effective date is set when the version is submitted, not here."
+            }
+          ],
+          "outcome": "Version 2 exists at Draft. Version 1 stays approved and billable until version 2 is approved and takes effect. Invoices already raised under version 1 are untouched (BR-10)."
+        },
+        {
+          "request": {
+            "text": "Grade 9 mein Chemistry add hui hai, structure ka naya version banao",
+            "lang": "ur-Latn",
+            "gloss": "Chemistry has been added to Grade 9, make a new version of the structure"
+          },
+          "context": "Accounts, Johar Town branch, on an approved Subject Wise structure.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.revise",
+              "inputs": {
+                "structure_id": "$request.structure_phrase → \"Grade 9, v1\"",
+                "change_reason": "Chemistry added to the class.",
+                "lines": "$request.lines → all six subjects, including Chemistry's new amount",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A subject added to the class after approval is unpriced until the structure is versioned (BR-5, A6). This is where it gets its price — and every other subject is restated."
+            }
+          ],
+          "outcome": "Version 2 at Draft with all six subjects priced. Until it is approved and effective, Grade 9 bills from version 1 and Chemistry is not charged."
+        },
+        {
+          "request": {
+            "text": "fees badha do 5500",
+            "lang": "ur-Latn",
+            "gloss": "raise the fees to 5500"
+          },
+          "context": "Accounts, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.structure.revise",
+              "inputs": {
+                "structure_id": "$request.structure_phrase",
+                "change_reason": "$request.change_reason — absent",
+                "lines": "$request.lines",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: change_reason is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why the fees are changing. BR-9 requires it because a fee rise has to be explicable months later."
+        }
+      ]
+    }
+  ]
+}

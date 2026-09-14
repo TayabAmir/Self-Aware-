@@ -1,0 +1,1181 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-11",
+    "name": "Return an unused credit to a family who leaves the school",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-11.json",
+    "featureRef": "4.11 Refunding an unused credit on withdrawal"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-11-PC-1",
+      "intent": {
+        "name": "fee.refund.raise",
+        "summary": "Propose returning an unused credit to a household that has left the school, after any outstanding charge is settled from it. One step, and no money moves.",
+        "routesHere": [
+          "raise a refund for the Khan family, they've left and hold 2,000 credit",
+          {
+            "text": "ye family school chhod chuki hai, unka credit wapas karna hai",
+            "lang": "ur-Latn",
+            "gloss": "this family has left the school, their credit needs returning"
+          },
+          {
+            "text": "bacha nikal gaya hai aur credit para hai, refund banao",
+            "lang": "ur-Latn",
+            "gloss": "the child has left and credit is sitting there, raise a refund"
+          },
+          {
+            "text": "aadha credit wapas karna hai, baaqi rehne do",
+            "lang": "ur-Latn",
+            "gloss": "return half the credit, leave the rest"
+          },
+          "refund the remaining balance to the guardian by bank transfer"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "agle bill mein adjust kar dena",
+              "lang": "ur-Latn",
+              "gloss": "just adjust it against the next bill"
+            },
+            "goesTo": "No refund needed.",
+            "note": "While any child remains enrolled the credit is applied to their bill instead, which is what the household expects (BR-2, E1)."
+          },
+          {
+            "request": {
+              "text": "charge galat tha, credit karo",
+              "lang": "ur-Latn",
+              "gloss": "the charge was wrong, credit it"
+            },
+            "goesTo": "fee.credit.raise — UC-04-10",
+            "note": "A credit is created there; this returns one that already exists and cannot be used."
+          },
+          {
+            "request": {
+              "text": "paisa de do abhi",
+              "lang": "ur-Latn",
+              "gloss": "hand the money over now"
+            },
+            "goesTo": "fee.refund.pay — UC-04-11-PC-3, after approval",
+            "note": "Money leaves through a payment voucher on the ordinary route, and only once the Principal has approved it (BR-5, BR-6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.refund.raise",
+            "inputs": {
+              "family_code": "$request.family_phrase",
+              "amount": "$request.amount",
+              "method": "$request.method",
+              "payee_name": "$request.payee_name",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, producing a proposal at Awaiting approval. Nothing leaves the school and no voucher exists until the Principal approves it (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. A child still enrolled, an outstanding charge, an amount above the credit remaining and a payee who is not the guardian on record are all enforced by the API and arrive as errors.",
+        "atomicity": "One write: the proposal with its amount, method, payee and reason, together with the audit entry or not at all. No money moves, no voucher is raised and the credit balance is untouched — it is still held against the household and could still be applied if a child re-enrols (A5). The original credit and the charge behind it stay in place; a refund is an additional entry, never a deletion (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "fee.refund.raise",
+          "method": "POST",
+          "path": "/api/v1/fee-refunds",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "family_code + amount, since a household carries one open refund proposal at a time",
+          "purpose": "Raise a refund proposal against a household's unused credit, after settling any charge still outstanding from it.",
+          "parameters": [
+            {
+              "name": "family_code",
+              "source": "resolved",
+              "sourceRef": "$request.family_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "family",
+                "fromPhrase": "$request.family_phrase",
+                "onNoMatch": "Refuse. No household matches, or none holding an unused credit.",
+                "onAmbiguous": "Ask, naming the candidates with the guardian, the children and the credit held."
+              },
+              "notes": "The household holding the unused credit. Every child must have withdrawn — while any remains enrolled the credit is applied to their bill instead (BR-2, E1)."
+            },
+            {
+              "name": "amount",
+              "source": "request",
+              "sourceRef": "$request.amount",
+              "required": true,
+              "type": "money",
+              "notes": "Greater than zero and not more than the credit remaining after any outstanding charge is settled from it (BR-3, BR-4, E3). A part refund is permitted and the remainder stays held (BR-8). Exactly the figure the actor states."
+            },
+            {
+              "name": "method",
+              "source": "request",
+              "sourceRef": "$request.method",
+              "required": true,
+              "type": "enum: Cash | Bank transfer | Cheque",
+              "notes": "How the money leaves. Only where the request states it — the method decides what evidence comes back and when the money actually goes."
+            },
+            {
+              "name": "payee_name",
+              "source": "request",
+              "sourceRef": "$request.payee_name",
+              "required": true,
+              "type": "string",
+              "notes": "The guardian on the household record, and nobody else. A person walking in claiming a refund is not evidence of who paid (BR-7, E4)."
+            },
+            {
+              "name": "bank_details",
+              "source": "request",
+              "sourceRef": "$request.bank_details",
+              "required": false,
+              "type": "string",
+              "notes": "Account title and number, where the method is a transfer. Never taken from anywhere but the request."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters. Why the credit could not be used. The actor's own words — money leaving the school is read back later."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The proposal as raised.",
+            "fields": [
+              {
+                "name": "refund_id",
+                "type": "string",
+                "description": "The proposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. No money has moved."
+              },
+              {
+                "name": "credit_held",
+                "type": "string",
+                "description": "The balance against the household. Never typed (BR-4)."
+              },
+              {
+                "name": "outstanding_charges",
+                "type": "string",
+                "description": "Any charge still due, settled from the credit first (BR-3)."
+              },
+              {
+                "name": "credit_remaining",
+                "type": "string",
+                "description": "What is available to refund once those are settled."
+              },
+              {
+                "name": "amount",
+                "type": "string",
+                "description": "What would be returned."
+              },
+              {
+                "name": "payee_name",
+                "type": "string",
+                "description": "The guardian on the household record."
+              },
+              {
+                "name": "children",
+                "type": "object[]",
+                "description": "Every child in the household and their status, so an enrolled one is visible before approval (BR-2)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CHILD_STILL_ENROLLED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "A child in the household is still enrolled.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "The message names the child and class. The credit goes to their next bill, which is what the household expects (BR-2)."
+            },
+            {
+              "code": "OUTSTANDING_EXCEEDS_CREDIT",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "A charge is outstanding and exceeds the credit held.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "The household owes the school, not the other way round. The school does not hand back money and chase a debt at the same time (BR-3)."
+            },
+            {
+              "code": "AMOUNT_EXCEEDS_REMAINING",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The amount is more than the credit remaining.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "There is no route by which a refund creates a debt (BR-4). Never reduce the figure to fit."
+            },
+            {
+              "code": "PAYEE_NOT_GUARDIAN",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The payee is not the guardian on the household record.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "A refund is paid to the guardian on the record (BR-7). Correcting the record is UC-03-01, not a step to chain here."
+            },
+            {
+              "code": "NO_CREDIT_HELD",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The household holds no credit.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply or round the amount. A part refund is permitted (BR-8) and which part is the actor's decision; E3 refusing one above the remaining credit is not a prompt to trim it.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-8",
+            "E3",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never name a payee other than the guardian on the household record. A person walking in claiming a refund is not evidence of who paid (BR-7), and money leaving to the wrong hands is not recoverable.",
+          "derivedFrom": [
+            "BR-7",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never raise a refund while a child is still enrolled. E1 is BR-2 working — the credit goes to their next bill, which is what the household expects and what the money is for.",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the outstanding charges and the credit remaining. Any charge still due is settled from the credit first and only the balance is returned (BR-3) — so the amount refundable is usually less than the credit held, and the actor needs to see both.",
+          "derivedFrom": [
+            "BR-3",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never compose the reason. Money leaving the school is read back later, and BR-6 makes it the Principal's decision on the strength of it.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never chain the approval or the payment. Accounts raise, the Principal approves and the money leaves through a voucher — three acts, because money leaving the school is not one hand's decision (BR-5, BR-6).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-6",
+            "E5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A proposal is approved or returned by the Principal; nothing here withdraws one. No money has moved and the credit is untouched. Where the family re-enrols before it is paid, the credit is simply applied to the new bill instead (A5)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Khan family school chhod chuki hai — 2000 credit para hai, bank transfer se wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "the Khan family has left the school — 2000 credit is sitting there, return it by bank transfer"
+          },
+          "context": "Accounts, Johar Town branch. Both children withdrawn, no charge outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.raise",
+              "inputs": {
+                "family_code": "$request.family_phrase → \"FAM-000412\"",
+                "amount": 2000,
+                "method": "Bank transfer",
+                "payee_name": "$request.payee_name → the guardian on the record",
+                "bank_details": "$request.bank_details",
+                "reason": "Both children have withdrawn and the credit cannot be applied to a future bill.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The payee is the guardian on the household record, not whoever asked (PR-2)."
+            }
+          ],
+          "outcome": "A proposal at Awaiting approval for PKR 2,000. No money has moved, no voucher exists and the credit is still held. Only the Principal may approve it."
+        },
+        {
+          "request": {
+            "text": "in ka credit wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return their credit"
+          },
+          "context": "Accounts, Johar Town branch, where a younger sibling is still in Grade 1.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.raise",
+              "inputs": {
+                "family_code": "$request.family_phrase",
+                "amount": "$request.amount",
+                "method": "$request.method",
+                "payee_name": "$request.payee_name",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns CHILD_STILL_ENROLLED (E1)."
+            }
+          ],
+          "outcome": "Nothing is raised. Report that Bilal Khan is still in Grade 1 and the credit will reduce his next bill instead — which is what the household expects (PR-3)."
+        },
+        {
+          "request": {
+            "text": "3000 wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return 3000"
+          },
+          "context": "Accounts, Johar Town branch, on a household holding PKR 3,000 credit with PKR 1,000 still outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.raise",
+              "inputs": {
+                "family_code": "$request.family_phrase",
+                "amount": 3000,
+                "method": "Cash",
+                "payee_name": "$request.payee_name",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as stated. The API returns AMOUNT_EXCEEDS_REMAINING (E3) — the outstanding PKR 1,000 is settled from the credit first."
+            }
+          ],
+          "outcome": "Nothing is raised. Report that PKR 1,000 is owed and settles from the credit, leaving PKR 2,000 refundable — do not silently refund 2,000 instead (PR-1). The school does not hand back money and chase a debt at the same time."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-11-PC-2",
+      "intent": {
+        "name": "fee.refund.approve",
+        "summary": "Approve a refund so a payment voucher is raised for the money to leave. Principal or Director only, one step.",
+        "routesHere": [
+          "approve the refund for the Khan family",
+          {
+            "text": "refund approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the refund"
+          },
+          {
+            "text": "ye paisa wapas karne ki ijazat de do",
+            "lang": "ur-Latn",
+            "gloss": "authorise returning this money"
+          },
+          "authorise the refund Accounts raised"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "refund wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the refund back"
+            },
+            "goesTo": "fee.refund.return — UC-04-11-PC-4"
+          },
+          {
+            "request": {
+              "text": "paisa de diya hai, record kar do",
+              "lang": "ur-Latn",
+              "gloss": "the money has been handed over, record it"
+            },
+            "goesTo": "fee.refund.pay — UC-04-11-PC-3",
+            "note": "Approving raises the voucher; the refund is marked paid on the date the money actually left (BR-9)."
+          },
+          {
+            "request": {
+              "text": "School Admin approve kar de",
+              "lang": "ur-Latn",
+              "gloss": "let the School Admin approve it"
+            },
+            "goesTo": "Not offered.",
+            "note": "Money leaving the school is not School Admin's decision (BR-6, E6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.refund.approve",
+            "inputs": {
+              "refund_id": "$request.refund_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It raises the payment voucher through the ordinary route for money leaving the school (BR-5) — no separate refund mechanism exists, so the refund appears in the books like any other payment out."
+          }
+        ],
+        "onFailure": "Stop and report. The acting role is enforced by the API and arrives as an error.",
+        "atomicity": "One write, atomic in itself: the approval, the payment voucher and the audit entry together or not at all. **No money has left yet** — the voucher is raised and the refund waits to be marked paid on the date it actually goes (BR-9). The credit is not yet discharged; that happens when the payment is recorded (BR-10). The original credit and the charge behind it stay in place (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "fee.refund.approve",
+          "method": "POST",
+          "path": "/api/v1/fee-refunds/{refund_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "refund_id, since a refund carries one approval",
+          "purpose": "Approve a refund and raise the payment voucher through the ordinary route for money leaving the school.",
+          "parameters": [
+            {
+              "name": "refund_id",
+              "source": "resolved",
+              "sourceRef": "$request.refund_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "refund",
+                "fromPhrase": "$request.refund_phrase",
+                "onNoMatch": "Refuse. No refund matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with household, amount, method and status."
+              },
+              "notes": "The refund, resolved from how the actor named it — the reference, or the household."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval, and the voucher it raised.",
+            "fields": [
+              {
+                "name": "refund_id",
+                "type": "string",
+                "description": "The approved refund."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved. The money has not left yet."
+              },
+              {
+                "name": "voucher_number",
+                "type": "string",
+                "description": "The payment voucher, raised through the ordinary route (BR-5)."
+              },
+              {
+                "name": "amount",
+                "type": "string",
+                "description": "To be paid."
+              },
+              {
+                "name": "method",
+                "type": "string",
+                "description": "Cash, bank transfer or cheque."
+              },
+              {
+                "name": "payee_name",
+                "type": "string",
+                "description": "The guardian on the household record."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The Principal or Director. Nobody else (BR-6)."
+              },
+              {
+                "name": "credit_discharged",
+                "type": "boolean",
+                "description": "Always false at this point. The credit is discharged when the refund is marked paid (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to approve their own refund.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Money leaving the school is not decided by one hand (BR-6)."
+            },
+            {
+              "code": "SCHOOL_ADMIN_CANNOT_APPROVE",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "A School Admin attempted to approve.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Only the Principal or Director may approve money leaving the school (BR-6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a refund in any session but a Principal's or Director's. School Admin approval is not sufficient here — this is money leaving the school (BR-6).",
+          "derivedFrom": [
+            "BR-6",
+            "E5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report that the money has not left yet. Approving raises a voucher; the refund is marked paid separately, on the date it actually goes (BR-9), and a family told the money is on its way when only a voucher exists will ring back.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain the payment onto the approval. The two are separate because the date money leaves and the date it was approved differ whenever a cheque waits for collection (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report that the credit is not yet discharged. It is discharged by exactly what was refunded, when the payment is recorded (BR-10) — until then the household still holds it.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. Where the refund should not go, the voucher is cancelled through the voucher route (UC-04-19) and the refund is left unpaid — the credit stays with the household. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Khan family wala refund approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the Khan family refund"
+          },
+          "context": "Principal, Johar Town branch, on a PKR 2,000 proposal by bank transfer.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.approve",
+              "inputs": {
+                "refund_id": "$request.refund_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The refund is Approved and a payment voucher is raised. Report that the money has not left yet (PR-2) — the transfer still has to be made and the refund marked paid on the day it goes."
+        },
+        {
+          "request": {
+            "text": "refund approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the refund"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.approve",
+              "inputs": {
+                "refund_id": "$request.refund_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "In practice approve is absent from a School Admin allow-list here. The API returns SCHOOL_ADMIN_CANNOT_APPROVE (E6)."
+            }
+          ],
+          "outcome": "Nothing is approved. Report that only the Principal or Director may authorise money leaving the school (PR-1)."
+        },
+        {
+          "request": "approve the partial refund of 1,000 and leave the rest held",
+          "context": "Principal, Johar Town branch, on a household holding PKR 2,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.approve",
+              "inputs": {
+                "refund_id": "$request.refund_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "PKR 1,000 is approved with its voucher; PKR 1,000 stays held against the family code and can be paid later (BR-8). Report both figures."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-11-PC-3",
+      "intent": {
+        "name": "fee.refund.pay",
+        "summary": "Record that an approved refund has actually been paid, on the date the money left. One step, and it discharges the credit.",
+        "routesHere": [
+          "mark the Khan refund paid, the transfer went yesterday",
+          {
+            "text": "refund ka paisa de diya hai, mark kar do",
+            "lang": "ur-Latn",
+            "gloss": "the refund money has been handed over, mark it"
+          },
+          {
+            "text": "cheque cash ho gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "the cheque has been cashed"
+          },
+          {
+            "text": "kal transfer chala gaya tha",
+            "lang": "ur-Latn",
+            "gloss": "the transfer went yesterday"
+          },
+          "record the refund as paid with the signed acknowledgement"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "refund approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the refund"
+            },
+            "goesTo": "fee.refund.approve — UC-04-11-PC-2",
+            "note": "A refund is marked paid only after it is approved and its voucher raised."
+          },
+          {
+            "request": {
+              "text": "credit wapas kar do",
+              "lang": "ur-Latn",
+              "gloss": "give the credit back"
+            },
+            "goesTo": "fee.refund.raise — UC-04-11-PC-1"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.refund.pay",
+            "inputs": {
+              "refund_id": "$request.refund_phrase",
+              "paid_on": "$request.paid_on",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it is the point at which the credit is discharged. The date is when the money actually left, not when it was approved — the two differ whenever a cheque waits for collection (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. A refund already marked paid, and a failed ledger posting, are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the payment, the discharge of exactly what was refunded, and the audit entry together or not at all (E7). The credit is reduced by exactly the amount refunded, so the household account reads correctly afterwards and cannot be refunded twice (BR-10). Any remainder stays held and can be paid later (BR-8). The original credit and the charge behind it are untouched — a refund is an additional entry, never a deletion (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "fee.refund.pay",
+          "method": "POST",
+          "path": "/api/v1/fee-refunds/{refund_id}/paid",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "refund_id, since a refund is paid once and BR-10 depends on it — a repeat must not discharge the credit twice",
+          "purpose": "Record an approved refund as paid on the date the money left, discharging that much of the household's credit.",
+          "parameters": [
+            {
+              "name": "refund_id",
+              "source": "resolved",
+              "sourceRef": "$request.refund_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "refund",
+                "fromPhrase": "$request.refund_phrase",
+                "onNoMatch": "Refuse. No refund matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with household, amount, method and status."
+              },
+              "notes": "The refund, resolved from how the actor named it — the reference, or the household."
+            },
+            {
+              "name": "paid_on",
+              "source": "request",
+              "sourceRef": "$request.paid_on",
+              "required": true,
+              "type": "date",
+              "notes": "When the money actually left, not when it was approved (BR-9). Only where the request states it — a date defaulted to today misstates when the school's cash went."
+            },
+            {
+              "name": "acknowledgement_reference",
+              "source": "request",
+              "sourceRef": "$request.acknowledgement_reference",
+              "required": false,
+              "type": "string",
+              "notes": "A signed receipt or transfer confirmation held against the refund. Only where the request supplies one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The refund as paid.",
+            "fields": [
+              {
+                "name": "refund_id",
+                "type": "string",
+                "description": "The refund."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Paid. Terminal."
+              },
+              {
+                "name": "amount",
+                "type": "string",
+                "description": "What left the school."
+              },
+              {
+                "name": "paid_on",
+                "type": "date",
+                "description": "When the money actually left (BR-9)."
+              },
+              {
+                "name": "credit_discharged",
+                "type": "string",
+                "description": "Exactly what was refunded, so the household cannot be refunded twice (BR-10)."
+              },
+              {
+                "name": "credit_remaining",
+                "type": "string",
+                "description": "Any part refund's remainder, still held (BR-8)."
+              },
+              {
+                "name": "family_notified",
+                "type": "string",
+                "description": "Delivery status of the notice to the guardian."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_PAID",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The refund has already been marked paid.",
+              "written": "Nothing.",
+              "notWritten": "No second payment.",
+              "note": "The message names the date. A household cannot be refunded twice (BR-10)."
+            },
+            {
+              "code": "POSTING_FAILED",
+              "mapsTo": "E7",
+              "httpStatus": 500,
+              "meaning": "The ledger posting failed.",
+              "written": "Nothing. The credit is not discharged.",
+              "notWritten": "All of it.",
+              "note": "Message: \"The refund could not be recorded as paid. The credit is unchanged.\""
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never default the paid date to today. It is when the money actually left, and the two differ whenever a cheque waits for collection (BR-9) — a wrong date misstates when the school's cash went out.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never mark a refund paid before the money has gone. This discharges the credit (BR-10), and a household whose credit is discharged against a transfer that never left has lost it.",
+          "derivedFrom": [
+            "BR-9",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never re-emit after ALREADY_PAID. A household cannot be refunded twice, and BR-10 is what guarantees it.",
+          "derivedFrom": [
+            "BR-10",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the remaining credit on a part refund. The remainder stays held and can be paid later (BR-8), and the family should know it is still theirs.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Money that has left cannot be recalled by anything here. Where a refund was paid in error, the household owes the school and that is a fresh charge, not a reversal. The original credit, the charge behind it and the refund all stay in the books (BR-12). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Khan family ka transfer kal chala gaya tha, refund paid mark kar do",
+            "lang": "ur-Latn",
+            "gloss": "the Khan family transfer went yesterday, mark the refund paid"
+          },
+          "context": "Accounts, Johar Town branch. Today is 08-09-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.pay",
+              "inputs": {
+                "refund_id": "$request.refund_phrase",
+                "paid_on": "2026-09-07",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Yesterday's date, from the request — not today's (PR-1)."
+            }
+          ],
+          "outcome": "PKR 2,000 has left the school, dated 07-09-2026, and exactly that much credit is discharged. The household now holds nothing and cannot be refunded again."
+        },
+        {
+          "request": {
+            "text": "refund paid kar do",
+            "lang": "ur-Latn",
+            "gloss": "mark the refund paid"
+          },
+          "context": "Accounts, Johar Town branch, with no date in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.pay",
+              "inputs": {
+                "refund_id": "$request.refund_phrase",
+                "paid_on": "$request.paid_on — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: paid_on is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask when the money actually left — a cheque approved last week and collected today are two different dates in the books."
+        },
+        {
+          "request": {
+            "text": "aadha refund de diya hai — 1000, baaqi baad mein",
+            "lang": "ur-Latn",
+            "gloss": "half the refund has been paid — 1000, the rest later"
+          },
+          "context": "Accounts, Johar Town branch, on an approved refund of PKR 1,000 against a PKR 2,000 credit.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.pay",
+              "inputs": {
+                "refund_id": "$request.refund_phrase",
+                "paid_on": "2026-09-08",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "PKR 1,000 has left and PKR 1,000 of credit is discharged. Report that PKR 1,000 remains held against the household and can be refunded later through a fresh proposal (PR-4)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-11-PC-4",
+      "intent": {
+        "name": "fee.refund.return",
+        "summary": "Send a refund proposal back to Accounts with why it was not approved. Principal or Director only, one step.",
+        "routesHere": [
+          "return this refund, a sibling is still enrolled",
+          {
+            "text": "refund wapas bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the refund back"
+          },
+          {
+            "text": "abhi paisa wapas nahi karna, wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "do not return the money yet, send it back"
+          },
+          "send it back — the payee isn't the guardian on the record"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "refund approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the refund"
+            },
+            "goesTo": "fee.refund.approve — UC-04-11-PC-2"
+          },
+          {
+            "request": {
+              "text": "credit rehne do agle bill ke liye",
+              "lang": "ur-Latn",
+              "gloss": "leave the credit for the next bill"
+            },
+            "goesTo": "Returning says so.",
+            "note": "Where a child remains enrolled the credit is applied to their bill (BR-2), and nothing needs raising at all."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.refund.return",
+            "inputs": {
+              "refund_id": "$request.refund_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. No money moves, no voucher is raised and the credit stays held against the household."
+          }
+        ],
+        "onFailure": "Stop and report. The reason and the acting role are enforced by the API and arrive as errors.",
+        "atomicity": "One write: the status change, the reason and the audit entry together or not at all. The credit is untouched and still held. Nothing has left the school."
+      },
+      "operations": [
+        {
+          "name": "fee.refund.return",
+          "method": "POST",
+          "path": "/api/v1/fee-refunds/{refund_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "refund_id + return_reason",
+          "purpose": "Send a refund proposal back to Accounts with the reason it was not approved.",
+          "parameters": [
+            {
+              "name": "refund_id",
+              "source": "resolved",
+              "sourceRef": "$request.refund_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "refund",
+                "fromPhrase": "$request.refund_phrase",
+                "onNoMatch": "Refuse. No refund matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with household, amount, method and status."
+              },
+              "notes": "The refund, resolved from how the actor named it — the reference, or the household."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required. The approver's own words — usually that the household is not yet eligible, or the payee is wrong."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The proposal as returned.",
+            "fields": [
+              {
+                "name": "refund_id",
+                "type": "string",
+                "description": "The proposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "As given, shown to Accounts."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The Principal or Director."
+              },
+              {
+                "name": "credit_held",
+                "type": "string",
+                "description": "Unchanged, still against the household."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The acting user is not a Principal or Director.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the return reason. It usually says the household is not eligible yet or the payee is wrong, and only the approver can say which.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain anything onto a return. The credit stays held and is applied to a future bill if a child re-enrols (A5) — nothing else is needed.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the credit is untouched. The family has not lost it; it is simply not being returned as cash.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not undone. Accounts raise the refund again when the household becomes eligible, which is a fresh proposal and a fresh decision."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye refund wapas bhej do — chhota bhai abhi bhi Grade 1 mein hai",
+            "lang": "ur-Latn",
+            "gloss": "send this refund back — the younger brother is still in Grade 1"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.return",
+              "inputs": {
+                "refund_id": "$request.refund_phrase",
+                "return_reason": "A younger sibling is still enrolled in Grade 1; the credit should be applied to his bill.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned with the reason. The credit stays held against the household and will reduce the sibling's next invoice (PR-3)."
+        },
+        {
+          "request": "send it back — the payee named isn't the guardian on the record",
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.return",
+              "inputs": {
+                "refund_id": "$request.refund_phrase",
+                "return_reason": "The payee named is not the guardian on the household record.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned. Correcting the guardian on the record is UC-03-01, and a fresh refund follows from that — not chained here."
+        },
+        {
+          "request": {
+            "text": "refund wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "send the refund back"
+          },
+          "context": "Principal, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.refund.return",
+              "inputs": {
+                "refund_id": "$request.refund_phrase",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why — Accounts need to know whether the household is ineligible or the details are wrong."
+        }
+      ]
+    }
+  ]
+}

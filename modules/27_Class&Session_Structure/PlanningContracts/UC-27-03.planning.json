@@ -1,0 +1,1091 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-27-03",
+    "name": "Place an admitted student in a class and section, and invite their guardian to its parent group",
+    "module": "Class & Session Structure",
+    "file": "../UseCases/UC-27-03.json",
+    "featureRef": "27.3 Class placement of an admitted student"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-27-03-PC-1",
+      "intent": {
+        "name": "student.place",
+        "summary": "Place an admitted student into a class and section, which puts them on the register, makes them markable for attendance and sends their guardian the section's group link. One step, one student or a whole cohort.",
+        "routesHere": [
+          "place Ayesha in Grade 4 section B from today",
+          {
+            "text": "Ayesha ko Grade 4 section B mein daal do",
+            "lang": "ur-Latn",
+            "gloss": "put Ayesha into Grade 4 section B"
+          },
+          {
+            "text": "jo students placement ka intezaar kar rahe hain unko place kar do",
+            "lang": "ur-Latn",
+            "gloss": "place the students who are waiting for placement"
+          },
+          {
+            "text": "in chaubees bachon ko 4-A aur 4-B mein baant do",
+            "lang": "ur-Latn",
+            "gloss": "split these twenty-four children between 4-A and 4-B"
+          },
+          "place the imported students who came in without a class",
+          {
+            "text": "is bache ko section C mein rakh do, 15 September se",
+            "lang": "ur-Latn",
+            "gloss": "put this child in section C, from 15 September"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "Bilal ko section A se section B mein shift kar do",
+              "lang": "ur-Latn",
+              "gloss": "move Bilal from section A to section B"
+            },
+            "goesTo": "student.move — UC-27-03-PC-2",
+            "note": "A student already placed is moved, with a reason, not placed again (BR-12, E4)."
+          },
+          {
+            "request": {
+              "text": "is bache ka admission kar do",
+              "lang": "ur-Latn",
+              "gloss": "admit this child"
+            },
+            "goesTo": "applicant.admit — UC-02-07-PC-2",
+            "note": "Placement does not create the student record. The record exists from the moment the admission was approved (BR-1)."
+          },
+          {
+            "request": {
+              "text": "guardian ko group ka link dobara bhejo",
+              "lang": "ur-Latn",
+              "gloss": "send the guardian the group link again"
+            },
+            "goesTo": "section.group.invite.resend — UC-27-03-PC-3"
+          },
+          {
+            "request": {
+              "text": "section ki capacity badha do",
+              "lang": "ur-Latn",
+              "gloss": "raise the section's capacity"
+            },
+            "goesTo": "section.update — UC-27-02-PC-2",
+            "note": "A full section refusing a placement is the capacity working (BR-4). Raising it is a separate decision about the room."
+          },
+          {
+            "request": {
+              "text": "agle class mein promote kar do",
+              "lang": "ur-Latn",
+              "gloss": "promote them to the next class"
+            },
+            "goesTo": "Not this use case.",
+            "note": "Promoting students at session end is out of scope here."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.place",
+            "inputs": {
+              "student_ids": "$request.student_phrase",
+              "section_id": "$request.section_phrase",
+              "placement_date": "$request.placement_date",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step, whether the request names one student or twenty-four. The register entry, the attendance start date, the fee liability and the guardian's group invite all follow inside it — there is no sequence to plan."
+          }
+        ],
+        "onFailure": "Stop and report. Capacity, the placement date, whether the student is already placed and whether the guardian has a contact at all are enforced by the API and arrive as errors. A failed invite does not fail the placement (E6), and a guardian with no contact number does not either (E9) — both are outcomes to report.",
+        "atomicity": "Each placement is atomic in itself: the enrolment, the register entry, the section's placed count and the audit entry together or not at all. Across a batch the guarantee is different — each student is placed individually and one failure does not abandon the rest (BR-9, AC-8), so a partial result is the normal shape. The guardian's group invite is separate again and does not block: where the section holds no stored link, or the send fails, or the guardian has no number, the placement still stands and the gap is recorded rather than hidden (BR-8, BR-10, AC-3, AC-9). Report all three layers."
+      },
+      "operations": [
+        {
+          "name": "student.place",
+          "method": "POST",
+          "path": "/api/v1/enrolments/place",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "student_id + session_id, since a student holds one active placement per academic session (BR-12) and a repeat returns ALREADY_PLACED rather than opening a second enrolment",
+          "purpose": "Place one or more students awaiting placement into a section, opening the enrolment and sending each guardian the section's stored group link.",
+          "parameters": [
+            {
+              "name": "student_ids",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student matches, or none awaiting placement — an already-placed student is a move, not a placement.",
+                "onAmbiguous": "Ask, naming the candidates with student ID and approved class. For a set, report how many and who before anything is placed."
+              },
+              "notes": "One student or several, all at status Registered and awaiting placement (BR-9). Students who arrived by bulk import with no class appear in the same list and are placed the same way (A6)."
+            },
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No active section of that name, or none under a class this student may go into.",
+                "onAmbiguous": "Ask, naming the candidates with their remaining capacity."
+              },
+              "notes": "The section to place into, resolved from how the actor named it. It must belong to the chosen class and have remaining capacity (BR-4). The class is derived from the section by the backend — never send both."
+            },
+            {
+              "name": "placement_date",
+              "source": "request",
+              "sourceRef": "$request.placement_date",
+              "required": true,
+              "type": "date",
+              "notes": "Not before the admission date and not in the future (E2, E3). Attendance is markable from this date, not from the admission date — a child admitted in August and placed in September was not absent for a month (BR-6, AC-5)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "A per-student result, because one failure does not abandon the rest.",
+            "fields": [
+              {
+                "name": "placed",
+                "type": "object[]",
+                "description": "student_id, section_name, placement_date, invite_delivery_status."
+              },
+              {
+                "name": "failed",
+                "type": "object[]",
+                "description": "student_id and the reason. Listed rather than silently dropped (BR-9)."
+              },
+              {
+                "name": "section_placed_count",
+                "type": "integer",
+                "description": "After the batch. May now equal capacity, in which case the section shows as Full."
+              },
+              {
+                "name": "section_remaining",
+                "type": "integer",
+                "description": "Places left."
+              },
+              {
+                "name": "invites_sent",
+                "type": "integer",
+                "description": "How many guardians were sent the section's stored link (BR-8)."
+              },
+              {
+                "name": "invites_not_sent",
+                "type": "object[]",
+                "description": "student_id and why — no stored link on the section, no guardian contact, or a failed send. Visible rather than silent (BR-10)."
+              },
+              {
+                "name": "class_differs_from_approved",
+                "type": "object[]",
+                "description": "Where a student was placed into a class other than the one approved at admission, recorded because the family was told a class (BR-3, A3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SECTION_FILLED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The section filled between the list being read and the placement.",
+              "written": "Nothing for that student.",
+              "notWritten": "Not placed.",
+              "note": "Message: \"Section B filled while you were placing. Choose another section.\" Choosing another is the actor's decision."
+            },
+            {
+              "code": "DATE_BEFORE_ADMISSION",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The placement date is before the admission date.",
+              "written": "Nothing.",
+              "notWritten": "Not placed."
+            },
+            {
+              "code": "DATE_IN_FUTURE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The placement date is in the future.",
+              "written": "Nothing.",
+              "notWritten": "Not placed.",
+              "note": "Message: \"Choose a placement date of today or earlier.\" Never substitute today's date."
+            },
+            {
+              "code": "ALREADY_PLACED",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The student already holds an active placement this session.",
+              "written": "Nothing.",
+              "notWritten": "Not placed.",
+              "note": "Message names the current section and asks for a reason to move them. A student holds one active placement per session (BR-12) — placing them again is student.move, which is a different capability and a different decision."
+            },
+            {
+              "code": "NO_SECTION_WITH_CAPACITY",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "Every section of the approved class is full.",
+              "written": "Nothing.",
+              "notWritten": "Not placed.",
+              "note": "Message: \"Every section of Grade 4 is full. Choose another class, or raise a capacity.\" Both are the actor's decisions."
+            },
+            {
+              "code": "STUDENT_DEACTIVATED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The student record was deactivated since the list was read.",
+              "written": "Nothing.",
+              "notWritten": "Not placed."
+            },
+            {
+              "code": "INVITE_SEND_FAILED",
+              "mapsTo": "E6",
+              "httpStatus": 200,
+              "meaning": "The group invite could not be sent.",
+              "written": "The placement, the enrolment and the register entry all stand.",
+              "notWritten": "The guardian has not received the group link.",
+              "treatedAsSuccess": true,
+              "note": "Not a failure of the placement. Report both halves — the link can be resent (A5)."
+            },
+            {
+              "code": "NO_GUARDIAN_CONTACT",
+              "mapsTo": "E9",
+              "httpStatus": 200,
+              "meaning": "The guardian holds no contact number.",
+              "written": "The placement stands and records that no invite was sent.",
+              "notWritten": "No invite.",
+              "treatedAsSuccess": true,
+              "note": "Report it. The gap is meant to be visible, and adding a contact is a correction to the student record (UC-03-01)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report who a set resolves to, by name, before the plan is emitted. Placement puts children on registers, starts their attendance, makes them billable and sends their guardians into a WhatsApp group — none of which is undone by a later move.",
+          "derivedFrom": [
+            "BR-9",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Send section_id and never class_id. The section determines its class, and sending both invites them to disagree — a student on one class's register and another's section.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never choose the section. Where the request names none, ask; where the named one is full, E1 and E7 say so and the alternatives come back for a person to pick from. Which room a child sits in is not a planner's decision.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4",
+            "E1",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never substitute the placement date. Attendance is markable from it (BR-6), so a date invented here decides whether a child was absent for a month. E2 and E3 refusing one are the system asking a person to say when the child actually started.",
+          "derivedFrom": [
+            "BR-6",
+            "E2",
+            "E3",
+            "AC-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never treat ALREADY_PLACED as a reason to place again. A student holds one active placement per session (BR-12); moving them is a different capability that closes the old enrolment and needs a reason (BR-7).",
+          "derivedFrom": [
+            "BR-12",
+            "E4",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report the three layers separately: who was placed, who failed and why, and whose guardian was not sent the link. A batch reported as a success hides both the failures BR-9 insists on listing and the guardians who are not in the group (BR-10).",
+          "derivedFrom": [
+            "BR-9",
+            "BR-10",
+            "AC-3",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Report class_differs_from_approved whenever it comes back. The family was told a class at admission (BR-3), and placing the child into another one is permitted but is something somebody has to tell them.",
+          "derivedFrom": [
+            "BR-3",
+            "A3"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "Never chain a capacity change onto a full section. Raising a capacity to fit one more child is a decision about the room, and admission checks the same number (BR-4).",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-9",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A placement is never deleted (BR-11). A student placed in error is moved through student.move, with the move recorded and its reason kept — the previous enrolment row is closed rather than edited, so the history of where a child sat survives. The guardian has already been sent the group link and the system does not remove anybody from a WhatsApp group (BR-10). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ko Grade 4 section B mein daal do, aaj se",
+            "lang": "ur-Latn",
+            "gloss": "put Ayesha into Grade 4 section B, from today"
+          },
+          "context": "School Admin, Johar Town branch, academic session 2025-26. Today is 08-09-2026. Ayesha was admitted on 20-08-2026 and is at Registered.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.place",
+              "inputs": {
+                "student_ids": "$request.student_phrase → [\"Ayesha Khan\"]",
+                "section_id": "$request.section_phrase → \"Grade 4 section B\"",
+                "placement_date": "2026-09-08",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "section_id alone; the class is derived from it (PR-2). The date comes from \"aaj\" in the request."
+            }
+          ],
+          "outcome": "Ayesha is on the 4-B register, markable for attendance from 08-09-2026 and not before (BR-6, AC-5), billable against Grade 4's fee structure, and her record has moved to the Enrolled Student List. Her guardian has been sent 4-B's stored group link."
+        },
+        {
+          "request": {
+            "text": "in chaubees bachon ko 4-A mein place kar do",
+            "lang": "ur-Latn",
+            "gloss": "place these twenty-four children into 4-A"
+          },
+          "context": "School Admin, Johar Town branch. 4-A has 22 places left.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.place",
+              "inputs": {
+                "student_ids": "$request.student_phrase → the 24 students awaiting placement",
+                "section_id": "$request.section_phrase → \"Grade 4 section A\"",
+                "placement_date": "2026-09-08",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The 24 names are reported to the actor before the plan is emitted (PR-1). Each is placed individually inside the batch (BR-9)."
+            }
+          ],
+          "outcome": "22 placed, 2 listed under failed with SECTION_FILLED. The batch was not abandoned for the two and neither was quietly put elsewhere (AC-8). Report all three numbers, plus any guardian who was not sent the link."
+        },
+        {
+          "request": {
+            "text": "jo students import se aaye the aur unki koi class nahi thi, unko 5-A mein daal do",
+            "lang": "ur-Latn",
+            "gloss": "place the students who came from the import with no class into 5-A"
+          },
+          "context": "Staff, Johar Town branch. The section holds no stored WhatsApp link.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.place",
+              "inputs": {
+                "student_ids": "$request.student_phrase → the imported students at Registered",
+                "section_id": "$request.section_phrase → \"Grade 5 section A\"",
+                "placement_date": "2026-09-08",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Imported students with no class appear in the same awaiting-placement list and are placed the same way (A6)."
+            }
+          ],
+          "outcome": "The students are placed and on the register. invites_not_sent lists every one of them with the reason: the section holds no stored group link (BR-10, AC-3). Report that — the placements succeeded and no guardian is in a group, which is exactly the gap BR-10 keeps visible."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-27-03-PC-2",
+      "intent": {
+        "name": "student.move",
+        "summary": "Move an already-placed student to another section, with the reason it happened. One step: they come off the old register and go onto the new one.",
+        "routesHere": [
+          "move Bilal from 4-A to 4-B — the parents asked for the morning shift",
+          {
+            "text": "Bilal ko section A se section B mein shift kar do",
+            "lang": "ur-Latn",
+            "gloss": "move Bilal from section A to section B"
+          },
+          {
+            "text": "is bache ko dusri section mein daal do, walidain ki request hai",
+            "lang": "ur-Latn",
+            "gloss": "move this child to another section, the parents asked"
+          },
+          {
+            "text": "4-C bohat bhari ho gayi hai, kuch bachon ko 4-D mein shift karo",
+            "lang": "ur-Latn",
+            "gloss": "4-C has got too crowded, move some children to 4-D"
+          },
+          "transfer this student to section B, the class incharge asked for it"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is bache ko place kar do",
+              "lang": "ur-Latn",
+              "gloss": "place this child"
+            },
+            "goesTo": "student.place — UC-27-03-PC-1",
+            "note": "A student not yet placed is placed, not moved."
+          },
+          {
+            "request": {
+              "text": "dusri branch mein transfer kar do",
+              "lang": "ur-Latn",
+              "gloss": "transfer them to another branch"
+            },
+            "goesTo": "Inter-branch transfer, UC-23-02.",
+            "note": "Moving between sections is this; moving between branches is not."
+          },
+          {
+            "request": {
+              "text": "purane group se nikaal do",
+              "lang": "ur-Latn",
+              "gloss": "remove them from the old group"
+            },
+            "goesTo": "Not offered.",
+            "note": "The system does not administer the WhatsApp group and does not remove anybody from one (BR-10, AC-10). Somebody has to do it by hand."
+          },
+          {
+            "request": {
+              "text": "class band kar rahe hain, sab bachon ko shift kar do",
+              "lang": "ur-Latn",
+              "gloss": "we are closing the class, move all the children"
+            },
+            "goesTo": "student.move, one at a time",
+            "note": "Each move needs its own reason (BR-7). There is no bulk move — see PR-2."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.move",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "section_id": "$request.section_phrase",
+              "move_reason": "$request.move_reason",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. The previous enrolment row is closed rather than edited, so the history of where a child sat survives (BR-7, BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. Capacity on the receiving section, and whether a reason was given, are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the old enrolment closed, the new one opened, both registers updated, both sections' placed counts adjusted and the audit entry, together or not at all. The previous row is closed rather than edited (BR-7), so the record shows a child in one section until a date and another after it. The new section's group link is sent (BR-10); the student is **not** removed from the old WhatsApp group, because the system does not administer it — and the record says so (AC-10). Report that: the guardian is now in two groups."
+      },
+      "operations": [
+        {
+          "name": "student.move",
+          "method": "POST",
+          "path": "/api/v1/enrolments/{student_id}/move",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "student_id + section_id + session_id, so a repeat does not close and reopen the enrolment twice or send the group link again",
+          "purpose": "Close a student's current enrolment and open one in another section, sending the new section's group link.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student matches, or none currently placed — a student awaiting placement is placed, not moved.",
+                "onAmbiguous": "Ask, naming the candidates with student ID and current section."
+              },
+              "notes": "A student currently placed. Resolved from how the actor named them."
+            },
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No active section of that name, or none under a class this student may go into.",
+                "onAmbiguous": "Ask, naming the candidates with their remaining capacity."
+              },
+              "notes": "The section to place into, resolved from how the actor named it. It must belong to the chosen class and have remaining capacity (BR-4). The class is derived from the section by the backend — never send both."
+            },
+            {
+              "name": "move_reason",
+              "source": "request",
+              "sourceRef": "$request.move_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters. Required (BR-7, E5). The actor's own words — the reason is kept with the closed enrolment and is what someone reads when they ask why a child changed section mid-year."
+            },
+            {
+              "name": "move_date",
+              "source": "request",
+              "sourceRef": "$request.move_date",
+              "required": false,
+              "type": "date",
+              "notes": "When the move takes effect, so attendance reads correctly on both registers. Omit where the request names none and the API uses today."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The move, and what it did and did not do.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student moved."
+              },
+              {
+                "name": "previous_section_name",
+                "type": "string",
+                "description": "The section they came off."
+              },
+              {
+                "name": "section_name",
+                "type": "string",
+                "description": "The section they are on now."
+              },
+              {
+                "name": "previous_enrolment_status",
+                "type": "string",
+                "description": "Moved out. Closed, not edited (BR-7)."
+              },
+              {
+                "name": "move_reason",
+                "type": "string",
+                "description": "As given, kept with the closed enrolment."
+              },
+              {
+                "name": "invite_delivery_status",
+                "type": "string",
+                "description": "The new section's group link, sent to the guardian (BR-10)."
+              },
+              {
+                "name": "removed_from_old_group",
+                "type": "boolean",
+                "description": "Always false. The system does not administer WhatsApp groups and has not removed them (BR-10, AC-10)."
+              },
+              {
+                "name": "previous_section_remaining",
+                "type": "integer",
+                "description": "The old section now has a place free."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "MOVE_REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "A move was attempted with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not moved.",
+              "note": "Message: \"Give a reason for moving this student.\" Ask for it; never compose one."
+            },
+            {
+              "code": "SECTION_FILLED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The receiving section is full.",
+              "written": "Nothing.",
+              "notWritten": "Not moved.",
+              "note": "The student stays where they are. Choosing another section is the actor's decision."
+            },
+            {
+              "code": "NOT_PLACED",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The student holds no active placement to move from.",
+              "written": "Nothing.",
+              "notWritten": "Not moved.",
+              "note": "They are awaiting placement, which is student.place — a different capability."
+            },
+            {
+              "code": "STUDENT_DEACTIVATED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The student record was deactivated.",
+              "written": "Nothing.",
+              "notWritten": "Not moved."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the move reason. It is kept with the closed enrolment and is what someone reads when they ask why a child changed section mid-year (BR-7). E5 refusing the move without one is the system insisting a person supply it.",
+          "derivedFrom": [
+            "BR-7",
+            "E5",
+            "AC-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never plan a move for a set. Each move has its own reason, closes its own enrolment and sends its own guardian a new group link; a batch with one reason describes none of them.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the student has not been removed from the old WhatsApp group. The system does not administer the group and never will (BR-10, AC-10), so the guardian is now in two — and unless somebody is told, nobody removes them.",
+          "derivedFrom": [
+            "BR-10",
+            "AC-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never move a student to free up a place. A section at capacity refusing a placement is the capacity working; moving an existing child out to fit a new one is a decision about two families, not a workaround.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Send section_id and never class_id. The section determines its class.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never treat NOT_PLACED as a reason to place instead. A student awaiting placement has never been on a register, and placing them is a different act with no reason required and no old enrolment to close.",
+          "derivedFrom": [
+            "BR-12",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A placement is never deleted and a move is not undone (BR-11). Moving the student back is another move, with its own reason, and the record then shows three enrolment rows — which is correct, because that is what happened. The guardian has been sent two group links and removed from neither group. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Bilal ko 4-A se 4-B mein shift kar do — walidain ne subah wali shift maangi hai",
+            "lang": "ur-Latn",
+            "gloss": "move Bilal from 4-A to 4-B — the parents asked for the morning shift"
+          },
+          "context": "School Admin, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.move",
+              "inputs": {
+                "student_id": "$request.student_phrase → \"Bilal\"",
+                "section_id": "$request.section_phrase → \"Grade 4 section B\"",
+                "move_reason": "Parents asked for the morning shift.",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The reason is the actor's own, carried across (PR-1)."
+            }
+          ],
+          "outcome": "Bilal is off the 4-A register and on the 4-B register (AC-6). The 4-A enrolment is closed with the reason, not edited, so the history shows where he sat until today. His guardian has 4-B's group link — and has not been removed from 4-A's group, which is worth saying out loud (AC-10)."
+        },
+        {
+          "request": {
+            "text": "is bache ko 4-C mein daal do",
+            "lang": "ur-Latn",
+            "gloss": "move this child to 4-C"
+          },
+          "context": "School Admin, Johar Town branch, with no reason given in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.move",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "section_id": "$request.section_phrase → \"Grade 4 section C\"",
+                "move_reason": "$request.move_reason — absent",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "No plan is emitted: move_reason is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why the child is moving. This is the ordinary case — BR-7 requires a reason because a child changing section mid-year is something the school has to be able to explain."
+        },
+        {
+          "request": {
+            "text": "4-C bohat bhari ho gayi hai, chaar bachon ko 4-D mein shift karo",
+            "lang": "ur-Latn",
+            "gloss": "4-C has got too crowded, move four children to 4-D"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.move",
+              "inputs": {
+                "student_id": "$request.student_phrase → one student",
+                "section_id": "$request.section_phrase → \"Grade 4 section D\"",
+                "move_reason": "4-C is over-crowded.",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "One plan per child, and the four children have to be named first. There is no bulk move, because each carries its own reason and its own guardian message (PR-2)."
+            }
+          ],
+          "outcome": "Ask which four children. Then four separate plans, each reported — four enrolments closed, four opened, four guardians sent 4-D's link and none removed from 4-C's group."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-27-03-PC-3",
+      "intent": {
+        "name": "section.group.invite.resend",
+        "summary": "Send a section's stored WhatsApp group link again to a placed student's guardian, when they say it never arrived. One step.",
+        "routesHere": [
+          "resend the group invite to Ayesha's guardian",
+          {
+            "text": "guardian ko group ka link dobara bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send the guardian the group link again"
+          },
+          {
+            "text": "unko WhatsApp group ka invite nahi mila",
+            "lang": "ur-Latn",
+            "gloss": "they did not get the WhatsApp group invite"
+          },
+          {
+            "text": "Bilal ke walid ko section ka link phir bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send Bilal's father the section link again"
+          },
+          "the invite failed when we placed her — send it again"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "section ka link badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the section's link"
+            },
+            "goesTo": "section.group.link.set — UC-27-02-PC-3",
+            "note": "Replacing the stored link is a change to the section. This sends the one that is already stored."
+          },
+          {
+            "request": {
+              "text": "saare guardians ko naya link bhejo",
+              "lang": "ur-Latn",
+              "gloss": "send the new link to all the guardians"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nothing re-invites guardians in bulk. Replacing a link does not re-invite those already placed (UC-27-02 BR-9), and the use case's open question asks whether it should."
+          },
+          {
+            "request": {
+              "text": "guardian ka number theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the guardian's number"
+            },
+            "goesTo": "student.update — UC-03-01-PC-2",
+            "note": "Where the invite has nowhere to go, the contact is corrected on the student record."
+          },
+          {
+            "request": {
+              "text": "guardian ko group se nikaal do",
+              "lang": "ur-Latn",
+              "gloss": "remove the guardian from the group"
+            },
+            "goesTo": "Not offered.",
+            "note": "The system does not administer the group (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "section.group.invite.resend",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The link sent is the one currently stored against the student's section — not the one that was stored when they were placed, if it has since been replaced (UC-27-02 BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the section holds a stored link, and whether the guardian has a contact number, are enforced by the API and arrive as errors.",
+        "atomicity": "One write: a further send against the section's stored link, with its own log entry and delivery status. The placement, the enrolment and the stored link are all unchanged. Nothing else is touched."
+      },
+      "operations": [
+        {
+          "name": "section.group.invite.resend",
+          "method": "POST",
+          "path": "/api/v1/enrolments/{student_id}/group-invite/resend",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "student_id + section_id + the send timestamp, so a repeat does not inflate resend_count",
+          "purpose": "Send the guardian of a placed student the WhatsApp invite link currently stored against their section.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No placed student matches within the actor's row scope.",
+                "onAmbiguous": "Ask, naming the candidates with student ID and current section."
+              },
+              "notes": "A placed student whose guardian is to be sent the link."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The send, and which link went.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student whose guardian was sent it."
+              },
+              {
+                "name": "section_name",
+                "type": "string",
+                "description": "The section the link belongs to."
+              },
+              {
+                "name": "link_replaced_since_placement",
+                "type": "boolean",
+                "description": "True where the stored link has changed since this student was placed. The guardian receives the current one, which may be a different group from the one their child's classmates joined."
+              },
+              {
+                "name": "delivery_status",
+                "type": "string",
+                "description": "Queued until the provider says otherwise."
+              },
+              {
+                "name": "resend_count",
+                "type": "integer",
+                "description": "How many times this guardian has been sent it."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_STORED_LINK",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The section holds no stored group link.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "There is nothing to resend. Storing one is section.group.link.set, and it is a change to the section rather than a step towards this."
+            },
+            {
+              "code": "NO_GUARDIAN_CONTACT",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The guardian holds no contact number.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "Adding a contact is a correction to the student record (UC-03-01), never a number supplied in passing."
+            },
+            {
+              "code": "SEND_FAILED",
+              "mapsTo": "E6",
+              "httpStatus": 200,
+              "meaning": "The send failed again.",
+              "written": "The attempt is logged.",
+              "notWritten": "Not delivered.",
+              "treatedAsSuccess": true,
+              "note": "Report it. Repeating the call does not make it arrive."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never store a link to make a resend possible. NO_STORED_LINK means the section never had one and every guardian placed into it is outside the group (UC-27-02 BR-10) — that is a bigger thing than one family's missing invite, and storing a link the actor did not supply invents a group.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report link_replaced_since_placement when it comes back true. The guardian is being sent the current link, which may be a different group from the one their child's classmates joined (UC-27-02 BR-9).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never repeat the call to make a failed send arrive. Each attempt is logged, and a run of identical entries says only that somebody kept trying.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never substitute a number. Where the guardian has no contact, the fix is a correction to the student record with a number somebody supplied — not one taken from a sibling's record or a message.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A message cannot be unsent. The placement and the stored link are unchanged by it, so there is nothing else to undo."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ke walid ko group ka link dobara bhej do, unko mila nahi",
+            "lang": "ur-Latn",
+            "gloss": "send Ayesha's father the group link again, he did not get it"
+          },
+          "context": "Staff, Johar Town branch. Ayesha is placed in 4-B, which holds a stored link.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.group.invite.resend",
+              "inputs": {
+                "student_id": "$request.student_phrase → \"Ayesha\"",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "4-B's stored link is queued to the guardian again and the send is logged (A5). resend_count moves to 2, and the placement is untouched."
+        },
+        {
+          "request": {
+            "text": "is bache ke guardian ko link bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send this child's guardian the link"
+          },
+          "context": "Staff, Johar Town branch, on a student placed in a section that has never had a link stored.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.group.invite.resend",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NO_STORED_LINK (E6)."
+            }
+          ],
+          "outcome": "Nothing is sent. Report that the section holds no group link at all — so every guardian placed into it is outside the group, not just this one (PR-1). Somebody has to create the group and store its link."
+        },
+        {
+          "request": {
+            "text": "Bilal ke guardian ko link bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send Bilal's guardian the link"
+          },
+          "context": "Staff, Johar Town branch, on a section whose link was replaced after Bilal was placed.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.group.invite.resend",
+              "inputs": {
+                "student_id": "$request.student_phrase → \"Bilal\"",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The current link is sent, and link_replaced_since_placement comes back true. Report that: Bilal's guardian is being invited to a group that may not be the one his classmates' parents joined (PR-2)."
+        }
+      ]
+    }
+  ]
+}

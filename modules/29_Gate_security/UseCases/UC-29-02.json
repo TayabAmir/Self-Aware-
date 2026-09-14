@@ -1,0 +1,973 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-29-02",
+  "featureRef": "29.2 Logging a visitor out",
+  "name": "Close the visit when the visitor leaves and take the pass back, so the log can answer who is still on the premises",
+  "module": "Gate & Entry Protection",
+  "alsoAffectsModules": [],
+  "priority": "MVP",
+  "priorityReason": "An entry left permanently open makes the log unable to answer who is still on the premises, which is the one question it exists for.",
+  "goal": {
+    "actor": "a front-desk staff member",
+    "capability": "to close a visit and take the pass back, and to close the ones nobody signed out of",
+    "outcome": "the log can say who is still on site, and no pass is left in circulation"
+  },
+  "primaryActor": "Staff (front desk / security role)",
+  "secondaryActors": [],
+  "externalActors": [
+    {
+      "actor": "Visitor",
+      "involvement": "Returns the numbered pass at the desk. Uses nothing."
+    }
+  ],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "scheduled",
+        "description": "The end of the day arrives with visits still open, which the security staff close as unconfirmed (BR-4).",
+        "source": "Gate scheduler"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An open visit exists for the visitor.",
+      "establishedBy": {
+        "id": "UC-29-01",
+        "name": "Logging a visitor in",
+        "link": "UC-29-01.json"
+      }
+    },
+    {
+      "condition": "An authenticated session exists and the acting user holds the front-desk or security role.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    }
+  ],
+  "postConditions": [
+    "The time out is recorded against the open visit.",
+    "The pass is marked returned and is free to issue again.",
+    "A pass not returned is recorded as outstanding, since an unreturned pass is a credential still in circulation.",
+    "A visit still open at the end of the day was closed by the security staff with the departure recorded as unconfirmed, rather than left standing.",
+    "A confirmed departure and an unconfirmed one are distinguishable afterwards.",
+    "The log can answer who is still on the premises.",
+    "Nothing was deleted."
+  ],
+  "screens": [
+    {
+      "name": "Visitor log",
+      "route": "/gate/visitors",
+      "sidebar": "Gate",
+      "columns": [
+        "Visitor",
+        "Visiting",
+        "Pass",
+        "Time in",
+        "Time out",
+        "Departure",
+        "Status"
+      ],
+      "defaultSort": "Time in, newest first",
+      "filters": [
+        "Open visits",
+        "Outstanding passes",
+        "Date",
+        "Branch"
+      ],
+      "actions": [
+        "Log a visitor out",
+        "Close unconfirmed",
+        "Open",
+        "Export"
+      ],
+      "visibleTo": [
+        "Staff",
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Log a visitor out",
+      "route": "/gate/visitors/{id}/out",
+      "sidebar": "Gate",
+      "actions": [
+        "Find the visit by pass number or name",
+        "Record the time out",
+        "Mark the pass returned",
+        "Close"
+      ],
+      "visibleTo": [
+        "Staff"
+      ]
+    },
+    {
+      "name": "Open visits",
+      "route": "/gate/visitors/open",
+      "sidebar": "Gate",
+      "columns": [
+        "Visitor",
+        "Visiting",
+        "Purpose",
+        "Pass",
+        "Time in",
+        "Hours on site"
+      ],
+      "defaultSort": "Time in, oldest first",
+      "filters": [
+        "Branch"
+      ],
+      "actions": [
+        "Log a visitor out",
+        "Close unconfirmed",
+        "Print"
+      ],
+      "visibleTo": [
+        "Staff",
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Outstanding passes",
+      "route": "/gate/passes/outstanding",
+      "sidebar": "Gate",
+      "columns": [
+        "Pass",
+        "Visitor",
+        "Issued on",
+        "Days outstanding",
+        "Visit status"
+      ],
+      "defaultSort": "Days outstanding, longest first",
+      "actions": [
+        "Mark returned",
+        "Retire the pass",
+        "Export"
+      ],
+      "visibleTo": [
+        "Staff",
+        "School Admin",
+        "Principal / Director"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Visit",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "An open visit, found by pass number or by name.",
+      "example": "V-014 — Rashid Ali",
+      "lookupSource": "Open visits at this branch"
+    },
+    {
+      "name": "Time out",
+      "type": "datetime",
+      "required": "yes",
+      "validation": "When the visitor left (BR-2).",
+      "example": "04-12-2026 11:40"
+    },
+    {
+      "name": "Pass returned",
+      "type": "boolean",
+      "required": "yes",
+      "validation": "Whether the numbered pass came back. A pass not returned is outstanding (BR-3).",
+      "default": false,
+      "example": true
+    },
+    {
+      "name": "Departure",
+      "type": "generated",
+      "required": "no",
+      "validation": "Confirmed where the visitor signed out, or unconfirmed where the visit was closed at the end of the day (BR-4, BR-5).",
+      "example": "Confirmed",
+      "enumValues": [
+        "Confirmed",
+        "Unconfirmed"
+      ]
+    },
+    {
+      "name": "Hours on site",
+      "type": "generated",
+      "required": "no",
+      "validation": "How long the visit has been open, shown on the open list.",
+      "example": "1.4"
+    },
+    {
+      "name": "Outstanding pass reason",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 250 characters. Recorded where a pass was not returned (BR-3).",
+      "example": "Visitor left through the side gate without returning it.",
+      "requiredWhen": "The pass was not returned"
+    },
+    {
+      "name": "Status",
+      "type": "generated",
+      "required": "no",
+      "validation": "See the lifecycle below.",
+      "default": "Open",
+      "example": "Closed"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Visit",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Closed with the time out and whether the departure was confirmed. Never deleted (BR-6)."
+    },
+    {
+      "entity": "Visitor pass",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Marked returned and freed for reissue, or recorded outstanding (BR-3)."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Every log-out, every unconfirmed closure and every outstanding pass."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Staff (front desk / security role)",
+      "actions": [
+        "view",
+        "edit"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Records the departure and takes the pass back, and closes the day's remaining visits."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Sees open visits and outstanding passes."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches."
+    },
+    {
+      "actor": "Visitor",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "Not an actor. They return the pass and the desk records it."
+    },
+    {
+      "actor": "Teacher, Coordinator, Accounts, Parent / Guardian, Student",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "The visitor returns the numbered pass at the desk."
+    },
+    {
+      "id": "BR-2",
+      "rule": "The staff member records the time out against the open visit."
+    },
+    {
+      "id": "BR-3",
+      "rule": "The pass is marked returned and becomes free to issue again. A pass that is not returned is recorded as outstanding, because an unreturned pass is a credential still in circulation."
+    },
+    {
+      "id": "BR-4",
+      "rule": "A visit still open at the end of the day is closed by the security staff, with the departure recorded as unconfirmed rather than left standing. Many visitors will not remember to sign out, and an entry left permanently open makes the log unable to answer who is still on the premises."
+    },
+    {
+      "id": "BR-5",
+      "rule": "A confirmed departure and an unconfirmed one are distinguishable afterwards. Closing a visit is not the same as watching somebody leave."
+    },
+    {
+      "id": "BR-6",
+      "rule": "A visit is never deleted, and neither is a closure. The record of a visit closed unconfirmed is the record that a visitor was not seen leaving."
+    },
+    {
+      "id": "BR-7",
+      "rule": "A visit is found by pass number or by name, since a visitor at the desk will have one or the other."
+    },
+    {
+      "id": "BR-8",
+      "rule": "A visit already closed cannot be closed again."
+    },
+    {
+      "id": "BR-9",
+      "rule": "An outstanding pass is chased and can be retired where it is not recovered, since a numbered pass in circulation that the school cannot account for is a credential."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Visit",
+      "states": [
+        "Open",
+        "Closed",
+        "Closed unconfirmed"
+      ],
+      "initial": "Open",
+      "terminal": [
+        "Closed",
+        "Closed unconfirmed"
+      ],
+      "transitions": [
+        {
+          "from": "Open",
+          "to": "Closed",
+          "triggeredBy": "Staff (front desk / security role)",
+          "condition": "The visitor returns the pass and the time out is recorded (BR-1, BR-2)."
+        },
+        {
+          "from": "Open",
+          "to": "Closed unconfirmed",
+          "triggeredBy": "Staff (front desk / security role)",
+          "condition": "The visit is still open at the end of the day (BR-4)."
+        }
+      ]
+    },
+    {
+      "entity": "Visitor pass",
+      "states": [
+        "Free",
+        "Issued",
+        "Returned",
+        "Outstanding",
+        "Retired"
+      ],
+      "initial": "Free",
+      "terminal": [
+        "Retired"
+      ],
+      "transitions": [
+        {
+          "from": "Free",
+          "to": "Issued",
+          "triggeredBy": "Staff",
+          "condition": "Issued against a visit (UC-29-01)."
+        },
+        {
+          "from": "Issued",
+          "to": "Returned",
+          "triggeredBy": "Staff",
+          "condition": "Returned at the desk (BR-3)."
+        },
+        {
+          "from": "Returned",
+          "to": "Free",
+          "triggeredBy": "System",
+          "condition": "Free to issue again (BR-3)."
+        },
+        {
+          "from": "Issued",
+          "to": "Outstanding",
+          "triggeredBy": "Staff",
+          "condition": "The visit closed without the pass coming back (BR-3)."
+        },
+        {
+          "from": "Outstanding",
+          "to": "Returned",
+          "triggeredBy": "Staff",
+          "condition": "Recovered later."
+        },
+        {
+          "from": "Outstanding",
+          "to": "Retired",
+          "triggeredBy": "School Admin",
+          "condition": "Not recovered. A pass the school cannot account for is retired (BR-9)."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Staff (front desk / security role)",
+      "navigation": "Login → Gate → Log a visitor out → Find the visit",
+      "userAction": "Finds the open visit by the pass number the visitor has returned, or by their name.",
+      "function": "findOpenVisit(passNumber or name)",
+      "systemResponse": "Returns the open visit at this branch.",
+      "rules": [
+        "BR-1",
+        "BR-7"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "Staff (front desk / security role)",
+      "navigation": "Log a visitor out → Record the time out",
+      "userAction": "Records the time the visitor left.",
+      "function": "recordTimeOut(visitId, timeOut)",
+      "systemResponse": "Closes the visit with the departure recorded as confirmed.",
+      "rules": [
+        "BR-2",
+        "BR-5"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "Staff (front desk / security role)",
+      "navigation": "Log a visitor out → Mark the pass returned",
+      "userAction": "Marks the numbered pass returned.",
+      "function": "markPassReturned(visitId, passNumber)",
+      "systemResponse": "Frees the pass to be issued again.",
+      "rules": [
+        "BR-3"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "Staff (front desk / security role)",
+      "navigation": "Log a visitor out → Pass not returned",
+      "userAction": "Records the pass as outstanding where it did not come back.",
+      "function": "markPassOutstanding(visitId, passNumber, reason)",
+      "systemResponse": "Keeps it out of circulation for reissue, since an unreturned pass is a credential still out there.",
+      "rules": [
+        "BR-3"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "Staff (front desk / security role)",
+      "navigation": "Gate → Open visits → Close unconfirmed",
+      "userAction": "Closes the visits still open at the end of the day.",
+      "function": "closeVisitUnconfirmed(visitId)",
+      "systemResponse": "Records the departure as unconfirmed rather than leaving the visit standing.",
+      "rules": [
+        "BR-4",
+        "BR-5"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "School Admin",
+      "navigation": "Gate → Outstanding passes → Retire the pass",
+      "userAction": "Retires a pass that was never recovered.",
+      "function": "retirePass(passNumber, reason)",
+      "systemResponse": "Takes the number out of use, since a pass the school cannot account for is a credential.",
+      "rules": [
+        "BR-9"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 4,
+      "condition": "The visitor leaves without returning the pass",
+      "actor": "Staff (front desk / security role)",
+      "navigation": "Log a visitor out → Pass not returned",
+      "behaviour": "It is recorded as outstanding, because an unreturned pass is a credential still in circulation (BR-3).",
+      "function": "markPassOutstanding(visitId, passNumber, reason)",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 5,
+      "condition": "The visitor never signed out at all",
+      "actor": "Staff (front desk / security role)",
+      "navigation": "Gate → Open visits → Close unconfirmed",
+      "behaviour": "The visit is closed with the departure recorded as unconfirmed. Many visitors will not remember to sign out, and an entry left open makes the log useless (BR-4).",
+      "function": "closeVisitUnconfirmed(visitId)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 1,
+      "condition": "The visitor cannot remember their pass number",
+      "actor": "Staff (front desk / security role)",
+      "navigation": "Log a visitor out → Find the visit by name",
+      "behaviour": "The visit is found by name instead, since a visitor at the desk will have one or the other (BR-7).",
+      "function": "findOpenVisit(name)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 6,
+      "condition": "An outstanding pass is recovered later",
+      "actor": "Staff (front desk / security role)",
+      "navigation": "Gate → Outstanding passes → Mark returned",
+      "behaviour": "It comes back into circulation and stops being outstanding (BR-3).",
+      "function": "markPassReturned(visitId, passNumber)"
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 6,
+      "condition": "An outstanding pass is never recovered",
+      "actor": "School Admin",
+      "navigation": "Gate → Outstanding passes → Retire the pass",
+      "behaviour": "It is retired and the number goes out of use (BR-9).",
+      "function": "retirePass(passNumber, reason)"
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 1,
+      "condition": "No open visit matches the pass or the name",
+      "systemResponse": "Nothing is closed.",
+      "messageShown": "No open visit found for that pass or name.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E2",
+      "atStep": 2,
+      "condition": "The time out is before the time in",
+      "systemResponse": "It is not recorded.",
+      "messageShown": "The time out must be after the time in.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E3",
+      "atStep": 2,
+      "condition": "The visit has already been closed",
+      "systemResponse": "It cannot be closed again (BR-8).",
+      "messageShown": "This visit was closed at 11:40.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 3,
+      "condition": "The pass is marked returned when it was issued to a different visit",
+      "systemResponse": "It is refused.",
+      "messageShown": "Pass V-014 belongs to a different visit.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 4,
+      "condition": "A pass is recorded outstanding with no reason",
+      "systemResponse": "It is not recorded (BR-3).",
+      "messageShown": "Say why the pass was not returned.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E6",
+      "atStep": 5,
+      "condition": "A visit is closed unconfirmed and later the visitor is found on site",
+      "systemResponse": "A new visit is logged rather than the closed one reopened, so the record stays honest.",
+      "messageShown": "This visit was closed. Log a new visit.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 5,
+      "condition": "Visits are left open at the end of the day with nobody closing them",
+      "systemResponse": "They are surfaced, since an entry left permanently open makes the log unable to answer who is on site (BR-4).",
+      "messageShown": "6 visits are still open from yesterday.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E8",
+      "atStep": 6,
+      "condition": "A retired pass is issued",
+      "systemResponse": "It is refused (BR-9).",
+      "messageShown": "Pass V-014 has been retired.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E9",
+      "atStep": 2,
+      "condition": "A visit is deleted",
+      "systemResponse": "There is no such control (BR-6).",
+      "messageShown": "A visit is never deleted.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Visits still open at the end of the day",
+      "recipient": "Staff and School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "OPEN_VISITS_AT_CLOSE",
+      "contents": [
+        "Count still open",
+        "The visitors",
+        "How long each has been open"
+      ],
+      "retry": "Repeated until closed.",
+      "blocking": false
+    },
+    {
+      "event": "Pass outstanding",
+      "recipient": "Staff and School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "PASS_OUTSTANDING",
+      "contents": [
+        "Pass number",
+        "Visitor",
+        "Issued on",
+        "Days outstanding"
+      ],
+      "retry": "Repeated until returned or retired.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "The visit closed here is the one opened at log-in.",
+      "affects": {
+        "id": "UC-29-01",
+        "name": "Logging a visitor in",
+        "link": "UC-29-01.json"
+      }
+    },
+    {
+      "effect": "The closure and its confirmation state appear in the gate and visitor log.",
+      "affects": {
+        "id": "UC-29-03",
+        "name": "Reviewing the gate and visitor log",
+        "link": "UC-29-03.json"
+      }
+    },
+    {
+      "effect": "A returned pass becomes free to issue to the next visitor.",
+      "affects": {
+        "id": "UC-29-01",
+        "name": "Logging a visitor in",
+        "link": "UC-29-01.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Visits closed",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Visitor",
+        "Visiting",
+        "Pass",
+        "Time in",
+        "Time out",
+        "Departure",
+        "Closed by"
+      ],
+      "grouping": "By departure",
+      "totals": "Confirmed and unconfirmed departures, which shows how often visitors sign out"
+    },
+    {
+      "name": "Outstanding passes",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Pass",
+        "Visitor",
+        "Issued on",
+        "Days outstanding",
+        "Reason",
+        "Status"
+      ],
+      "grouping": "By days outstanding",
+      "totals": "Passes still in circulation"
+    },
+    {
+      "name": "Open visits",
+      "formats": [
+        "screen",
+        "print",
+        "pdf"
+      ],
+      "columns": [
+        "Visitor",
+        "Visiting",
+        "Purpose",
+        "Pass",
+        "Time in",
+        "Hours on site"
+      ],
+      "grouping": "By host",
+      "totals": "Visitors currently on site"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "An open visit",
+      "when": "the visitor returns the pass and the desk logs them out",
+      "then": "the time out is recorded and the departure reads confirmed"
+    },
+    {
+      "id": "AC-2",
+      "given": "The same visit",
+      "when": "the pass is checked",
+      "then": "it is marked returned and is free to issue again"
+    },
+    {
+      "id": "AC-3",
+      "given": "A visitor who leaves without returning the pass",
+      "when": "the visit is closed",
+      "then": "the pass is recorded outstanding and cannot be reissued"
+    },
+    {
+      "id": "AC-4",
+      "given": "A pass recorded outstanding with no reason",
+      "when": "it is saved",
+      "then": "it is refused"
+    },
+    {
+      "id": "AC-5",
+      "given": "A visit still open at the end of the day",
+      "when": "the security staff close it",
+      "then": "the departure reads unconfirmed"
+    },
+    {
+      "id": "AC-6",
+      "given": "A confirmed and an unconfirmed departure",
+      "when": "the log is read",
+      "then": "the two are distinguishable"
+    },
+    {
+      "id": "AC-7",
+      "given": "A visitor who cannot remember their pass number",
+      "when": "the desk searches by name",
+      "then": "the open visit is found"
+    },
+    {
+      "id": "AC-8",
+      "given": "A visit already closed",
+      "when": "closing is attempted again",
+      "then": "it is refused"
+    },
+    {
+      "id": "AC-9",
+      "given": "An outstanding pass recovered later",
+      "when": "it is marked returned",
+      "then": "it comes back into circulation"
+    },
+    {
+      "id": "AC-10",
+      "given": "An outstanding pass never recovered",
+      "when": "the School Admin retires it",
+      "then": "the number goes out of use and cannot be issued"
+    },
+    {
+      "id": "AC-11",
+      "given": "Any visit",
+      "when": "deletion is attempted",
+      "then": "there is no such control"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-29-01",
+        "name": "Logging a visitor in",
+        "link": "UC-29-01.json",
+        "why": "Opens the visit and issues the pass."
+      },
+      {
+        "id": "UC-29-03",
+        "name": "Reviewing the gate and visitor log",
+        "link": "UC-29-03.json",
+        "why": "Reads the closures and the outstanding passes."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Restricts the desk role."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      }
+    ],
+    "masterData": [
+      "Numbered visitor passes"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Opening the visit and issuing the pass",
+      "handledBy": {
+        "id": "UC-29-01",
+        "name": "Logging a visitor in",
+        "link": "UC-29-01.json"
+      }
+    },
+    {
+      "item": "Reading the log",
+      "handledBy": {
+        "id": "UC-29-03",
+        "name": "Reviewing the gate and visitor log",
+        "link": "UC-29-03.json"
+      }
+    },
+    {
+      "item": "A member of staff leaving, which is the attendance record",
+      "handledBy": {
+        "id": "UC-05-03",
+        "name": "Staff attendance tracking",
+        "link": "UC-05-03.json"
+      }
+    },
+    {
+      "item": "A student leaving during the day, which is recorded nowhere",
+      "handledBy": {
+        "id": "UC-29-03",
+        "name": "Reviewing the gate and visitor log",
+        "link": "UC-29-03.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "No visit stays open indefinitely",
+        "requirement": "Every visit is closed, either by the visitor signing out or by the security staff at the end of the day. An entry left permanently open makes the log unable to answer who is on the premises."
+      },
+      {
+        "aspect": "Confirmed and unconfirmed are distinct",
+        "requirement": "Closing a visit is not the same as watching somebody leave, and the two are never conflated in the record."
+      },
+      {
+        "aspect": "A pass in circulation is not free",
+        "requirement": "An unreturned pass cannot be issued to anybody else, and is chased or retired."
+      },
+      {
+        "aspect": "Speed at the desk",
+        "requirement": "A visitor is logged out within 15 seconds, since a queue at the gate is how the desk stops using the system."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Visits and pass records carry the same unset retention period as the visitor record itself."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "At what time is the end of the day, for closing open visits?",
+      "assumption": "Not specified.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "After how many days is an outstanding pass retired?",
+      "assumption": "Not specified.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should a visitor still on site after a long period be escalated, rather than only closed at the end of the day?",
+      "assumption": "Not modelled. Hours on site is shown but nothing acts on it.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    },
+    {
+      "question": "Where a visit is closed unconfirmed, is anybody told — the host, or the School Admin?",
+      "assumption": "The School Admin is told open visits remain, but nothing tells the host.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

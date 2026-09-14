@@ -1,0 +1,1011 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-01-07",
+    "name": "Show the dashboard tiles and module summaries the role is permitted to see",
+    "module": "Dashboard",
+    "file": "../UseCases/UC-01-07.json",
+    "featureRef": "1.7 Role-based dashboards, main and module level (1.8 merged here)"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-01-07-PC-1",
+      "intent": {
+        "name": "dashboard.main.view",
+        "summary": "Fetch the main dashboard figures the role is permitted to see, each with the moment it was calculated. One step, naming no tile: which figures come back is decided by the role, server-side.",
+        "routesHere": [
+          "how is the school doing today",
+          {
+            "text": "school ka aaj kya haal hai?",
+            "lang": "ur-Latn",
+            "gloss": "how is the school doing today?"
+          },
+          {
+            "text": "aaj ka collection kitna hua?",
+            "lang": "ur-Latn",
+            "gloss": "how much did we collect today?"
+          },
+          "what's today's collection",
+          {
+            "text": "cash kitna para hai?",
+            "lang": "ur-Latn",
+            "gloss": "how much cash is there?"
+          },
+          {
+            "text": "kitne students enrolled hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many students are enrolled?"
+          },
+          {
+            "text": "dashboard dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show me the dashboard"
+          },
+          {
+            "text": "subah ke numbers do",
+            "lang": "ur-Latn",
+            "gloss": "give me the morning numbers"
+          },
+          "how many card requests are pending"
+        ],
+        "routesElsewhere": [
+          {
+            "request": "open the fee dashboard / what does attendance look like",
+            "goesTo": "dashboard.module.view — UC-01-07-PC-2",
+            "note": "A named module is the module dashboard, not the main one."
+          },
+          {
+            "request": "who are the 43 defaulters / show me the list behind that number",
+            "goesTo": "dashboard.figure.drillthrough — UC-01-07-PC-3"
+          },
+          {
+            "request": "show me collection over the last six months",
+            "goesTo": "UC-04-17 — Financial trend analysis",
+            "note": "A tile is one figure as at now. Trends are out of scope here."
+          },
+          {
+            "request": "move the cash tile to the top / I want a different set of tiles",
+            "goesTo": "Not offered.",
+            "note": "The tile set is fixed per role in this use case. UC-24-02, which this route used to name, does not exist — dashboards were merged into the role-based dashboard."
+          },
+          {
+            "request": "build me a report of fees by class",
+            "goesTo": "report.fee.run — UC-24-10.",
+            "note": "Outstanding by class and section is a catalogue report. A report the reader builds themselves is deferred, and UC-24-01 does not exist."
+          },
+          {
+            "request": {
+              "text": "pichle saal ke figures dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show me last year's figures"
+            },
+            "goesTo": "Not planned. See the open question below.",
+            "note": "A closed session can be selected on screen (BR-8, A2), but session_id reaches the API from $session and is never taken from the request."
+          },
+          {
+            "request": {
+              "text": "Model Town ke numbers dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show me Model Town's numbers"
+            },
+            "goesTo": "Not planned. Switch branch in the header first.",
+            "note": "branch_id comes from $session in every step. See PR-1."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "dashboard.main.read",
+            "inputs": {
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step, and it names no tile. Which figures come back is decided by the role, server-side — so a figure the actor may not see is absent rather than refused, which is BR-2 working."
+          }
+        ],
+        "onFailure": "Stop and report. Permission, branch scope and the open-session requirement are enforced by the API and arrive as errors. A single figure that cannot be calculated is not a failure — it comes back inside the response with status unavailable (BR-9).",
+        "atomicity": "One read. Nothing is created, changed or deactivated. The one thing written is the audit entry the API makes when a financial figure is calculated, so even a run whose response is never shown has recorded the viewing."
+      },
+      "operations": [
+        {
+          "name": "dashboard.main.read",
+          "method": "GET",
+          "path": "/api/v1/dashboard",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return the main dashboard figures this role is permitted to see, each with the moment it was calculated. The permitted set is decided server-side; the call never names a tile.",
+          "parameters": [
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope, BR-4)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope, BR-4)."
+            }
+          ],
+          "returns": {
+            "description": "Every figure the role may see, and the branch and academic session they cover. A tile outside the permission is absent from the response, never present and flagged.",
+            "fields": [
+              {
+                "name": "figures",
+                "type": "object[]",
+                "description": "tile_key, label, value, unit, status (ready | unavailable), calculated_at, drill_through_key. The permitted set only (BR-1, BR-2)."
+              },
+              {
+                "name": "branch_name",
+                "type": "string",
+                "description": "Quotable name of the branch the figures cover."
+              },
+              {
+                "name": "is_historical",
+                "type": "boolean",
+                "description": "True where the academic session is closed; figures are then as at its close (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "FIGURE_UNAVAILABLE",
+              "mapsTo": "E1",
+              "httpStatus": 200,
+              "meaning": "One figure could not be calculated. It is returned with status unavailable and no value.",
+              "written": "Nothing.",
+              "notWritten": "No value is invented for it.",
+              "treatedAsSuccess": true,
+              "note": "Every other figure is unaffected (BR-9). Report the tile as unavailable — never as zero, an estimate, or a figure from an earlier run."
+            },
+            {
+              "code": "NO_OPEN_ACADEMIC_SESSION",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "No academic session is open, so no figure can be scoped.",
+              "written": "Nothing.",
+              "notWritten": "No figures."
+            },
+            {
+              "code": "NO_TILES_FOR_ROLE",
+              "mapsTo": "E2",
+              "httpStatus": 200,
+              "meaning": "The role has no main dashboard tiles assigned. On screen the actor is taken to the first screen their role can reach.",
+              "written": "Nothing.",
+              "notWritten": "No audit entry, since no financial figure was calculated.",
+              "treatedAsSuccess": true,
+              "note": "figures is empty. Report that this role has no main dashboard rather than that the figures failed. On screen the actor is taken to the first screen their role can reach."
+            },
+            {
+              "code": "FORBIDDEN",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The session's role may not reach the main dashboard at all.",
+              "written": "Nothing.",
+              "notWritten": "Nothing calculated.",
+              "note": "Covered by the role-based-access convention rather than by an E-id. In practice the capability would be absent from the allow-list and never planned with."
+            }
+          ],
+          "writesOnRead": "Calculating a financial figure — cash_in_hand, expenses_today, payables — writes an audit entry naming the actor and the time, because these carry the school's cash position. A run whose response is never shown has still recorded the viewing."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "branch_id and session_id come from $session in every step, even where the request names a campus or a past year. A request for another branch's figures is not a parameter change; it is a branch switch the actor makes in the header, and a planner that passes it as a parameter is reaching across a scope boundary the whole convention exists to hold.",
+          "derivedFrom": [
+            "BR-4",
+            "branch-scope",
+            "academic-session-scope",
+            "AC-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never name a tile in the call. There is no parameter for it, and a request asking after one figure produces the same plan as a request asking after all of them. This is what keeps BR-2 true: an unpermitted figure is absent from the response, and an absence discloses nothing, where a refusal would confirm the figure exists.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2",
+            "BR-3",
+            "AC-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never plan a second step to fetch a figure the first did not return. A figure absent from the response is either outside this role's permission or outside this capability, and neither is reached by asking again.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "A figure returned with status unavailable is not zero. Never substitute zero, an estimate, a figure from an earlier run, or a figure from another branch. A zero is itself information and reporting one here is a false statement about the school's money.",
+          "derivedFrom": [
+            "BR-9",
+            "AC-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never re-emit the call with the failing figure excluded to obtain a clean set. There is no parameter that would exclude it, and an unavailable figure is the answer for that figure.",
+          "derivedFrom": [
+            "BR-9",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Every figure is quoted with its calculated_at. A number repeated an hour later without its timestamp is the failure BR-5 exists to prevent.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Where is_historical is true, the figures are as at the session's close and must be reported that way. Never present a historical figure as the current position.",
+          "derivedFrom": [
+            "BR-8",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "Never add a refresh step to make a figure newer. Refresh is a screen action on an open dashboard; a plan calculates once.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Neither operation writes a school record, so there is nothing to reverse. The audit entry written when a financial tile is calculated is deliberate and is never editable under the audit-trail convention — the controller must not attempt to remove it."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "aaj kitni collection hui?",
+            "lang": "ur-Latn",
+            "gloss": "how much did we collect today?"
+          },
+          "context": "School Admin, Johar Town branch, academic session 2025-26 (open).",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "dashboard.main.read",
+              "inputs": {
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The School Admin set comes back in full: students_enrolled, fee_collected_today, outstanding_balance, defaulters, cash_in_hand, expenses_today, payables, cards_pending, messaging_balance."
+            }
+          ],
+          "outcome": "The whole permitted set comes back. fee_collected_today reads PKR 148,500.00, calculated_at 04-09-2026 09:14. The figure is quoted with that timestamp, and the drill-through to the fee collection list is available as PC-3."
+        },
+        {
+          "request": {
+            "text": "cash kitna para hai?",
+            "lang": "ur-Latn",
+            "gloss": "how much cash have we got?"
+          },
+          "context": "Accounts, Johar Town branch, academic session 2025-26 (open).",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "dashboard.main.read",
+              "inputs": {
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The identical call. The Accounts set comes back without cash_in_hand, expenses_today or payables — Accounts collects money but does not see the school's cash position (BR-3)."
+            }
+          ],
+          "outcome": "The permitted figures come back and no cash position is among them. No tile was requested and refused; none was ever sent (AC-1)."
+        },
+        {
+          "request": "give me the morning numbers",
+          "context": "School Admin, Johar Town branch, with the general ledger unreachable.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "dashboard.main.read",
+              "inputs": {
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The ledger is unreachable, so cash_in_hand returns with status unavailable and no value."
+            }
+          ],
+          "outcome": "students_enrolled reads 1,284 and fee_collected_today reads PKR 148,500.00, both with timestamps. cash_in_hand comes back with status unavailable and no value. The run is not retried and no zero is reported for the cash position (AC-5)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-01-07-PC-2",
+      "intent": {
+        "name": "dashboard.module.view",
+        "summary": "Open a named module's own summary within the actor's row scope. One step, carrying the words the actor used for the module; the parameter resolver turns them into a module_key before the call runs.",
+        "routesHere": [
+          "open the fee dashboard",
+          {
+            "text": "fees ka dashboard kholo",
+            "lang": "ur-Latn",
+            "gloss": "open the fee dashboard"
+          },
+          {
+            "text": "aaj attendance kaisi hai?",
+            "lang": "ur-Latn",
+            "gloss": "how does attendance look today?"
+          },
+          "what does attendance look like today",
+          {
+            "text": "staff ka summary dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show me the staff summary"
+          },
+          {
+            "text": "examination module ka kya haal hai?",
+            "lang": "ur-Latn",
+            "gloss": "how is the examination module looking?"
+          },
+          "show me the finance overview"
+        ],
+        "routesElsewhere": [
+          {
+            "request": "show me the dashboard / how is the school doing",
+            "goesTo": "dashboard.main.view — UC-01-07-PC-1",
+            "note": "No module named means the main dashboard."
+          },
+          {
+            "request": "who are the students behind that figure",
+            "goesTo": "dashboard.figure.drillthrough — UC-01-07-PC-3"
+          },
+          {
+            "request": "which figures should the fee module show",
+            "goesTo": "The Fee module's own use cases",
+            "note": "What each module summarises is defined there, not here."
+          },
+          {
+            "request": "add a figure to this dashboard",
+            "goesTo": "Not offered.",
+            "note": "The tile set is fixed per role. UC-24-02 does not exist — dashboards were merged into the role-based dashboard."
+          },
+          {
+            "request": {
+              "text": "fee collection ki screen kholo",
+              "lang": "ur-Latn",
+              "gloss": "open the fee collection screen"
+            },
+            "goesTo": "The Fee module's own screens.",
+            "note": "Navigating to a screen is not a dashboard read."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "dashboard.module.read",
+            "inputs": {
+              "module_key": "$request.module_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. The words the actor used for the module are carried as the phrase; the parameter resolver turns them into a module_key before execute. Where the module has fewer than three meaningful figures this returns its primary list instead (BR-11) — the plan neither predicts that nor branches on it."
+          }
+        ],
+        "onFailure": "Stop and report. A module the role may not reach fails at resolution, before the plan runs at all; a row-level refusal inside a permitted module arrives as an error from the call.",
+        "atomicity": "One read. Nothing is created, changed or deactivated, and nothing is written unless the module's own figures are financial."
+      },
+      "operations": [
+        {
+          "name": "dashboard.module.read",
+          "method": "GET",
+          "path": "/api/v1/modules/{module_key}/dashboard",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return a module's own summary figures, drawn from its own data and within the actor's row scope.",
+          "parameters": [
+            {
+              "name": "module_key",
+              "source": "resolved",
+              "sourceRef": "$request.module_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "module",
+                "fromPhrase": "$request.module_phrase",
+                "onNoMatch": "Refuse. No module matches the words used, or none this role may reach — the two are indistinguishable by design (BR-2), and neither is reached by trying another word.",
+                "onAmbiguous": "Ask, naming the candidates. Never pick one."
+              },
+              "notes": "An entity id, obtained by the parameter resolver through the resolve door from the words the actor used. The plan carries the phrase; it never carries a lookup step (PR-1)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope, BR-4)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope, BR-4)."
+            }
+          ],
+          "returns": {
+            "description": "The module's figures, the scope they cover, and whether a list was returned in place of a dashboard.",
+            "fields": [
+              {
+                "name": "figures",
+                "type": "object[]",
+                "description": "figure_key, label, value, unit, status, calculated_at, drill_through_key, filters."
+              },
+              {
+                "name": "row_scope_note",
+                "type": "string",
+                "description": "What the figures cover in words — \"Your assigned classes: 6-A, 6-B\", \"Johar Town branch\". Must be reported alongside the figures (BR-10)."
+              },
+              {
+                "name": "returned_as",
+                "type": "enum: dashboard | list",
+                "description": "list where the module has fewer than three meaningful figures (BR-11, A4)."
+              },
+              {
+                "name": "list_key",
+                "type": "string",
+                "description": "Present only where returned_as is list."
+              },
+              {
+                "name": "quick_links",
+                "type": "object[]",
+                "description": "Only links the role may open. A link to a screen they may not reach is absent (BR-12)."
+              },
+              {
+                "name": "is_empty",
+                "type": "boolean",
+                "description": "True where the module holds no data yet."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "FORBIDDEN",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "The role may not reach the module. Enforced again here, not only at step 1.",
+              "written": "Nothing.",
+              "notWritten": "No figures."
+            },
+            {
+              "code": "MODULE_EMPTY",
+              "mapsTo": "E6",
+              "httpStatus": 200,
+              "meaning": "The module holds no data yet.",
+              "written": "Nothing.",
+              "notWritten": "Nothing.",
+              "treatedAsSuccess": true,
+              "note": "is_empty is true and figures is empty. Report what is missing and the action that would create it, per screen-states. Not an error to retry."
+            },
+            {
+              "code": "FIGURE_UNAVAILABLE",
+              "mapsTo": "E1",
+              "httpStatus": 200,
+              "meaning": "One figure could not be calculated.",
+              "written": "Nothing.",
+              "notWritten": "No value invented.",
+              "treatedAsSuccess": true,
+              "note": "Reported as unavailable, never as zero (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Carry the phrase, never a key. The plan's module_key input is $request.module_phrase — the actor's own words — and the parameter resolver converts it. A planner that writes \"fee\" directly has guessed a key and skipped the resolution that decides whether this role reaches the module at all.",
+          "derivedFrom": [
+            "BR-10",
+            "BR-12",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never add a lookup step of your own. There is one capability here. Resolution is a phase the orchestrator runs, not a step the plan contains.",
+          "derivedFrom": [
+            "E5",
+            "AC-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never plan around BR-11. Where a module has fewer than three figures the capability returns its primary list, with returned_as list. Do not add a conditional list call, and do not treat the list as a failure of the dashboard.",
+          "derivedFrom": [
+            "BR-11",
+            "A4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report row_scope_note with the figures, always. A Teacher asking how the school's attendance looks receives their assigned classes; presenting that as the school's figure is the exact confusion BR-10 exists to prevent.",
+          "derivedFrom": [
+            "BR-10",
+            "AC-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never retry with a different word when resolution finds no module, working through synonyms until something matches. A module that does not resolve is either absent or out of this role's reach, and both are answers.",
+          "derivedFrom": [
+            "BR-2",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never offer a quick link that is not in quick_links. Links the role may not open are absent from the response, not disabled in it.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Hand the resolver the module word the actor used, in the language they used it. \"fees ka dashboard kholo\" carries the module word fees — extract that span and pass it. Never translate it to an English term first and never pass the whole sentence. Extracting which words name the module is the planner's work; deciding what those words mean belongs to the resolve door, and a planner that translates has quietly done the second job badly.",
+          "derivedFrom": [
+            "BR-10",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id and session_id come from $session, even where the request names a campus or a past year. A request for another branch's figures is not this plan with a different value; it is a branch switch the actor makes in the header first.",
+          "derivedFrom": [
+            "BR-4",
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Both operations are reads and write no school record. There is nothing to reverse and no compensating call to make."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "fees ka dashboard kholo",
+            "lang": "ur-Latn",
+            "gloss": "open the fee dashboard"
+          },
+          "context": "Accounts, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "dashboard.module.read",
+              "inputs": {
+                "module_key": "$request.module_phrase → \"fees\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The phrase is fees — the module word lifted out of the sentence, not the sentence and not an English rendering of it. The resolve door returns module_key fee."
+            }
+          ],
+          "outcome": "The Fee module's figures come back — collected today, outstanding, defaulters, invoices raised this month — with row_scope_note \"Johar Town branch\" and a timestamp on each."
+        },
+        {
+          "request": {
+            "text": "aaj attendance kaisi hai?",
+            "lang": "ur-Latn",
+            "gloss": "how does attendance look today?"
+          },
+          "context": "Teacher assigned to 6-A and 6-B, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "dashboard.module.read",
+              "inputs": {
+                "module_key": "$request.module_phrase → \"attendance\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Returns module_key attendance, has_dashboard true."
+            }
+          ],
+          "outcome": "Figures cover 6-A and 6-B only, with row_scope_note \"Your assigned classes: 6-A, 6-B\". The scope is reported with the numbers, so 54 of 62 present is never read as the school's figure (AC-6)."
+        },
+        {
+          "request": "show me the library summary",
+          "context": "School Admin, Johar Town branch, library module carrying two meaningful figures.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "dashboard.module.read",
+              "inputs": {
+                "module_key": "$request.module_phrase → \"library\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Resolution returns module_key library. The capability then returns returned_as list, because the module carries fewer than three meaningful figures (BR-11, A4). The plan neither predicted this nor branched on it."
+            }
+          ],
+          "outcome": "The library's issued-books list comes back rather than a dashboard. That is the designed behaviour for a module with fewer than three figures, and is reported as such rather than as a missing dashboard."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-01-07-PC-3",
+      "intent": {
+        "name": "dashboard.figure.drillthrough",
+        "summary": "Open the rows a dashboard figure was calculated from, so the number can be proved. One step: the figure named in words is resolved within the role's permitted set, and the backend applies that figure's own filters — they never enter the plan.",
+        "routesHere": [
+          "who are the 43 defaulters",
+          {
+            "text": "43 defaulters kaun hain?",
+            "lang": "ur-Latn",
+            "gloss": "who are the 43 defaulters?"
+          },
+          {
+            "text": "jinhon ne fees nahi di, unki list do",
+            "lang": "ur-Latn",
+            "gloss": "give me the list of those who haven't paid the fees"
+          },
+          "show me the list behind that number",
+          {
+            "text": "is number ke peeche kaun kaun hai?",
+            "lang": "ur-Latn",
+            "gloss": "who is behind this number?"
+          },
+          {
+            "text": "aaj ki collection ki tafseel do",
+            "lang": "ur-Latn",
+            "gloss": "give me the breakdown of today's collection"
+          },
+          "who hasn't paid"
+        ],
+        "routesElsewhere": [
+          {
+            "request": "what's today's collection",
+            "goesTo": "dashboard.main.view — UC-01-07-PC-1",
+            "note": "The figure itself, not the list behind it."
+          },
+          {
+            "request": {
+              "text": "sab ko reminder bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send them all a reminder"
+            },
+            "goesTo": "UC-14-02 — Messaging",
+            "note": "A drill-through opens a list. Acting on the rows is a different use case and a different contract."
+          },
+          {
+            "request": "export this list to excel",
+            "goesTo": "The list's own use case, or report.export — UC-24-19 for a report.",
+            "note": "Reports and exports are out of scope here. UC-24-01, which this route used to name, does not exist."
+          },
+          {
+            "request": "why is the defaulter count wrong",
+            "goesTo": "dashboard.figure.drillthrough, then the Fee module",
+            "note": "Opening the list is exactly how the figure is checked (BR-7). What the list shows is the Fee module's business."
+          },
+          {
+            "request": {
+              "text": "ek student ko dhoondna hai",
+              "lang": "ur-Latn",
+              "gloss": "I need to find a student"
+            },
+            "goesTo": "search.global — UC-01-10",
+            "note": "A drill-through opens the rows behind a figure. Finding one person is a search."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "dashboard.drilldown.read",
+            "inputs": {
+              "figure_key": "$request.figure_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id",
+              "page_size": 25
+            },
+            "note": "One step. The filters behind the figure are applied by the backend from the figure_key — they are never carried in the plan, so there is no way for a planner to edit them and produce a list that looks like proof and is not."
+          }
+        ],
+        "onFailure": "Stop and report. A figure the role may not see fails at resolution, before the plan runs. A figure that resolves but whose rows are refused arrives as an error from the call — a real state, in which the number is visible and the rows are not.",
+        "atomicity": "One read. Nothing is written except the audit entry the API makes for a financial figure, so a run whose rows are refused has still recorded the viewing."
+      },
+      "operations": [
+        {
+          "name": "dashboard.drilldown.read",
+          "method": "GET",
+          "path": "/api/v1/dashboard/figures/{figure_key}/rows",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return the rows a dashboard figure was calculated from, with the figure's own filters applied by the backend, so the number can be proved. The filters never pass through the AI layer, which is what makes the list add up.",
+          "parameters": [
+            {
+              "name": "figure_key",
+              "source": "resolved",
+              "sourceRef": "$request.figure_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "dashboard_figure",
+                "fromPhrase": "$request.figure_phrase",
+                "onNoMatch": "Refuse. No permitted figure matches the words used. A figure the role may not see is indistinguishable from one that does not exist, which is BR-2 working.",
+                "onAmbiguous": "Ask, naming the candidates. Never pick one."
+              },
+              "notes": "An entity id, obtained by the parameter resolver through the resolve door from the words the actor used for the figure. Resolution matches within the role's permitted set only, so a figure the actor may not see never resolves (BR-2)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope, BR-4)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope, BR-4)."
+            },
+            {
+              "name": "page_size",
+              "source": "literal",
+              "sourceRef": "25",
+              "required": false,
+              "type": "integer",
+              "notes": "The default page size under the list-screens convention. total_count carries the full figure regardless of the page."
+            }
+          ],
+          "returns": {
+            "description": "The rows behind the figure, the figure as calculated, and their totals — so the two can be reconciled in one response.",
+            "fields": [
+              {
+                "name": "rows",
+                "type": "object[]",
+                "description": "The list's own columns, as defined by the module that owns it."
+              },
+              {
+                "name": "total_count",
+                "type": "integer",
+                "description": "The full count under the figure's filters."
+              },
+              {
+                "name": "total_value",
+                "type": "decimal",
+                "description": "Present on money lists. Should reconcile with figure_value (AC-3)."
+              },
+              {
+                "name": "figure_value",
+                "type": "string",
+                "description": "The figure as calculated, returned alongside its rows so a mismatch is visible without a second call."
+              },
+              {
+                "name": "figure_calculated_at",
+                "type": "datetime",
+                "description": "When the figure was calculated (BR-5)."
+              },
+              {
+                "name": "filters_applied",
+                "type": "object",
+                "description": "Echoed back for the reply, not for the plan. The AI layer never sets these."
+              },
+              {
+                "name": "list_name",
+                "type": "string",
+                "description": "The list's name, for quoting back."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "FORBIDDEN_LIST",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The actor may see the figure but may not open the list behind it.",
+              "written": "Nothing.",
+              "notWritten": "No rows returned.",
+              "note": "Message: \"You do not have permission to view this record.\" Report the figure and that the rows are out of reach. Do not retry with fewer filters."
+            },
+            {
+              "code": "LIST_EMPTY",
+              "mapsTo": "E6",
+              "httpStatus": 200,
+              "meaning": "The filters match no rows.",
+              "written": "Nothing.",
+              "notWritten": "Nothing.",
+              "treatedAsSuccess": true,
+              "note": "A genuine answer where the figure is zero. Where the figure is not zero, an empty list is a reconciliation problem worth reporting, not a run to retry."
+            }
+          ],
+          "writesOnRead": "Reading a financial figure's rows writes the same audit entry as calculating it, because the value is returned with them."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Carry the phrase, never a key. figure_key is $request.figure_phrase and the resolver converts it. Resolution matches only within the permitted set, so a planner that writes a key directly walks past the permission that resolution is enforcing.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never put filters in the plan. There is no parameter for them. The backend applies the figure's own filters from the figure_key, which is what guarantees the list reconciles with the number — a guarantee that disappears the moment a planner can name a filter.",
+          "derivedFrom": [
+            "BR-7",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never add a step to open a list yourself. There is one capability here, and it returns the rows and the figure together.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never raise page_size to return more rows. total_count already carries the full figure, and the page is a display concern.",
+          "derivedFrom": [
+            "BR-7",
+            "list-screens"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never re-emit the call after a refusal of the rows. FORBIDDEN_LIST means the actor may see the figure and not the rows behind it, which is an answer about their permissions, not a call to retry.",
+          "derivedFrom": [
+            "BR-7",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Where total_count does not reconcile with figure_value, report both with the timestamp. Never quote one as the other. The two arrive in the same response precisely so the drift is visible.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-7",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never chain an action onto this plan. It returns rows to read; messaging them, exporting them or changing them are separate use cases with contracts of their own.",
+          "derivedFrom": [
+            "Out of Scope"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "Hand the resolver the words the actor used for the figure, in the language they used them. \"jinhon ne fees nahi di\" names the defaulters figure as plainly as the word defaulters does. Never translate it into a figure key, and never infer the key from the module the figure sits in.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-9",
+          "rule": "branch_id and session_id come from $session, even where the request names a campus or a past year. Scope is not a parameter a request can set.",
+          "derivedFrom": [
+            "BR-4",
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Both operations are reads. Nothing is written except the audit entry for viewing a financial figure, which is never editable under the audit-trail convention. There is no compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "43 defaulters kaun hain?",
+            "lang": "ur-Latn",
+            "gloss": "who are the 43 defaulters?"
+          },
+          "context": "School Admin, Johar Town branch, academic session 2025-26, having just seen the main dashboard.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "dashboard.drilldown.read",
+              "inputs": {
+                "figure_key": "$request.figure_phrase → \"defaulters\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id",
+                "page_size": 25
+              },
+              "note": "The phrase is defaulters — the word the actor used, already the system's own word because the office says it in English inside an Urdu sentence. Resolution returns figure_key defaulters."
+            }
+          ],
+          "outcome": "43 rows under total_count, the first 25 returned, alongside figure_value 43 and its timestamp. The two reconcile in one response, which is the whole point of the drill-through."
+        },
+        {
+          "request": "break down today's collection",
+          "context": "School Admin, Johar Town branch, fee_collected_today reading PKR 148,500.00.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "dashboard.drilldown.read",
+              "inputs": {
+                "figure_key": "$request.figure_phrase → \"today's collection\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id",
+                "page_size": 25
+              },
+              "note": "Resolution returns figure_key fee_collected_today. The date filter is applied by the backend and never appears in the plan."
+            }
+          ],
+          "outcome": "The fee collections for today, with total_value 148,500.00 beside figure_value 148,500.00 — the same figure, proved (AC-3)."
+        },
+        {
+          "request": {
+            "text": "jinhon ne fees nahi di unki list do",
+            "lang": "ur-Latn",
+            "gloss": "give me the list of those who haven't paid the fees"
+          },
+          "context": "School Admin, Johar Town branch, academic session 2025-26. The same figure as the run above, named without an English word in it.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "dashboard.drilldown.read",
+              "inputs": {
+                "figure_key": "$request.figure_phrase → \"jinhon ne fees nahi di\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id",
+                "page_size": 25
+              },
+              "note": "The phrase carries the whole naming clause, because there is no shorter noun in it. Nothing is translated. Whether it resolves depends entirely on the alias table behind the resolve door holding the Roman Urdu phrasing."
+            }
+          ],
+          "outcome": "Where the alias table holds the phrase, the identical 43 rows as the run above. Where it does not, resolution fails and the plan never runs — correct for a phrase the system does not know, and the wrong outcome for a school whose staff speak this way."
+        },
+        {
+          "request": "show me what makes up the cash in hand",
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "dashboard.drilldown.read",
+              "inputs": {
+                "figure_key": "$request.figure_phrase → \"cash in hand\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id",
+                "page_size": 25
+              },
+              "note": "Resolution finds no match: cash_in_hand is not in the Accounts permitted set (BR-3), and the resolve door does not distinguish that from a figure which does not exist (BR-2)."
+            }
+          ],
+          "outcome": "Nothing is executed. The plan never runs, no rows are read, and nothing discloses whether the school holds such a figure. Report that no such figure is available to this role."
+        }
+      ]
+    }
+  ]
+}

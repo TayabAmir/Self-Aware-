@@ -1,0 +1,1093 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-05-04",
+  "featureRef": "5.4 Off-day and holiday calendar",
+  "name": "Set the school's off-days and holidays, and tell families about them",
+  "module": "Attendance",
+  "alsoAffectsModules": [
+    "Staff / HR",
+    "Finance",
+    "Messaging (SMS, WhatsApp, Email)"
+  ],
+  "priority": "MVP",
+  "priorityReason": "Attendance and payroll both read it. Without it a closed day reads as everybody absent.",
+  "goal": {
+    "actor": "School Admin",
+    "capability": "to mark which days the school is closed and broadcast notice of them",
+    "outcome": "attendance and payroll treat a closed day correctly, and families are told before they turn up"
+  },
+  "primaryActor": "School Admin",
+  "secondaryActors": [
+    {
+      "actor": "Staff / Teacher",
+      "involvement": "Is governed by the calendar and sees it in their own view."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "involvement": "Receives the broadcast."
+    },
+    {
+      "actor": "Accounts",
+      "involvement": "Relies on it for correct payroll and cannot change it."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "scheduled",
+        "description": "The month approaches and the calendar for it has not been set (BR-11).",
+        "source": "Attendance scheduler"
+      },
+      {
+        "type": "event",
+        "description": "An unplanned closure is declared, which is added the same day.",
+        "source": "School Admin"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An academic session is open, since the calendar is set within one.",
+      "establishedBy": {
+        "id": "UC-27-01",
+        "name": "Class creation",
+        "link": "UC-27-01.json"
+      }
+    },
+    {
+      "condition": "An authenticated session exists and the acting user is School Admin.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "For a broadcast, a messaging channel is configured with balance.",
+      "establishedBy": {
+        "id": "UC-14-04",
+        "name": "Message templates and sending",
+        "link": "UC-14-04.json"
+      }
+    }
+  ],
+  "postConditions": [
+    "The month's weekly off-days and public holidays are set and applied.",
+    "Attendance marking is refused on those days, so a closed day is never recorded as an absence.",
+    "Payroll excludes them, so nobody loses a day's pay because the school was shut.",
+    "Where a broadcast was sent, every parent has been told and the send is logged with its delivery status.",
+    "A day added or removed after the fact carries a reason, and any attendance already marked on a newly closed day is flagged rather than silently discarded.",
+    "The calendar is visible to staff and to families in their own views, so nobody has to ask whether the school is open.",
+    "Accounts can read the calendar and could not have changed it."
+  ],
+  "screens": [
+    {
+      "name": "Off-day calendar",
+      "route": "/attendance/calendar",
+      "sidebar": "Attendance",
+      "columns": [
+        "Date",
+        "Day",
+        "Type",
+        "Reason",
+        "Applies to",
+        "Set by",
+        "Broadcast"
+      ],
+      "defaultSort": "Date ascending",
+      "filters": [
+        "Month",
+        "Type",
+        "Applies to"
+      ],
+      "actions": [
+        "Set weekly off-days",
+        "Add holiday",
+        "Remove a day",
+        "Send broadcast",
+        "Print",
+        "Export"
+      ],
+      "visibleTo": [
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Month view",
+      "route": "/attendance/calendar/month",
+      "sidebar": "Attendance",
+      "columns": [
+        "Week",
+        "Mon",
+        "Tue",
+        "Wed",
+        "Thu",
+        "Fri",
+        "Sat",
+        "Sun"
+      ],
+      "actions": [
+        "Toggle a day",
+        "Add holiday",
+        "Send broadcast"
+      ],
+      "visibleTo": [
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Send broadcast",
+      "route": "/attendance/calendar/broadcast",
+      "sidebar": "Attendance",
+      "actions": [
+        "Select recipients",
+        "Choose channel",
+        "Select template or compose",
+        "Preview",
+        "Send"
+      ],
+      "visibleTo": [
+        "School Admin"
+      ]
+    },
+    {
+      "name": "School calendar",
+      "route": "/calendar",
+      "sidebar": "Portal",
+      "columns": [
+        "Date",
+        "Day",
+        "Type",
+        "Reason"
+      ],
+      "defaultSort": "Date ascending",
+      "visibleTo": [
+        "Staff",
+        "Teacher",
+        "Coordinator",
+        "Accounts",
+        "Parent / Guardian",
+        "Student"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Month",
+      "type": "monthYear",
+      "required": "yes",
+      "validation": "The month being set. Within the open academic session.",
+      "default": "The coming month",
+      "example": "Oct 2026"
+    },
+    {
+      "name": "Weekly off-days",
+      "type": "enum",
+      "required": "yes",
+      "validation": "The days of the week the school is normally closed. Applied across the month (BR-2).",
+      "default": "Sunday",
+      "example": "Sunday",
+      "enumValues": [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday"
+      ]
+    },
+    {
+      "name": "Date",
+      "type": "date",
+      "required": "conditional",
+      "validation": "A specific date being marked as a holiday.",
+      "example": "09-11-2026",
+      "requiredWhen": "A holiday is being added"
+    },
+    {
+      "name": "Type",
+      "type": "enum",
+      "required": "yes",
+      "example": "Public holiday",
+      "enumValues": [
+        "Weekly off",
+        "Public holiday",
+        "School holiday",
+        "Unplanned closure"
+      ]
+    },
+    {
+      "name": "Reason",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 250 characters. Required for anything other than a weekly off, since a closed day has to be explainable (BR-4).",
+      "example": "Iqbal Day",
+      "requiredWhen": "The type is not Weekly off"
+    },
+    {
+      "name": "Applies to",
+      "type": "enum",
+      "required": "yes",
+      "validation": "Whether the day closes the whole school or only part of it. A staff training day is not a holiday for staff (BR-6).",
+      "default": "Whole school",
+      "example": "Whole school",
+      "enumValues": [
+        "Whole school",
+        "Students only",
+        "Staff only",
+        "Selected classes"
+      ]
+    },
+    {
+      "name": "Selected classes",
+      "type": "lookup",
+      "required": "conditional",
+      "example": "Grade 9, Grade 10",
+      "requiredWhen": "Applies to is Selected classes",
+      "lookupSource": "Active classes"
+    },
+    {
+      "name": "Removal reason",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 250 characters. Required when removing a day already set (BR-9).",
+      "example": "Holiday moved by government notification to 10 November.",
+      "requiredWhen": "A day is being removed"
+    },
+    {
+      "name": "Broadcast message",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 1000 characters, or a saved template.",
+      "example": "The school will remain closed tomorrow, 9 November, for Iqbal Day.",
+      "requiredWhen": "A broadcast is being sent"
+    },
+    {
+      "name": "Broadcast delivery",
+      "type": "generated",
+      "required": "no",
+      "validation": "Per recipient, as the provider reports it (BR-8).",
+      "example": "412 delivered, 6 failed"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Calendar day",
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "deactivate"
+      ],
+      "notes": "One per closed day, with its type, reason and scope. Removed rather than deleted, with a reason (BR-9)."
+    },
+    {
+      "entity": "Weekly off pattern",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "The days of the week normally closed, applied across a month."
+    },
+    {
+      "entity": "Attendance record",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read to flag any attendance already marked on a newly closed day (BR-10)."
+    },
+    {
+      "entity": "Message",
+      "operations": [
+        "create"
+      ],
+      "notes": "The broadcast, with per-channel delivery status."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Every day set, every day removed and every broadcast."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "create",
+        "edit",
+        "deactivate"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Sets the calendar and sends the broadcast."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches.",
+      "notes": "Reviews the calendar across branches. Does not set it."
+    },
+    {
+      "actor": "Accounts",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Relies on it for payroll and cannot change it (BR-7)."
+    },
+    {
+      "actor": "Staff, Teacher, Coordinator",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Sees the calendar in their own view."
+    },
+    {
+      "actor": "Parent / Guardian, Student",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Sees the school calendar and receives the broadcast."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "The calendar decides which days are working days. Attendance and payroll both read it, and neither has its own idea of when the school was open."
+    },
+    {
+      "id": "BR-2",
+      "rule": "Weekly off-days are set as a pattern and applied across the month, rather than marked one date at a time."
+    },
+    {
+      "id": "BR-3",
+      "rule": "No attendance is marked on a closed day. A day the school was shut is not a day anybody was absent."
+    },
+    {
+      "id": "BR-4",
+      "rule": "A holiday or a closure carries a reason. A weekly off does not, since the pattern is the explanation."
+    },
+    {
+      "id": "BR-5",
+      "rule": "Payroll excludes closed days. Nobody loses a day's pay because the school was shut."
+    },
+    {
+      "id": "BR-6",
+      "rule": "A day may close the whole school or only part of it. A staff training day is not a holiday for staff, and an examination day may close classes without closing the school."
+    },
+    {
+      "id": "BR-7",
+      "rule": "Accounts read the calendar and cannot change it. The role that calculates pay must not be the role that decides which days are paid."
+    },
+    {
+      "id": "BR-8",
+      "rule": "A broadcast is sent through the messaging channels and every send is logged with its delivery status. Nothing is reported as delivered that the provider did not confirm."
+    },
+    {
+      "id": "BR-9",
+      "rule": "A day already set may be removed, with a reason. Governments move holidays, and the calendar has to be able to follow."
+    },
+    {
+      "id": "BR-10",
+      "rule": "Where a day is closed after attendance was already marked on it, the existing marks are flagged rather than silently discarded. Somebody decides what to do with them."
+    },
+    {
+      "id": "BR-11",
+      "rule": "A month whose calendar has not been set is flagged before it begins, because an unset month means attendance opens on days the school is shut."
+    },
+    {
+      "id": "BR-12",
+      "rule": "An unplanned closure may be added on the day itself. A school closed for weather does not wait for a calendar cycle."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Calendar day",
+      "states": [
+        "Set",
+        "Broadcast",
+        "Removed"
+      ],
+      "initial": "Set",
+      "terminal": [
+        "Removed"
+      ],
+      "transitions": [
+        {
+          "from": "Set",
+          "to": "Broadcast",
+          "triggeredBy": "School Admin",
+          "condition": "Notice is sent to parents (BR-8)."
+        },
+        {
+          "from": "Set",
+          "to": "Removed",
+          "triggeredBy": "School Admin",
+          "condition": "Removed with a reason (BR-9)."
+        },
+        {
+          "from": "Broadcast",
+          "to": "Removed",
+          "triggeredBy": "School Admin",
+          "condition": "Removed with a reason after notice was sent, which normally needs a further broadcast."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "School Admin",
+      "navigation": "Login → Attendance → Off-day calendar → Month view",
+      "userAction": "Opens the calendar for the coming month.",
+      "function": "openCalendarMonth(month, branchId)",
+      "systemResponse": "Shows the month with any days already set.",
+      "rules": [
+        "BR-11"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "School Admin",
+      "navigation": "Month view → Set weekly off-days",
+      "userAction": "Marks the days of the week the school is normally closed.",
+      "function": "setWeeklyOffPattern(month, days)",
+      "systemResponse": "Applies the pattern across the month rather than requiring each date to be marked.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "School Admin",
+      "navigation": "Month view → Add holiday",
+      "userAction": "Adds each public or school holiday with its reason and what it closes.",
+      "function": "addCalendarDay(date, type, reason, appliesTo)",
+      "systemResponse": "Requires a reason for anything other than a weekly off, and records what the day closes.",
+      "rules": [
+        "BR-4",
+        "BR-6"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "School Admin",
+      "navigation": "Off-day calendar → Save",
+      "userAction": "Saves the calendar for the month.",
+      "function": "saveCalendarMonth(month)",
+      "systemResponse": "Applies it, so attendance marking is refused on those days and payroll excludes them.",
+      "rules": [
+        "BR-1",
+        "BR-3",
+        "BR-5"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "School Admin",
+      "navigation": "Off-day calendar → Send broadcast",
+      "userAction": "Sends notice to parents, telling them the school is closed.",
+      "function": "sendCalendarBroadcast(recipients, channel, message)",
+      "systemResponse": "Sends through the messaging channels and logs each send with its delivery status.",
+      "rules": [
+        "BR-8"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "publishCalendar(month, branchId)",
+      "systemResponse": "Makes the calendar visible to staff and to families in their own views.",
+      "rules": []
+    },
+    {
+      "step": 7,
+      "actor": "School Admin",
+      "navigation": "Off-day calendar → Remove a day",
+      "userAction": "Removes a day where the holiday has moved, giving a reason.",
+      "function": "removeCalendarDay(dayId, reason)",
+      "systemResponse": "Removes it with the reason recorded, and flags any attendance already marked around the change.",
+      "rules": [
+        "BR-9",
+        "BR-10"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 3,
+      "condition": "The day closes only part of the school",
+      "actor": "School Admin",
+      "navigation": "Month view → Add holiday → Applies to",
+      "behaviour": "The day is scoped to students only, staff only or selected classes. A staff training day is not a holiday for staff (BR-6).",
+      "function": "addCalendarDay(date, type, reason, 'Students only')",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 3,
+      "condition": "The school closes unexpectedly for weather",
+      "actor": "School Admin",
+      "navigation": "Login → Attendance → Off-day calendar → Add holiday",
+      "behaviour": "The closure is added on the day itself and broadcast at once. A school closed for weather does not wait for a calendar cycle (BR-12).",
+      "function": "addCalendarDay(today, 'Unplanned closure', reason, 'Whole school')",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 7,
+      "condition": "A government notification moves a public holiday",
+      "actor": "School Admin",
+      "navigation": "Off-day calendar → Remove a day, then Add holiday",
+      "behaviour": "The original is removed with its reason and the new date added. Both changes are recorded and a further broadcast normally follows (BR-9).",
+      "function": "removeCalendarDay(dayId, reason)",
+      "resumesAtStep": 3
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 7,
+      "condition": "Attendance was already marked on a day now closed",
+      "actor": "School Admin",
+      "navigation": "Off-day calendar → Remove a day → Affected attendance",
+      "behaviour": "The existing marks are flagged for a decision rather than silently discarded, since somebody recorded them for a reason (BR-10).",
+      "function": "flagAffectedAttendance(date)"
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 5,
+      "condition": "The School Admin wants to announce something other than a holiday",
+      "actor": "School Admin",
+      "navigation": "Off-day calendar → Send broadcast",
+      "behaviour": "The broadcast carries any notice the school needs to send, not only a closure. It is the same route and the same log.",
+      "function": "sendCalendarBroadcast(recipients, channel, message)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 1,
+      "condition": "The month has not been set as it approaches",
+      "actor": "School Admin",
+      "navigation": "Login → Attendance → Off-day calendar",
+      "behaviour": "The unset month is flagged before it begins, because an unset month means attendance opens on days the school is shut (BR-11).",
+      "function": "openCalendarMonth(month, branchId)",
+      "resumesAtStep": 2
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 3,
+      "condition": "A holiday is added with no reason",
+      "systemResponse": "It is not saved (BR-4).",
+      "messageShown": "Give a reason for closing the school on this date.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E2",
+      "atStep": 3,
+      "condition": "A date is added that already carries a closure",
+      "systemResponse": "No second entry is created.",
+      "messageShown": "9 November is already marked as a public holiday.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E3",
+      "atStep": 3,
+      "condition": "The date falls outside the academic session",
+      "systemResponse": "It is not saved.",
+      "messageShown": "That date falls outside the current academic session.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E4",
+      "atStep": 7,
+      "condition": "A day is removed with no reason",
+      "systemResponse": "It is not removed (BR-9).",
+      "messageShown": "Give a reason for removing this day.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E5",
+      "atStep": 7,
+      "condition": "Attendance has already been marked on a day being closed",
+      "systemResponse": "The day is closed and the existing marks are flagged rather than discarded (BR-10).",
+      "messageShown": "Attendance was marked for 3 classes on this date. Those marks are flagged for review.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 5,
+      "condition": "There is no messaging balance",
+      "systemResponse": "The calendar is saved and the broadcast is not sent.",
+      "messageShown": "The calendar is saved. There is no messaging balance, so the broadcast could not be sent.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 2,
+      "condition": "Accounts attempt to change the calendar",
+      "systemResponse": "It is refused (BR-7).",
+      "messageShown": "Accounts can read the calendar but not change it.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E8",
+      "atStep": 5,
+      "condition": "Some broadcast messages fail",
+      "systemResponse": "The rest are sent and the failures are listed per recipient, so a family who was not told is identifiable.",
+      "messageShown": "412 sent, 6 could not be delivered — see the send log.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "School closed",
+      "recipient": "Every parent or guardian",
+      "channels": [
+        "whatsapp",
+        "sms"
+      ],
+      "template": "SCHOOL_CLOSURE_NOTICE",
+      "contents": [
+        "Date",
+        "Reason",
+        "What it closes",
+        "When the school reopens"
+      ],
+      "retry": "Resend from the broadcast; each attempt is logged.",
+      "blocking": false
+    },
+    {
+      "event": "Closure declared",
+      "recipient": "All staff",
+      "channels": [
+        "inApp",
+        "push"
+      ],
+      "template": "STAFF_CLOSURE_NOTICE",
+      "contents": [
+        "Date",
+        "Reason",
+        "Whether it applies to staff"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Month calendar not yet set",
+      "recipient": "School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "CALENDAR_NOT_SET",
+      "contents": [
+        "Month",
+        "Days remaining before it begins"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "Attendance marking is refused on closed days.",
+      "affects": {
+        "id": "UC-05-01",
+        "name": "Manual and session-based attendance marking",
+        "link": "UC-05-01.json"
+      }
+    },
+    {
+      "effect": "Period attendance is refused on closed days.",
+      "affects": {
+        "id": "UC-05-02",
+        "name": "Per-lecture and period attendance",
+        "link": "UC-05-02.json"
+      }
+    },
+    {
+      "effect": "Staff attendance codes those days as Day-off or Holiday.",
+      "affects": {
+        "id": "UC-05-03",
+        "name": "Staff attendance tracking",
+        "link": "UC-05-03.json"
+      }
+    },
+    {
+      "effect": "Payroll excludes closed days from the payable calculation.",
+      "affects": {
+        "id": "UC-12-04",
+        "name": "Payroll processing",
+        "link": "UC-12-04.json"
+      }
+    },
+    {
+      "effect": "The timetable shows no lectures on a closed day.",
+      "affects": {
+        "id": "UC-07-01",
+        "name": "Timetable generation",
+        "link": "UC-07-01.json"
+      }
+    },
+    {
+      "effect": "The broadcast appears in the school-wide sent-message log.",
+      "affects": {
+        "id": "UC-14-04",
+        "name": "Message templates and sending",
+        "link": "UC-14-04.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "School calendar",
+      "formats": [
+        "screen",
+        "print",
+        "pdf"
+      ],
+      "columns": [
+        "Date",
+        "Day",
+        "Type",
+        "Reason",
+        "Applies to"
+      ],
+      "grouping": "By month",
+      "totals": "Working days and closed days per month"
+    },
+    {
+      "name": "Closure broadcasts",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Date sent",
+        "Closure date",
+        "Recipients",
+        "Channel",
+        "Delivered",
+        "Failed",
+        "Sent by"
+      ],
+      "grouping": "By closure",
+      "totals": "Broadcasts sent and delivery rate"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "Sunday set as the weekly off for October",
+      "when": "the month is saved",
+      "then": "every Sunday in October is closed without each date being marked individually"
+    },
+    {
+      "id": "AC-2",
+      "given": "9 November added as a public holiday",
+      "when": "a teacher opens attendance for that date",
+      "then": "marking is refused and nobody is recorded absent"
+    },
+    {
+      "id": "AC-3",
+      "given": "The same date",
+      "when": "the month's payroll is calculated",
+      "then": "the day is excluded and no staff member loses pay for it"
+    },
+    {
+      "id": "AC-4",
+      "given": "A holiday added with no reason",
+      "when": "it is saved",
+      "then": "it is refused"
+    },
+    {
+      "id": "AC-5",
+      "given": "A day scoped to Students only",
+      "when": "staff attendance is marked for that date",
+      "then": "staff are markable and students are not"
+    },
+    {
+      "id": "AC-6",
+      "given": "A closure broadcast to 418 parents where 6 numbers fail",
+      "when": "the broadcast runs",
+      "then": "412 are sent, the 6 are listed, and a family who was not told is identifiable"
+    },
+    {
+      "id": "AC-7",
+      "given": "A public holiday moved by government notification",
+      "when": "the original is removed with a reason",
+      "then": "the removal is recorded and the new date can be added"
+    },
+    {
+      "id": "AC-8",
+      "given": "A date closed after attendance was already marked on it",
+      "when": "the closure is saved",
+      "then": "the existing marks are flagged for review rather than silently discarded"
+    },
+    {
+      "id": "AC-9",
+      "given": "Accounts opening the calendar",
+      "when": "they attempt to change a day",
+      "then": "there is no such control"
+    },
+    {
+      "id": "AC-10",
+      "given": "A month that has not been set as it approaches",
+      "when": "the check runs",
+      "then": "the School Admin is notified before the month begins"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-05-01",
+        "name": "Manual and session-based attendance marking",
+        "link": "UC-05-01.json",
+        "why": "Reads the calendar to refuse marking on closed days."
+      },
+      {
+        "id": "UC-05-03",
+        "name": "Staff attendance tracking",
+        "link": "UC-05-03.json",
+        "why": "Codes closed days as Day-off or Holiday."
+      },
+      {
+        "id": "UC-12-04",
+        "name": "Payroll processing",
+        "link": "UC-12-04.json",
+        "why": "Excludes closed days from the payable calculation."
+      },
+      {
+        "id": "UC-14-04",
+        "name": "Message templates and sending",
+        "link": "UC-14-04.json",
+        "why": "Delivers the broadcast and logs it."
+      },
+      {
+        "id": "UC-27-01",
+        "name": "Class creation",
+        "link": "UC-27-01.json",
+        "why": "Supplies the academic session the calendar sits within."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Keeps the calendar out of Accounts' hands."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      }
+    ],
+    "masterData": [
+      "Academic session dates",
+      "Holiday types",
+      "Message templates",
+      "Messaging balance"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Marking attendance on a working day",
+      "handledBy": {
+        "id": "UC-05-01",
+        "name": "Manual and session-based attendance marking",
+        "link": "UC-05-01.json"
+      }
+    },
+    {
+      "item": "Calculating pay from the calendar",
+      "handledBy": {
+        "id": "UC-12-04",
+        "name": "Payroll processing",
+        "link": "UC-12-04.json"
+      }
+    },
+    {
+      "item": "Staff leave, which is a person's absence rather than a school closure",
+      "handledBy": {
+        "id": "UC-12-06",
+        "name": "Staff leave management",
+        "link": "UC-12-06.json"
+      }
+    },
+    {
+      "item": "Student leave",
+      "handledBy": {
+        "id": "UC-05-11",
+        "name": "Student leave request and approval",
+        "link": "UC-05-11.json"
+      }
+    },
+    {
+      "item": "General messaging beyond calendar notices",
+      "handledBy": {
+        "id": "UC-14-07",
+        "name": "Parent and student messaging",
+        "link": "UC-14-07.json"
+      }
+    },
+    {
+      "item": "The examination and event calendar",
+      "handledBy": {
+        "id": "UC-06-01",
+        "name": "Examination scheduling",
+        "link": "UC-06-01.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Single source",
+        "requirement": "Attendance, payroll and the timetable all read this one calendar. No module holds its own idea of when the school was open."
+      },
+      {
+        "aspect": "Same-day closure",
+        "requirement": "An unplanned closure takes effect immediately on saving, without waiting for an overnight job, because a school closed for weather needs it now."
+      },
+      {
+        "aspect": "Broadcast honesty",
+        "requirement": "A broadcast reads Queued until the provider confirms otherwise, and failures are listed per recipient."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "The calendar is retained 7 years, since payroll and attendance records for those years depend on it."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "Which days are the school's normal weekly off-days?",
+      "assumption": "Not specified, and the pattern differs between schools.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "When attendance already exists on a day that is later closed, what should happen to those marks?",
+      "assumption": "They are flagged, but who decides and what they decide is not specified.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should the calendar be set per branch, or once for the whole school?",
+      "assumption": "Per branch as modelled. Not confirmed, and public holidays are the same everywhere.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Is the broadcast sent automatically when a closure is added, or only on request?",
+      "assumption": "On request. Confirm the school does not want it automatic for unplanned closures.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "Does a closed day affect the count of teaching days a syllabus is planned against?",
+      "assumption": "Not specified.",
+      "confirmWith": "Coordinator",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "bulk-actions",
+      "area": "Bulk actions",
+      "rule": "Any bulk operation reports a per-row result, commits valid rows and lists rejected rows with the reason. A bulk action never fails as a whole because of one bad row."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

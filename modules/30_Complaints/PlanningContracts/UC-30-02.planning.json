@@ -1,0 +1,1635 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-30-02",
+    "name": "Take an open parent complaint, work it, and close it on an outcome the family has seen",
+    "module": "Help Desk & Complaints",
+    "file": "../UseCases/UC-30-02.json",
+    "featureRef": "30.2 Working and closing a parent complaint"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-30-02-PC-1",
+      "intent": {
+        "name": "complaint.parent.takeup",
+        "summary": "Take an open complaint up from the queue. Nobody takes up a complaint about themselves.",
+        "routesHere": [
+          "take up the bus complaint from the Grade 4 parent",
+          {
+            "text": "bus wali shikayat main le leta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I will take the bus complaint"
+          },
+          {
+            "text": "queue se agli shikayat utha lein",
+            "lang": "ur-Latn",
+            "gloss": "pick up the next complaint from the queue"
+          },
+          "assign the fees complaint to me"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "harm wali shikayat band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "close the harm complaint"
+            },
+            "goesTo": "Not offered.",
+            "note": "A complaint alleging that a child has been harmed is not closed by this route at all. It is held by the Principal and read only by those the Principal permits (BR-8, E6, A6)."
+          },
+          {
+            "request": {
+              "text": "ye shikayat mere baare mein hai, phir bhi main dekh leta hoon",
+              "lang": "ur-Latn",
+              "gloss": "this complaint is about me, I will handle it anyway"
+            },
+            "goesTo": "Refused.",
+            "note": "Nobody takes up a complaint that names them. A complaint about somebody is not handled by that somebody (BR-3, BR-4, E1)."
+          },
+          {
+            "request": {
+              "text": "School Admin ke khilaf shikayat, desk dekh le",
+              "lang": "ur-Latn",
+              "gloss": "a complaint against the School Admin, let the desk handle it"
+            },
+            "goesTo": "Not the desk's.",
+            "note": "A complaint naming the School Admin routes to the Principal, and one naming the Principal to the Super Admin — above the role, never to it (BR-3, A2, A3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.parent.takeup",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The parent is told who now holds it, so a complaint being worked does not look forgotten (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. A complaint naming the acting user is refused, and one naming a colleague of theirs is routed to somebody else rather than to them (E1, E2).",
+        "atomicity": "One state change and one message to the parent. **Who holds it is now a named person**, and every action from here is recorded against the complaint (BR-1, BR-11)."
+      },
+      "operations": [
+        {
+          "name": "complaint.parent.takeup",
+          "method": "POST",
+          "path": "/api/v1/complaints/{complaint_id}/take-up",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "complaint_id, since a complaint is taken up once and a repeat is the same holder",
+          "purpose": "Take an open ordinary complaint up and tell the parent who holds it.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. No open complaint the acting user may see matches. A harm allegation never reaches the ordinary queue, and a complaint naming the acting user is not offered to them (BR-4, BR-8).",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, categories, days open and who holds each."
+              },
+              "notes": "The complaint, named by its reference or its subject."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The acting member of staff. Checked against the person the complaint names — somebody cannot take up a complaint about themselves, and it is not routed through a colleague of theirs (BR-3, BR-4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who holds it now.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Taken up."
+              },
+              {
+                "name": "held_by",
+                "type": "string",
+                "description": "The acting member of staff, told to the parent at once (BR-11)."
+              },
+              {
+                "name": "names_a_role",
+                "type": "string",
+                "description": "None, School Admin or Principal. Where it names one of those it has already routed above that role (BR-3). **How the system knows a free-text complaint names anybody is not specified anywhere** — the rule depends on it (OQ-2)."
+              },
+              {
+                "name": "named_person_check",
+                "type": "string",
+                "description": "Whether the acting user is the person named, or a colleague of them. \"Colleague\" is **defined nowhere**, and the rule depends on it (BR-4, OQ-3)."
+              },
+              {
+                "name": "days_open",
+                "type": "integer",
+                "description": "How long it sat before anybody took it. Nothing sets a limit (OQ-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NAMES_ACTING_USER",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user is the person the complaint names.",
+              "written": "Nothing.",
+              "notWritten": "It is not taken up (BR-3, BR-4)."
+            },
+            {
+              "code": "COLLEAGUE_OF_NAMED",
+              "mapsTo": "E2",
+              "httpStatus": 200,
+              "meaning": "The acting user is a colleague of the person named.",
+              "written": "It is routed to somebody else.",
+              "notWritten": "It is not routed through them.",
+              "treatedAsSuccess": true,
+              "note": "Where the desk staff member is a colleague of the person named, the complaint is not routed through them (BR-4)."
+            },
+            {
+              "code": "NAMED_TEACHER_OPENS",
+              "mapsTo": "E10",
+              "httpStatus": 403,
+              "meaning": "A teacher named in the complaint opened it.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never take up a complaint for somebody it names, and never route round the refusal. A complaint about somebody is not handled by that somebody (BR-3, BR-4, E1).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the naming checks rest on something undefined. Nothing specifies how a free-text complaint is known to name a person or a role, and nothing defines a colleague — so the two protections that matter most here depend on judgement the system does not yet make (OQ-2, OQ-3).",
+          "derivedFrom": [
+            "OQ-2",
+            "OQ-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the parent is told who holds it now. That message is what makes a complaint being worked look different from one that has been forgotten (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Name how long it waited. Nothing sets a time within which a complaint must be taken up, so the only record of delay is the number (OQ-4).",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "complaint.parent.redirect",
+        "statement": "There is no un-take. A complaint the desk cannot resolve goes on to the School Admin with a reason, and the parent is told who holds it then (BR-2, BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "bus wali shikayat main le leta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I will take the bus complaint"
+          },
+          "context": "Help desk, Johar Town branch, complaint open four days.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.parent.takeup",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the bus complaint",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-3)."
+            }
+          ],
+          "outcome": "Taken up, and the parent has been told it is with you. It sat four days before anybody took it — nothing sets a limit, so say the number."
+        },
+        {
+          "request": {
+            "text": "Mr Tariq ke khilaf jo shikayat hai wo main le leta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I will take the complaint against Mr Tariq"
+          },
+          "context": "Help desk member who shares a department with Mr Tariq.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.parent.takeup",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the complaint naming Mr Tariq",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Routed elsewhere rather than to a colleague (PR-1)."
+            }
+          ],
+          "outcome": "It is routed to somebody else, not to you — the complaint names a colleague of yours, and it is not handled through the people it may concern. Worth knowing: what counts as a colleague is not defined anywhere in the specification, so this rests on a judgement the system does not yet make."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-02-PC-2",
+      "intent": {
+        "name": "complaint.parent.action.record",
+        "summary": "Record an action taken on a complaint. Every action stays; nothing is edited.",
+        "routesHere": [
+          "record that I spoke to the transport contractor about the bus complaint",
+          {
+            "text": "shikayat par note likh dein — contractor se baat ho gayi",
+            "lang": "ur-Latn",
+            "gloss": "write a note on the complaint — spoke to the contractor"
+          },
+          {
+            "text": "is shikayat par kiya gaya kaam darj kar dein",
+            "lang": "ur-Latn",
+            "gloss": "record the work done on this complaint"
+          },
+          "log the call I made to the family"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "pichla action theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "correct the previous action"
+            },
+            "goesTo": "Not offered.",
+            "note": "Every action recorded against a complaint stays. Nothing is edited or removed — a wrong entry is followed by a further one, so the record of how a complaint was handled is a record (BR-9, E7)."
+          },
+          {
+            "request": {
+              "text": "harm wali shikayat band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "close the harm complaint"
+            },
+            "goesTo": "Not offered.",
+            "note": "A complaint alleging that a child has been harmed is not closed by this route at all. It is held by the Principal and read only by those the Principal permits (BR-8, E6, A6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.parent.action.record",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "action": "$request.action",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The action is appended to the complaint; nothing already recorded changes (BR-1, BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One append. Every action taken is recorded against the complaint and stays — nothing is edited or removed (BR-9, E7)."
+      },
+      "operations": [
+        {
+          "name": "complaint.parent.action.record",
+          "method": "POST",
+          "path": "/api/v1/complaints/{complaint_id}/actions",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "complaint_id + the action text + minute, so a double press does not append the same action twice",
+          "purpose": "Append an action taken on a complaint.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. No complaint the acting user may see matches. A harm allegation is not visible to anybody in the ordinary queue, and a complaint naming the acting user is not offered to them (BR-4, BR-8).",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, categories, days open and who holds each."
+              },
+              "notes": "The complaint, named by its reference or its subject."
+            },
+            {
+              "name": "action",
+              "source": "request",
+              "sourceRef": "$request.action",
+              "required": true,
+              "type": "string",
+              "notes": "10 to 2000 characters, the holder's own. **This is the record of how the complaint was handled** — it is what the parent, a School Admin or a Principal reads afterwards (BR-1, BR-9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The action and the record it joins.",
+            "fields": [
+              {
+                "name": "action_id",
+                "type": "string",
+                "description": "The action."
+              },
+              {
+                "name": "recorded_by",
+                "type": "string",
+                "description": "Who recorded it."
+              },
+              {
+                "name": "actions_so_far",
+                "type": "integer",
+                "description": "How many actions the complaint carries now."
+              },
+              {
+                "name": "editable",
+                "type": "boolean",
+                "description": "False, always. A wrong entry is followed by a further one (BR-9, E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "EDIT_ATTEMPTED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "An action already recorded was edited.",
+              "written": "Nothing.",
+              "notWritten": "There is no such control.",
+              "note": "Actions are never edited. Record a further action (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the action for them. It is the record of what was actually done, and a plausible-sounding entry nobody did is the one thing this record must never contain (BR-1, BR-9).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never offer to edit a previous entry. Nothing is edited or removed — a correction is a further action, and the two stand together (BR-9, E7).",
+          "derivedFrom": [
+            "BR-9",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An action is never removed. A wrong one is followed by a further action, and both stay (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "shikayat par likh dein ke transport contractor se baat ho gayi hai",
+            "lang": "ur-Latn",
+            "gloss": "write on the complaint that I spoke to the transport contractor"
+          },
+          "context": "Help desk, holding the bus complaint.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.parent.action.record",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the bus complaint",
+                "action": "as they said it — spoke to the transport contractor",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Recorded. Ask whether there is anything to add — what the contractor said — since the entry is permanent and a short one tells the next reader very little."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-02-PC-3",
+      "intent": {
+        "name": "complaint.parent.redirect",
+        "summary": "Pass a complaint the desk cannot resolve to the School Admin, with the reason.",
+        "routesHere": [
+          "redirect the transport complaint to the School Admin, it needs a contract change",
+          {
+            "text": "ye shikayat School Admin ko bhej dein, desk ise hal nahi kar sakta",
+            "lang": "ur-Latn",
+            "gloss": "send this complaint to the School Admin, the desk cannot resolve it"
+          },
+          {
+            "text": "upar bhej dein",
+            "lang": "ur-Latn",
+            "gloss": "escalate it"
+          },
+          "pass the fee complaint up"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "School Admin ke khilaf shikayat unhi ko bhej dein",
+              "lang": "ur-Latn",
+              "gloss": "send the complaint against the School Admin to them"
+            },
+            "goesTo": "Refused.",
+            "note": "A complaint naming the School Admin does not go to the School Admin — it goes to the Principal (BR-3, A2)."
+          },
+          {
+            "request": {
+              "text": "harm wali shikayat band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "close the harm complaint"
+            },
+            "goesTo": "Not offered.",
+            "note": "A complaint alleging that a child has been harmed is not closed by this route at all. It is held by the Principal and read only by those the Principal permits (BR-8, E6, A6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.parent.redirect",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "redirect_reason": "$request.redirect_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The School Admin takes it from there, and the parent is told who now holds it (BR-2, BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. A redirect with no reason is refused (E3).",
+        "atomicity": "One state change and one message to the parent, so a redirect does not look like silence (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "complaint.parent.redirect",
+          "method": "POST",
+          "path": "/api/v1/complaints/{complaint_id}/redirect",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "complaint_id, since a complaint is redirected once and a repeat is the same move",
+          "purpose": "Redirect a complaint the desk cannot resolve to the School Admin.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. No complaint the acting user may see matches. A harm allegation is not visible to anybody in the ordinary queue, and a complaint naming the acting user is not offered to them (BR-4, BR-8).",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, categories, days open and who holds each."
+              },
+              "notes": "The complaint, named by its reference or its subject."
+            },
+            {
+              "name": "redirect_reason",
+              "source": "request",
+              "sourceRef": "$request.redirect_reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters, the desk's own. Required (BR-2, E3) — it is what the School Admin reads first."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who holds it now.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Redirected, then taken up by the School Admin (BR-2)."
+              },
+              {
+                "name": "held_by",
+                "type": "string",
+                "description": "The School Admin — or the Principal, where the complaint names the School Admin (BR-3)."
+              },
+              {
+                "name": "parent_told",
+                "type": "boolean",
+                "description": "True. A redirect does not look like silence (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A redirect was made with no reason.",
+              "written": "Nothing.",
+              "notWritten": "It is not redirected (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. The School Admin reads it first, and \"escalated\" tells them nothing about why the desk could not resolve it (BR-2, E3).",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never redirect a complaint to the person it names. One naming the School Admin goes to the Principal instead (BR-3, A2).",
+          "derivedFrom": [
+            "BR-3",
+            "A2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the parent is told who holds it now (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no route back down to the desk in the lifecycle. The School Admin works it from here (BR-2)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye shikayat School Admin ko bhej dein, transport contract badalna paray ga",
+            "lang": "ur-Latn",
+            "gloss": "send this complaint to the School Admin, the transport contract will have to change"
+          },
+          "context": "Help desk, holding the bus complaint.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.parent.redirect",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the bus complaint",
+                "redirect_reason": "as they gave it — it concerns the transport contract, which the desk cannot change",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Redirected. The School Admin holds it now and the parent has been told — a complaint moving up should never look like a complaint going quiet."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-02-PC-4",
+      "intent": {
+        "name": "complaint.parent.outcome.record",
+        "summary": "Record what was done about a complaint. The parent is told it, and it does not close until they confirm.",
+        "routesHere": [
+          "record the outcome on the bus complaint — the contractor is on notice and the route is revised",
+          {
+            "text": "bus wali shikayat ka nateeja likh dein",
+            "lang": "ur-Latn",
+            "gloss": "record the outcome of the bus complaint"
+          },
+          {
+            "text": "walidain ko bata dein ke kya kiya gaya",
+            "lang": "ur-Latn",
+            "gloss": "tell the parents what was done"
+          },
+          "close out the fee complaint with what we did"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "harm wali shikayat band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "close the harm complaint"
+            },
+            "goesTo": "Not offered.",
+            "note": "A complaint alleging that a child has been harmed is not closed by this route at all. It is held by the Principal and read only by those the Principal permits (BR-8, E6, A6)."
+          },
+          {
+            "request": {
+              "text": "nateeja likh kar khud hi band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "record the outcome and close it yourself"
+            },
+            "goesTo": "Not offered.",
+            "note": "The parent confirms the outcome, and that is what closes it. A complaint is not closed on an outcome the family has not seen (BR-6, BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.parent.outcome.record",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "outcome": "$request.outcome",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The outcome is recorded and sent to the parent, who confirms it or reopens it once (BR-5, BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. An outcome with no detail is refused (E4).",
+        "atomicity": "One write and one message to the parent. **The complaint stays open at outcome recorded** until the parent confirms — and if they never respond, it never closes (BR-6, E9)."
+      },
+      "operations": [
+        {
+          "name": "complaint.parent.outcome.record",
+          "method": "POST",
+          "path": "/api/v1/complaints/{complaint_id}/outcome",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "complaint_id + the round, so a double press does not send the family the same outcome twice",
+          "purpose": "Record the outcome of a complaint and send it to the parent.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. No complaint the acting user may see matches. A harm allegation is not visible to anybody in the ordinary queue (BR-8).",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, days open and who holds each."
+              },
+              "notes": "The complaint, named by its reference or its subject."
+            },
+            {
+              "name": "outcome",
+              "source": "request",
+              "sourceRef": "$request.outcome",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 2000 characters, the holder's own. **The parent is told it word for word** (BR-5, E4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was recorded and what happens next.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Outcome recorded. Not closed (BR-6)."
+              },
+              {
+                "name": "parent_told",
+                "type": "boolean",
+                "description": "True. They are sent the outcome (BR-5)."
+              },
+              {
+                "name": "round",
+                "type": "string",
+                "description": "First, or the further outcome after a reopening. After a reopening there is no further reopening (BR-10)."
+              },
+              {
+                "name": "closes_when",
+                "type": "string",
+                "description": "The parent confirms it. If they never respond it stays open and is surfaced, rather than closing itself (E9, OQ-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_DETAIL",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "The outcome was recorded with no detail.",
+              "written": "Nothing.",
+              "notWritten": "It is not recorded.",
+              "note": "The parent is told it (BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the outcome. The parent is told it word for word, and an outcome a planner drafted is a promise nobody at the school made (BR-5, E4).",
+          "derivedFrom": [
+            "BR-5",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that it is not closed. It waits on the parent, and a complaint whose family never responds stays open indefinitely — nothing closes it for them (BR-6, E9, OQ-5).",
+          "derivedFrom": [
+            "BR-6",
+            "E9",
+            "OQ-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Where this is the outcome after a reopening, say it is the last. A second refusal does not reopen it again (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A recorded outcome is not withdrawn. The parent either confirms it or reopens the complaint once, and a further outcome is then recorded alongside it (BR-6, BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "bus wali shikayat ka nateeja likh dein — contractor ko notice diya aur route ka waqt badal diya",
+            "lang": "ur-Latn",
+            "gloss": "record the outcome of the bus complaint — the contractor has been put on notice and the route timing changed"
+          },
+          "context": "School Admin, holding the redirected bus complaint.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.parent.outcome.record",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the bus complaint",
+                "outcome": "as they gave it",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Recorded and sent to the parent. It is not closed: it waits on them to confirm, and if they never answer it stays open — nothing closes a complaint on a family's silence."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-02-PC-5",
+      "intent": {
+        "name": "complaint.parent.outcome.confirm",
+        "summary": "Accept the outcome of your complaint. This is what closes it.",
+        "routesHere": [
+          "I accept the outcome of my bus complaint",
+          {
+            "text": "mujhe shikayat ka nateeja manzoor hai",
+            "lang": "ur-Latn",
+            "gloss": "I accept the outcome of my complaint"
+          },
+          {
+            "text": "masla hal ho gaya, shikayat band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the problem is solved, close the complaint"
+          },
+          "confirm the outcome"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mujhe nateeja manzoor nahi",
+              "lang": "ur-Latn",
+              "gloss": "I do not accept the outcome"
+            },
+            "goesTo": "complaint.parent.reopen — this use case.",
+            "note": "Not accepting is a reopening, once, after which the School Admin holds it (BR-6, BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.parent.outcome.confirm",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "guardian_id": "$session.guardian_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it closes the complaint (BR-6, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. There is nothing to confirm until an outcome has been recorded (E8).",
+        "atomicity": "One state change. **Closed is terminal** — confirming ends the complaint, and it cannot be reopened afterwards (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "complaint.parent.outcome.confirm",
+          "method": "POST",
+          "path": "/api/v1/complaints/{complaint_id}/confirm",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "complaint_id, since a complaint closes once",
+          "purpose": "Accept the recorded outcome, closing the complaint.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. None of this guardian's complaints has an outcome awaiting confirmation.",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, days open and who holds each."
+              },
+              "notes": "The guardian's own complaint."
+            },
+            {
+              "name": "guardian_id",
+              "source": "session",
+              "sourceRef": "$session.guardian_id",
+              "required": true,
+              "type": "string",
+              "notes": "The guardian's own record. A parent confirms or reopens only their own complaint."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What closed.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Closed. Terminal (BR-7)."
+              },
+              {
+                "name": "outcome",
+                "type": "string",
+                "description": "What they accepted."
+              },
+              {
+                "name": "could_have_reopened",
+                "type": "boolean",
+                "description": "Whether a reopening was still available. Once closed it is not (BR-6, BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_OUTCOME",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "No outcome has been recorded.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is closed.",
+              "note": "A complaint is not closed without an outcome recorded (BR-5, BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that confirming closes it for good. Closed is terminal, and a parent who is only half-satisfied should know that reopening — once — is the other answer (BR-6, BR-7).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never confirm on the parent's behalf. Only the family can accept the outcome, and that acceptance is what closing means here (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "guardian_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Closed is terminal. There is no reopening after confirmation (BR-7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mujhe nateeja manzoor hai, bus ab waqt par aati hai",
+            "lang": "ur-Latn",
+            "gloss": "I accept the outcome, the bus comes on time now"
+          },
+          "context": "Guardian, outcome recorded.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.parent.outcome.confirm",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the bus complaint",
+                "guardian_id": "$session.guardian_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-1)."
+            }
+          ],
+          "outcome": "Confirmed and closed. It stays on their record. If the bus starts running late again, that is a fresh complaint — this one cannot be reopened now."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-02-PC-6",
+      "intent": {
+        "name": "complaint.parent.reopen",
+        "summary": "Refuse the outcome and reopen your complaint — once. The School Admin then holds it.",
+        "routesHere": [
+          "I don't accept the outcome of my complaint",
+          {
+            "text": "mujhe ye nateeja manzoor nahi, shikayat dobara kholein",
+            "lang": "ur-Latn",
+            "gloss": "I do not accept this outcome, reopen the complaint"
+          },
+          {
+            "text": "masla ab bhi wahi hai",
+            "lang": "ur-Latn",
+            "gloss": "the problem is still the same"
+          },
+          "reopen my complaint"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "doosri baar phir khol dein",
+              "lang": "ur-Latn",
+              "gloss": "reopen it a second time"
+            },
+            "goesTo": "Refused.",
+            "note": "A complaint can be reopened once. A second refusal does not reopen it again; it stays with the School Admin (BR-10, E5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.parent.reopen",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "guardian_id": "$session.guardian_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The complaint is reopened and held by the School Admin (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. A second reopening is refused (E5).",
+        "atomicity": "One state change. The complaint is reopened **once** and is held by the School Admin from here (BR-6, BR-10)."
+      },
+      "operations": [
+        {
+          "name": "complaint.parent.reopen",
+          "method": "POST",
+          "path": "/api/v1/complaints/{complaint_id}/reopen",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "complaint_id, since a complaint is reopened once",
+          "purpose": "Reopen a complaint whose outcome the parent does not accept.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. None of this guardian's complaints has an outcome they can reopen.",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, days open and who holds each."
+              },
+              "notes": "The guardian's own complaint."
+            },
+            {
+              "name": "guardian_id",
+              "source": "session",
+              "sourceRef": "$session.guardian_id",
+              "required": true,
+              "type": "string",
+              "notes": "The guardian's own record. A parent confirms or reopens only their own complaint."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who holds it now, and what is left.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Reopened (BR-6)."
+              },
+              {
+                "name": "held_by",
+                "type": "string",
+                "description": "The School Admin (BR-6). **Including where the complaint names the School Admin** — the reopening rule and the rule that a complaint about somebody never goes to that somebody are not reconciled in the use case (BR-3, BR-6)."
+              },
+              {
+                "name": "reopenings_left",
+                "type": "integer",
+                "description": "Zero. A second refusal does not reopen it again (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_REOPENED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The parent attempted to reopen a second time.",
+              "written": "Nothing.",
+              "notWritten": "It stays with the School Admin (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say this is the only reopening. After it, a further refusal changes nothing — the complaint stays with the School Admin (BR-6, BR-10).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say who will hold it, and flag the case the use case leaves open. A reopened complaint goes to the School Admin even where it names the School Admin, which collides with the rule that a complaint about somebody is never handled by that somebody (BR-3, BR-6).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never reopen on the parent's behalf. Not accepting the outcome is theirs to say (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "guardian_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-reopen. The School Admin records a further outcome from here (BR-6)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mujhe nateeja manzoor nahi, bus ab bhi der se aati hai",
+            "lang": "ur-Latn",
+            "gloss": "I do not accept the outcome, the bus is still late"
+          },
+          "context": "Guardian, first outcome recorded.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.parent.reopen",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the bus complaint",
+                "guardian_id": "$session.guardian_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-1)."
+            }
+          ],
+          "outcome": "Reopened and now held by the School Admin. Say clearly that this is the only reopening — the next outcome is the last, and refusing that one will not reopen it again."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-02-PC-7",
+      "intent": {
+        "name": "complaint.parent.close",
+        "summary": "Close a reopened complaint after its second outcome. It cannot be reopened again.",
+        "routesHere": [
+          "close the reopened bus complaint",
+          {
+            "text": "dobara khuli shikayat ab band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "close the reopened complaint now"
+          },
+          "close this complaint after the second outcome"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "harm wali shikayat band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "close the harm complaint"
+            },
+            "goesTo": "Not offered.",
+            "note": "A complaint alleging that a child has been harmed is not closed by this route at all. It is held by the Principal and read only by those the Principal permits (BR-8, E6, A6)."
+          },
+          {
+            "request": {
+              "text": "bina nateeje ke band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "close it without an outcome"
+            },
+            "goesTo": "Refused.",
+            "note": "A complaint is not closed without an outcome recorded (BR-5, BR-7, E8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.parent.close",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, available once the further outcome has been recorded (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. Closing without an outcome, or closing a harm allegation, is refused (E6, E8).",
+        "atomicity": "One state change. **It cannot be reopened again** — and it may close over the family's objection, since a second refusal does not reopen it (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "complaint.parent.close",
+          "method": "POST",
+          "path": "/api/v1/complaints/{complaint_id}/close",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "complaint_id, since a complaint closes once",
+          "purpose": "Close a reopened complaint after its further outcome.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. No reopened complaint with a further outcome recorded matches.",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, days open and who holds each."
+              },
+              "notes": "The complaint, named by its reference or its subject."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What closed and on what terms.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Closed. Terminal (BR-7, BR-10)."
+              },
+              {
+                "name": "parent_accepted",
+                "type": "boolean",
+                "description": "Whether the family accepted the further outcome. It closes either way (BR-10)."
+              },
+              {
+                "name": "outcomes",
+                "type": "object[]",
+                "description": "Both outcomes, as recorded (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_OUTCOME",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The complaint was closed without an outcome recorded.",
+              "written": "Nothing.",
+              "notWritten": "It is not closed (BR-5, BR-7)."
+            },
+            {
+              "code": "HARM_ALLEGATION",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "A harm allegation was closed by the desk.",
+              "written": "Nothing.",
+              "notWritten": "There is no such route (BR-8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say whether the family accepted it. After a reopening the complaint closes whether or not they did, and closing over a family's objection should be done knowingly (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never close a harm allegation. It is not closed by this route at all (BR-8, E6).",
+          "derivedFrom": [
+            "BR-8",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never close without an outcome recorded (BR-5, E8).",
+          "derivedFrom": [
+            "BR-5",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Closed is terminal and cannot be reopened again (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "dobara khuli bus wali shikayat band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "close the reopened bus complaint"
+          },
+          "context": "School Admin, further outcome recorded, family has not accepted it.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.parent.close",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the bus complaint",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Closes over the family's objection (PR-1)."
+            }
+          ],
+          "outcome": "Before closing: the family has not accepted the second outcome, and once closed there is no further reopening. Closing is allowed — say plainly that it closes over their objection, which is on the record with both outcomes."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-02-PC-8",
+      "intent": {
+        "name": "complaints.parent.read",
+        "summary": "See the complaint queue: what is open, who holds what, and what is waiting on a family.",
+        "routesHere": [
+          "what complaints are open?",
+          {
+            "text": "kitni shikayatein khuli hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many complaints are open?"
+          },
+          {
+            "text": "kaunsi shikayatein walidain ke jawab ka intezaar kar rahi hain?",
+            "lang": "ur-Latn",
+            "gloss": "which complaints are waiting on a parent's reply?"
+          },
+          {
+            "text": "sab se purani shikayat kaunsi hai?",
+            "lang": "ur-Latn",
+            "gloss": "which is the oldest complaint?"
+          },
+          "show me the complaints nobody has taken up"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "harm wali shikayatein bhi dikhayein",
+              "lang": "ur-Latn",
+              "gloss": "show the harm complaints too"
+            },
+            "goesTo": "Only to the Principal, and those the Principal permits.",
+            "note": "A harm allegation never enters the ordinary queue and is not visible to anybody in it (BR-8)."
+          },
+          {
+            "request": {
+              "text": "ye shikayat mere baare mein hai, dikhayein",
+              "lang": "ur-Latn",
+              "gloss": "this complaint is about me, show it"
+            },
+            "goesTo": "Refused.",
+            "note": "A complaint naming a teacher is not visible to that teacher at any point (BR-4, E10, A7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaints.parent.read",
+            "inputs": {
+              "status": "$request.status",
+              "names_role": "$request.names_role",
+              "awaiting_confirmation": "$request.awaiting_confirmation",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read, of the queue the acting user may see."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written."
+      },
+      "operations": [
+        {
+          "name": "complaints.parent.read",
+          "method": "GET",
+          "path": "/api/v1/complaints",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List parent complaints the acting user may see.",
+          "parameters": [
+            {
+              "name": "status",
+              "source": "request",
+              "sourceRef": "$request.status",
+              "required": false,
+              "type": "string",
+              "notes": "One of the lifecycle states. Defined in the lifecycle rather than as a value list on a field, so carried as written rather than as an enum."
+            },
+            {
+              "name": "names_role",
+              "source": "request",
+              "sourceRef": "$request.names_role",
+              "required": false,
+              "type": "enum: None|School Admin|Principal",
+              "notes": "Complaints that name the School Admin or the Principal, which route above that role (BR-3)."
+            },
+            {
+              "name": "awaiting_confirmation",
+              "source": "request",
+              "sourceRef": "$request.awaiting_confirmation",
+              "required": false,
+              "type": "boolean",
+              "notes": "Complaints with an outcome recorded that the family has not answered (E9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What is open, stuck or waiting.",
+            "fields": [
+              {
+                "name": "complaints",
+                "type": "object[]",
+                "description": "Reference, subject, category, child, held by, days open and status."
+              },
+              {
+                "name": "not_taken_up",
+                "type": "object[]",
+                "description": "Open and held by nobody, with days open. **No time limit exists** for taking one up (BR-6, OQ-4)."
+              },
+              {
+                "name": "awaiting_confirmation",
+                "type": "object[]",
+                "description": "Outcome recorded and the family has not answered. These never close by themselves (E9, OQ-5)."
+              },
+              {
+                "name": "reopened",
+                "type": "object[]",
+                "description": "Reopened once and held by the School Admin (BR-6, BR-10)."
+              },
+              {
+                "name": "held_above_the_desk",
+                "type": "object[]",
+                "description": "Naming the School Admin or the Principal, and routed above them (BR-3)."
+              },
+              {
+                "name": "harm_allegations",
+                "type": "string",
+                "description": "Not in this list for anybody in the ordinary queue. The Principal sees their own (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NAMED_TEACHER_OPENS",
+              "mapsTo": "E10",
+              "httpStatus": 403,
+              "meaning": "A teacher named in a complaint sought it in the queue.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never show a harm allegation to anybody in the ordinary queue. It is held by the Principal and read only by those they permit (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name what nobody has taken up, with how long. No time limit exists, so the days are the only signal (BR-6, OQ-4).",
+          "derivedFrom": [
+            "BR-6",
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name what is waiting on a family. Those never close by themselves, and a queue that looks empty can hide a dozen complaints stuck on a parent's silence (E9, OQ-5).",
+          "derivedFrom": [
+            "E9",
+            "OQ-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that this desk also handles system faults. Whether the IT desk is the right first stop for a complaint about a teacher, a fee or a bus is flagged by the use case itself as needing a decision (BR-1, OQ-1).",
+          "derivedFrom": [
+            "BR-1",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "kitni shikayatein khuli hain aur kaunsi atki hui hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many complaints are open and which are stuck?"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaints.parent.read",
+              "inputs": {
+                "status": "omitted",
+                "names_role": "omitted",
+                "awaiting_confirmation": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-2, PR-3)."
+            }
+          ],
+          "outcome": "Give the open count, then the two stuck kinds separately: complaints nobody has taken up, oldest first — nothing sets a limit — and complaints whose outcome is waiting on a family, which never close on their own. Harm allegations are not in this list, by design."
+        }
+      ]
+    }
+  ]
+}

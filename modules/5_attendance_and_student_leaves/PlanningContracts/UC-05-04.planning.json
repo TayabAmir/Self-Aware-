@@ -1,0 +1,1224 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-05-04",
+    "name": "Set the school's off-days and holidays, and tell families about them",
+    "module": "Attendance",
+    "file": "../UseCases/UC-05-04.json",
+    "featureRef": "5.4 Off-day and holiday calendar"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-05-04-PC-1",
+      "intent": {
+        "name": "calendar.weeklyoff.set",
+        "summary": "Set which days of the week the school is normally closed, applied across a month. One step.",
+        "routesHere": [
+          "set Sunday as the weekly off for October",
+          {
+            "text": "itwar ki chhutti set kar do",
+            "lang": "ur-Latn",
+            "gloss": "set Sunday as the weekly off"
+          },
+          {
+            "text": "hafte aur itwar dono band rehte hain",
+            "lang": "ur-Latn",
+            "gloss": "we are closed both Saturday and Sunday"
+          },
+          {
+            "text": "agle mahine ka weekly off pattern laga do",
+            "lang": "ur-Latn",
+            "gloss": "set next month's weekly off pattern"
+          },
+          "apply the Friday-Sunday pattern to November"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ek din ki chhutti add karo",
+              "lang": "ur-Latn",
+              "gloss": "add a single holiday"
+            },
+            "goesTo": "calendar.day.add — UC-05-04-PC-2",
+            "note": "A specific date is added on its own; the weekly pattern is applied across the month (BR-2)."
+          },
+          {
+            "request": {
+              "text": "ye din hata do",
+              "lang": "ur-Latn",
+              "gloss": "remove this day"
+            },
+            "goesTo": "calendar.day.remove — UC-05-04-PC-3"
+          },
+          {
+            "request": {
+              "text": "walidain ko bata do",
+              "lang": "ur-Latn",
+              "gloss": "tell the families"
+            },
+            "goesTo": "calendar.broadcast.send — UC-05-04-PC-4",
+            "note": "Setting the calendar sends nothing; the broadcast is its own act."
+          },
+          {
+            "request": {
+              "text": "hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark attendance"
+            },
+            "goesTo": "attendance.daily.mark — UC-05-01",
+            "note": "The calendar decides which days are working days; attendance reads it and has no idea of its own (BR-1)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "calendar.weeklyoff.set",
+            "inputs": {
+              "month": "$request.month",
+              "weekly_off_days": "$request.weekly_off_days",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. The pattern is applied across the month rather than marked one date at a time (BR-2), and a weekly off carries no reason because the pattern is the explanation (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. A month outside the academic session is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the pattern and every day it closes in that month, together with the audit entry or not at all. Attendance and payroll both read it and neither has its own idea of when the school was open (BR-1) — so a day closed here is a day nobody can be marked absent on (BR-3) and nobody loses a day's pay for (BR-5). Nothing is sent to anybody by this act."
+      },
+      "operations": [
+        {
+          "name": "calendar.weeklyoff.set",
+          "method": "PUT",
+          "path": "/api/v1/calendar/weekly-off",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "month + branch_id, since a month carries one weekly pattern",
+          "purpose": "Set the weekly off-day pattern for a month and apply it across every matching date.",
+          "parameters": [
+            {
+              "name": "month",
+              "source": "request",
+              "sourceRef": "$request.month",
+              "required": true,
+              "type": "monthYear",
+              "notes": "The month being set. Within the open academic session (E3)."
+            },
+            {
+              "name": "weekly_off_days",
+              "source": "request",
+              "sourceRef": "$request.weekly_off_days",
+              "required": true,
+              "type": "enum[]: Monday | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday",
+              "notes": "The days of the week the school is normally closed. Only where the request names them — a pattern a planner assumed closes the school on days nobody agreed."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The pattern as applied.",
+            "fields": [
+              {
+                "name": "month",
+                "type": "string",
+                "description": "The month set."
+              },
+              {
+                "name": "weekly_off_days",
+                "type": "string[]",
+                "description": "The pattern."
+              },
+              {
+                "name": "dates_closed",
+                "type": "integer",
+                "description": "How many dates in the month it closes."
+              },
+              {
+                "name": "attendance_already_marked",
+                "type": "object[]",
+                "description": "Dates now closed on which attendance was already marked. Flagged rather than silently discarded — somebody decides what to do with them (BR-10)."
+              },
+              {
+                "name": "previous_pattern",
+                "type": "string[]",
+                "description": "What it was, where a pattern already existed."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "OUTSIDE_SESSION",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The month falls outside the current academic session.",
+              "written": "Nothing.",
+              "notWritten": "Nothing set."
+            },
+            {
+              "code": "ACCOUNTS_CANNOT_CHANGE",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to change the calendar.",
+              "written": "Nothing.",
+              "notWritten": "Nothing set.",
+              "note": "The role that calculates pay must not be the role that decides which days are paid (BR-7)."
+            },
+            {
+              "code": "ATTENDANCE_ALREADY_MARKED",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "Attendance was already marked on a date the pattern now closes.",
+              "written": "The pattern is applied.",
+              "notWritten": "The existing marks are flagged, not discarded.",
+              "treatedAsSuccess": true,
+              "note": "Somebody decides what to do with them (BR-10). Report the dates and the classes."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never assume the pattern. Which days a school closes varies, and a pattern a planner supplied closes the school on days nobody agreed — attendance and payroll both read it (BR-1).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the dates where attendance was already marked. They are flagged rather than silently discarded (BR-10), and somebody has to decide what happens to marks on a day that is now closed.",
+          "derivedFrom": [
+            "BR-10",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never set a pattern to make an attendance problem go away. Closing a day retrospectively is how a class that was never marked stops looking unmarked, and BR-10 exists because that is exactly the case worth surfacing.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never supply a reason for a weekly off. The pattern is the explanation (BR-4), and a reason attached to it is noise on every date it closes.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A pattern is replaced by setting it again, and individual dates are removed through calendar.day.remove with a reason (BR-9). Nothing here deletes a month's calendar. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "October ke liye itwar ki chhutti set kar do",
+            "lang": "ur-Latn",
+            "gloss": "set Sunday as the weekly off for October"
+          },
+          "context": "School Admin, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.weeklyoff.set",
+              "inputs": {
+                "month": "2026-10",
+                "weekly_off_days": "[\"Sunday\"]",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The pattern comes from the request, not from what the school did last month (PR-1)."
+            }
+          ],
+          "outcome": "Four Sundays closed in October. Attendance cannot be marked on them and payroll excludes them (BR-3, BR-5). Nothing is sent to families — the broadcast is a separate act."
+        },
+        {
+          "request": {
+            "text": "hafte aur itwar dono band rakhne hain",
+            "lang": "ur-Latn",
+            "gloss": "we want both Saturday and Sunday closed"
+          },
+          "context": "School Admin, Johar Town branch, on a month where attendance was already marked on two Saturdays.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.weeklyoff.set",
+              "inputs": {
+                "month": "$request.month",
+                "weekly_off_days": "[\"Saturday\", \"Sunday\"]",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              }
+            }
+          ],
+          "outcome": "The pattern applies, and attendance_already_marked comes back naming the two Saturdays and the classes marked on them. Report them (PR-2) — those marks are flagged and somebody has to decide what happens to them."
+        },
+        {
+          "request": {
+            "text": "weekly off laga do",
+            "lang": "ur-Latn",
+            "gloss": "set the weekly off"
+          },
+          "context": "School Admin, Johar Town branch, with no days named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.weeklyoff.set",
+              "inputs": {
+                "month": "$request.month",
+                "weekly_off_days": "$request.weekly_off_days — absent",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "No plan is emitted: the days are required and assuming Sunday would close the school on a planner's guess (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is set. Ask which days the school is normally closed."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-04-PC-2",
+      "intent": {
+        "name": "calendar.day.add",
+        "summary": "Mark a specific date as a holiday or a closure, for the whole school or part of it. One step.",
+        "routesHere": [
+          "mark 9 November as a public holiday",
+          {
+            "text": "9 November ko chhutti laga do — Iqbal Day",
+            "lang": "ur-Latn",
+            "gloss": "mark 9 November as a holiday — Iqbal Day"
+          },
+          {
+            "text": "kal barish ki wajah se school band hai",
+            "lang": "ur-Latn",
+            "gloss": "the school is closed tomorrow because of rain"
+          },
+          {
+            "text": "staff training day hai, bachon ki chhutti hai",
+            "lang": "ur-Latn",
+            "gloss": "it is a staff training day, a holiday for the students"
+          },
+          "close the school for the examination day, classes only"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "hafte ki chhutti set karo",
+              "lang": "ur-Latn",
+              "gloss": "set the weekly off"
+            },
+            "goesTo": "calendar.weeklyoff.set — UC-05-04-PC-1",
+            "note": "A recurring day is a pattern, not a date at a time (BR-2)."
+          },
+          {
+            "request": {
+              "text": "ye chhutti hata do",
+              "lang": "ur-Latn",
+              "gloss": "remove this holiday"
+            },
+            "goesTo": "calendar.day.remove — UC-05-04-PC-3"
+          },
+          {
+            "request": {
+              "text": "walidain ko bata do",
+              "lang": "ur-Latn",
+              "gloss": "tell the families"
+            },
+            "goesTo": "calendar.broadcast.send — UC-05-04-PC-4",
+            "note": "Setting a day sends nothing."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "calendar.day.add",
+            "inputs": {
+              "date": "$request.date",
+              "day_type": "$request.day_type",
+              "reason": "$request.reason",
+              "applies_to": "$request.applies_to",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. A holiday or a closure carries a reason (BR-4, E1), and an unplanned closure may be added on the day itself — a school closed for weather does not wait for a calendar cycle (BR-12)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing reason, a date already carrying a closure, and a date outside the academic session are all enforced by the API and arrive as errors. Attendance already marked on the date is flagged rather than discarded.",
+        "atomicity": "One write: the day, its reason and what it applies to, together with the audit entry or not at all. From here attendance cannot be marked on it (BR-3) and payroll excludes it (BR-5). Where the day closes only part of the school, only that part is affected — a staff training day is not a holiday for staff, and an examination day may close classes without closing the school (BR-6). Nothing is sent to families by this act."
+      },
+      "operations": [
+        {
+          "name": "calendar.day.add",
+          "method": "POST",
+          "path": "/api/v1/calendar/days",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "date + branch_id, since a date carries one closure and a repeat returns ALREADY_CLOSED",
+          "purpose": "Mark a date as a holiday or closure, for the whole school or a named part of it.",
+          "parameters": [
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": true,
+              "type": "date",
+              "notes": "The date being closed. Within the academic session (E3). An unplanned closure may be the day itself (BR-12)."
+            },
+            {
+              "name": "day_type",
+              "source": "request",
+              "sourceRef": "$request.day_type",
+              "required": true,
+              "type": "enum: Weekly off | Public holiday | School holiday | Unplanned closure",
+              "notes": "What kind of day it is. Read from what the actor stated — a public holiday and an unplanned closure are different facts about why the school was shut."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters. Required for anything other than a weekly off (BR-4, E1). The actor's own words."
+            },
+            {
+              "name": "applies_to",
+              "source": "request",
+              "sourceRef": "$request.applies_to",
+              "required": true,
+              "type": "enum: Whole school | Students only | Staff only | Selected classes",
+              "notes": "Whether the day closes the whole school or only part of it (BR-6). Never widened — a staff training day closed as Whole school gives staff a holiday nobody granted."
+            },
+            {
+              "name": "class_ids",
+              "source": "resolved",
+              "sourceRef": "$request.classes_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.classes_phrase",
+                "onNoMatch": "Refuse. No such class this session.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where applies_to is Selected classes."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The day as set.",
+            "fields": [
+              {
+                "name": "calendar_day_id",
+                "type": "string",
+                "description": "The day."
+              },
+              {
+                "name": "date",
+                "type": "date",
+                "description": "DD-MM-YYYY."
+              },
+              {
+                "name": "day_type",
+                "type": "string",
+                "description": "What kind of closure."
+              },
+              {
+                "name": "applies_to",
+                "type": "string",
+                "description": "Who it closes for (BR-6)."
+              },
+              {
+                "name": "attendance_already_marked",
+                "type": "object[]",
+                "description": "Classes marked on this date, flagged rather than discarded (BR-10, E5)."
+              },
+              {
+                "name": "payroll_effect",
+                "type": "string",
+                "description": "The day is excluded from payroll, so nobody loses a day's pay (BR-5)."
+              },
+              {
+                "name": "broadcast_sent",
+                "type": "boolean",
+                "description": "Always false. Telling families is a separate act."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A holiday was added with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing set.",
+              "note": "Message: \"Give a reason for closing the school on this date.\" Ask; never compose one."
+            },
+            {
+              "code": "ALREADY_CLOSED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The date already carries a closure.",
+              "written": "Nothing.",
+              "notWritten": "No second closure.",
+              "note": "The message names what it is already marked as."
+            },
+            {
+              "code": "OUTSIDE_SESSION",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The date falls outside the current academic session.",
+              "written": "Nothing.",
+              "notWritten": "Nothing set."
+            },
+            {
+              "code": "ATTENDANCE_ALREADY_MARKED",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "Attendance was already marked on this date.",
+              "written": "The day is set.",
+              "notWritten": "The existing marks are flagged, not discarded.",
+              "treatedAsSuccess": true,
+              "note": "The message names the classes. Somebody decides what to do with them (BR-10)."
+            },
+            {
+              "code": "ACCOUNTS_CANNOT_CHANGE",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to change the calendar.",
+              "written": "Nothing.",
+              "notWritten": "Nothing set."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. A holiday or a closure carries one because the pattern does not explain it (BR-4), and families are told it.",
+          "derivedFrom": [
+            "BR-4",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never widen applies_to. A staff training day is not a holiday for staff, and an examination day may close classes without closing the school (BR-6) — Whole school chosen because the request was vague gives somebody a day off nobody granted.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the classes where attendance was already marked. They are flagged rather than discarded (BR-10), and marks on a day the school is now closed are a question for a person.",
+          "derivedFrom": [
+            "BR-10",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never close a day to resolve an attendance problem. An unmarked class on a working day is a class nobody accounted for (UC-05-01 BR-11), and closing the day retrospectively hides that rather than answering it.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain the broadcast. Setting a day sends nothing, and who is told is a separate decision with its own message.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "calendar.day.remove",
+        "statement": "calendar.day.remove takes it off, with a reason — governments move holidays and the calendar has to be able to follow (BR-9). It is a deliberate act somebody takes, never a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "9 November ko chhutti laga do — Iqbal Day, poora school band",
+            "lang": "ur-Latn",
+            "gloss": "mark 9 November as a holiday — Iqbal Day, the whole school closed"
+          },
+          "context": "School Admin, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.day.add",
+              "inputs": {
+                "date": "2026-11-09",
+                "day_type": "Public holiday",
+                "reason": "Iqbal Day.",
+                "applies_to": "Whole school",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              }
+            }
+          ],
+          "outcome": "9 November is closed for everybody. Attendance cannot be marked on it and payroll excludes it. Nothing has been sent to families — the broadcast is a separate act (PR-5)."
+        },
+        {
+          "request": {
+            "text": "staff training day hai — bachon ki chhutti hai, staff aayega",
+            "lang": "ur-Latn",
+            "gloss": "it is a staff training day — a holiday for the children, staff come in"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.day.add",
+              "inputs": {
+                "date": "$request.date",
+                "day_type": "School holiday",
+                "reason": "Staff training day; students do not attend.",
+                "applies_to": "Students only",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Students only, because that is what the request said. Whole school would have given staff a day off nobody granted (PR-2)."
+            }
+          ],
+          "outcome": "The day closes for students and not for staff. Student attendance cannot be marked; staff attendance is marked as normal."
+        },
+        {
+          "request": {
+            "text": "aaj barish ki wajah se school band kar rahe hain",
+            "lang": "ur-Latn",
+            "gloss": "we are closing the school today because of rain"
+          },
+          "context": "School Admin, Johar Town branch, where three classes have already marked attendance this morning.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.day.add",
+              "inputs": {
+                "date": "2026-09-08",
+                "day_type": "Unplanned closure",
+                "reason": "Heavy rain; the school closed at short notice.",
+                "applies_to": "Whole school",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "An unplanned closure may be added on the day itself (BR-12)."
+            }
+          ],
+          "outcome": "The day is closed and attendance_already_marked names the three classes. Report them (PR-3) — their marks are flagged, not discarded, and somebody has to decide whether a morning that happened counts."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-04-PC-3",
+      "intent": {
+        "name": "calendar.day.remove",
+        "summary": "Take a day off the calendar, with the reason. One step, and the day becomes a working day again.",
+        "routesHere": [
+          "remove 9 November, the government moved the holiday",
+          {
+            "text": "ye chhutti hata do, hukumat ne tareekh badal di hai",
+            "lang": "ur-Latn",
+            "gloss": "remove this holiday, the government has moved the date"
+          },
+          {
+            "text": "ye din galti se chhutti laga tha",
+            "lang": "ur-Latn",
+            "gloss": "this day was marked as a holiday by mistake"
+          },
+          {
+            "text": "school khul raha hai us din",
+            "lang": "ur-Latn",
+            "gloss": "the school is opening that day after all"
+          },
+          "take the closure off 14 October"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti laga do",
+              "lang": "ur-Latn",
+              "gloss": "add a holiday"
+            },
+            "goesTo": "calendar.day.add — UC-05-04-PC-2"
+          },
+          {
+            "request": {
+              "text": "walidain ko bata do ke school khula hai",
+              "lang": "ur-Latn",
+              "gloss": "tell families the school is open"
+            },
+            "goesTo": "calendar.broadcast.send — UC-05-04-PC-4",
+            "note": "Removing a day sends nothing. Families told about a holiday that has moved need telling again."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "calendar.day.remove",
+            "inputs": {
+              "calendar_day_id": "$request.day_phrase",
+              "removal_reason": "$request.removal_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A day already set may be removed with a reason — governments move holidays and the calendar has to be able to follow (BR-9, E4)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the removal, the reason and the audit entry together or not at all. The date becomes a working day again, so attendance can be marked on it and payroll counts it. Families already told it was a holiday are **not** told automatically that it is not — report that."
+      },
+      "operations": [
+        {
+          "name": "calendar.day.remove",
+          "method": "POST",
+          "path": "/api/v1/calendar/days/{calendar_day_id}/remove",
+          "kind": "deactivate",
+          "idempotent": true,
+          "idempotencyKey": "calendar_day_id, since a day is removed once and Removed is terminal",
+          "purpose": "Remove a day from the calendar, making it a working day again.",
+          "parameters": [
+            {
+              "name": "calendar_day_id",
+              "source": "resolved",
+              "sourceRef": "$request.day_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "calendar_day",
+                "fromPhrase": "$request.day_phrase",
+                "onNoMatch": "Refuse. No calendar day matches that date.",
+                "onAmbiguous": "Ask, naming the candidates with date, type, reason and what it applies to."
+              },
+              "notes": "The calendar day, resolved from the date and what it was set as."
+            },
+            {
+              "name": "removal_reason",
+              "source": "request",
+              "sourceRef": "$request.removal_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters. Required (BR-9, E4). The actor's own words — a holiday that appeared and vanished is something families will ask about."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The day as removed.",
+            "fields": [
+              {
+                "name": "calendar_day_id",
+                "type": "string",
+                "description": "The day."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Removed. Terminal."
+              },
+              {
+                "name": "date",
+                "type": "date",
+                "description": "Now a working day again."
+              },
+              {
+                "name": "removal_reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "was_broadcast",
+                "type": "boolean",
+                "description": "True where families were told it was a holiday. Nothing tells them it is not — worth reporting."
+              },
+              {
+                "name": "payroll_effect",
+                "type": "string",
+                "description": "The day now counts again (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REMOVAL_REASON_REQUIRED",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "A day was removed with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not removed.",
+              "note": "Message: \"Give a reason for removing this day.\" Ask; never compose one."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the removal reason. A holiday that appeared and then vanished is something families and staff will ask about (BR-9).",
+          "derivedFrom": [
+            "BR-9",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report where the day had already been broadcast. Families were told the school was closed and nothing tells them otherwise — somebody has to send a second message, and it will not happen by itself.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never remove a day to make attendance markable. A day the school was actually shut is not a day anybody was absent (BR-3), and reopening it retrospectively creates absences that never happened.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "calendar.day.add",
+        "statement": "calendar.day.add sets it again, with its own reason. Governments move holidays in both directions, and the calendar follows (BR-9). Both the setting and the removal stay on the record."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "9 November wali chhutti hata do — hukumat ne 10 tareekh kar di hai",
+            "lang": "ur-Latn",
+            "gloss": "remove the 9 November holiday — the government has moved it to the 10th"
+          },
+          "context": "School Admin, Johar Town branch, on a day already broadcast to families.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.day.remove",
+              "inputs": {
+                "calendar_day_id": "$request.day_phrase → \"9 November, Iqbal Day\"",
+                "removal_reason": "The government notification moved the holiday to 10 November.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "9 November is a working day again. was_broadcast comes back true — report that families were told it was a holiday and nothing tells them otherwise (PR-2). Adding the 10th and broadcasting both are the next acts."
+        },
+        {
+          "request": {
+            "text": "ye din galti se laga tha, hata do",
+            "lang": "ur-Latn",
+            "gloss": "this day was set by mistake, remove it"
+          },
+          "context": "School Admin, Johar Town branch, on a day never broadcast.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.day.remove",
+              "inputs": {
+                "calendar_day_id": "$request.day_phrase",
+                "removal_reason": "Set in error; the school is open that day.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The day is a working day again and nobody was ever told otherwise. Attendance can be marked on it and payroll counts it."
+        },
+        {
+          "request": {
+            "text": "us din ki hazri lagani hai, chhutti hata do",
+            "lang": "ur-Latn",
+            "gloss": "we need to mark attendance that day, remove the holiday"
+          },
+          "context": "School Admin, Johar Town branch, on a day the school was genuinely shut.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.day.remove",
+              "inputs": {
+                "calendar_day_id": "$request.day_phrase",
+                "removal_reason": "$request.removal_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan would be valid, but PR-3 says not to emit it for this reason."
+            }
+          ],
+          "outcome": "Report that the school was closed that day, so nobody was absent — reopening it retrospectively would create absences that never happened, and every child would need marking."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-04-PC-4",
+      "intent": {
+        "name": "calendar.broadcast.send",
+        "summary": "Tell families and staff about the calendar — a holiday, a closure, or the month ahead. One step.",
+        "routesHere": [
+          "broadcast the November holidays to all parents",
+          {
+            "text": "walidain ko chhutti ki ittila bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the parents notice of the holiday"
+          },
+          {
+            "text": "kal school band hai, sab ko bata do",
+            "lang": "ur-Latn",
+            "gloss": "the school is closed tomorrow, tell everybody"
+          },
+          {
+            "text": "agle mahine ka calendar broadcast kar do",
+            "lang": "ur-Latn",
+            "gloss": "broadcast next month's calendar"
+          },
+          "message staff about the training day"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti laga do",
+              "lang": "ur-Latn",
+              "gloss": "set the holiday"
+            },
+            "goesTo": "calendar.day.add — UC-05-04-PC-2",
+            "note": "The day is set first; telling people is a separate act."
+          },
+          {
+            "request": {
+              "text": "hazri ka message bhejo",
+              "lang": "ur-Latn",
+              "gloss": "send an attendance message"
+            },
+            "goesTo": "attendance.alert.send — UC-05-09",
+            "note": "Absence alerts are a different route with a different template."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "calendar.broadcast.send",
+            "inputs": {
+              "month": "$request.month",
+              "audience": "$request.audience",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, whether it covers one day or the month. Every send is logged with its delivery status, and nothing is reported as delivered that the provider did not confirm (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing messaging balance does not undo the calendar — the days stay set and the broadcast does not go (E6), which is an outcome to report.",
+        "atomicity": "One write per recipient, and the batch does not stop at the first failure. The calendar itself is unchanged by this — the days were already set, and this only tells people about them. Delivery status starts at Queued and is never reported optimistically (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "calendar.broadcast.send",
+          "method": "POST",
+          "path": "/api/v1/calendar/broadcasts",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "month or calendar_day_id + audience + the send timestamp, so a repeat does not message every family twice",
+          "purpose": "Send notice of the calendar to families, staff or both, and log every send.",
+          "parameters": [
+            {
+              "name": "month",
+              "source": "request",
+              "sourceRef": "$request.month",
+              "required": false,
+              "type": "monthYear",
+              "notes": "The month being announced, where the broadcast covers a month."
+            },
+            {
+              "name": "calendar_day_id",
+              "source": "resolved",
+              "sourceRef": "$request.day_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "calendar_day",
+                "fromPhrase": "$request.day_phrase",
+                "onNoMatch": "Refuse. No calendar day matches.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "One day, where the broadcast covers a single closure."
+            },
+            {
+              "name": "audience",
+              "source": "request",
+              "sourceRef": "$request.audience",
+              "required": true,
+              "type": "enum: Whole school | Students only | Staff only | Selected classes",
+              "notes": "Who is told. Matches the scope of what is being announced — a staff training day is announced to staff, not to families (BR-6)."
+            },
+            {
+              "name": "class_ids",
+              "source": "resolved",
+              "sourceRef": "$request.classes_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.classes_phrase",
+                "onNoMatch": "Refuse. No such class this session.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the audience is Selected classes."
+            },
+            {
+              "name": "message",
+              "source": "request",
+              "sourceRef": "$request.message",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 1000 characters, or a saved template. The actor's own words where they compose one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "A per-recipient result.",
+            "fields": [
+              {
+                "name": "recipient_count",
+                "type": "integer",
+                "description": "How many were messaged."
+              },
+              {
+                "name": "sent",
+                "type": "object[]",
+                "description": "recipient and delivery_status. Queued until the provider says otherwise (BR-8)."
+              },
+              {
+                "name": "failed",
+                "type": "object[]",
+                "description": "recipient and reason. Listed rather than silently dropped."
+              },
+              {
+                "name": "days_announced",
+                "type": "object[]",
+                "description": "Which closures the broadcast covered."
+              },
+              {
+                "name": "calendar_unchanged",
+                "type": "boolean",
+                "description": "Always true. This tells people; it does not set anything."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_BALANCE",
+              "mapsTo": "E6",
+              "httpStatus": 200,
+              "meaning": "There is no messaging balance for the channel.",
+              "written": "Nothing sent. The calendar is unchanged and the days stay set.",
+              "notWritten": "No message.",
+              "treatedAsSuccess": true,
+              "note": "Message: \"The calendar is saved. There is no messaging balance.\" Report both halves — the days are set and nobody has been told."
+            },
+            {
+              "code": "SOME_FAILED",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "Some broadcast messages failed.",
+              "written": "The successful sends.",
+              "notWritten": "The failed recipients.",
+              "treatedAsSuccess": true,
+              "note": "Listed with their reasons. Nothing is reported as delivered that the provider did not confirm (BR-8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report who the audience resolves to and how many before the plan is emitted. A calendar broadcast reaches every family in the school, and a message cannot be unsent.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Match the audience to what is being announced. A staff training day is announced to staff; a student holiday to families (BR-6) — announcing a partial closure to everybody tells half the school it has a day off.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report sends as queued, never as delivered. Nothing is reported as delivered that the provider did not confirm (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report a missing balance as both halves. The calendar is saved and nobody has been told (E6) — the days are in force either way, and families turning up to a closed school is the consequence.",
+          "derivedFrom": [
+            "BR-8",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain a calendar change onto a broadcast, or the reverse. Setting a day and announcing it are separate acts, and a day announced but not set closes nothing.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A broadcast cannot be unsent. Where the calendar changes afterwards, families need telling again — which is another broadcast, and nothing sends it automatically."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "9 November ki chhutti ki ittila sab walidain ko bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send all the parents notice of the 9 November holiday"
+          },
+          "context": "School Admin, Johar Town branch. 1,284 families.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.broadcast.send",
+              "inputs": {
+                "calendar_day_id": "$request.day_phrase → \"9 November, Iqbal Day\"",
+                "audience": "Whole school",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The count is reported before the plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "1,278 queued and 6 listed as failed with their reasons (E8). Report them as queued, not delivered (PR-3). The calendar itself is unchanged — this only told people."
+        },
+        {
+          "request": {
+            "text": "staff ko training day ki ittila do",
+            "lang": "ur-Latn",
+            "gloss": "tell the staff about the training day"
+          },
+          "context": "School Admin, Johar Town branch, on a day set as Students only.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.broadcast.send",
+              "inputs": {
+                "calendar_day_id": "$request.day_phrase",
+                "audience": "Staff only",
+                "message": "$request.message",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Staff only, matching what the day actually closes for. Announcing it to families would tell them their children have a day off — which is true — and staff nothing (PR-2)."
+            }
+          ],
+          "outcome": "Staff are told. Report that families have not been — the day closes for students, so they need telling too, as a separate send with its own audience."
+        },
+        {
+          "request": {
+            "text": "agle mahine ka calendar bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send next month's calendar"
+          },
+          "context": "School Admin, Johar Town branch, with no messaging balance.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "calendar.broadcast.send",
+              "inputs": {
+                "month": "2026-11",
+                "audience": "Whole school",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NO_BALANCE (E6) on the success path."
+            }
+          ],
+          "outcome": "Nothing is sent. Report both halves: November's calendar is set and in force, and no family has been told (PR-4). Families turning up to a closed school is what happens if nobody notices."
+        }
+      ]
+    }
+  ]
+}

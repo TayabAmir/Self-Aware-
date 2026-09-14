@@ -1,0 +1,967 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-06-15",
+    "name": "Record that a student did not sit a paper, and set what that absence does to their result",
+    "module": "Examination",
+    "file": "../UseCases/UC-06-15.json",
+    "featureRef": "6.15 Recording a student absent from an exam"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-06-15-PC-1",
+      "intent": {
+        "name": "exam.paper.attendance.mark",
+        "summary": "Mark who sat a paper and who did not. One step, and absent is a state, never a score of zero.",
+        "routesHere": [
+          "mark the attendance for the maths paper — three absent",
+          {
+            "text": "maths ke paper ki hazri laga do",
+            "lang": "ur-Latn",
+            "gloss": "mark the attendance for the maths paper"
+          },
+          {
+            "text": "teen bache paper mein nahi aaye",
+            "lang": "ur-Latn",
+            "gloss": "three students did not come for the paper"
+          },
+          {
+            "text": "hall ki hazri darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "record the hall attendance"
+          },
+          "mark this student absent from the physics paper"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ghair haazir bache ke sifar laga do",
+              "lang": "ur-Latn",
+              "gloss": "put a zero for the absent student"
+            },
+            "goesTo": "Not offered.",
+            "note": "Absent is a state on the mark, not a score of zero. A zero says they sat the paper and answered nothing (BR-3)."
+          },
+          {
+            "request": {
+              "text": "ghair haaziri ki wajah tay karo",
+              "lang": "ur-Latn",
+              "gloss": "decide the reason for the absence"
+            },
+            "goesTo": "exam.absence.classify — UC-06-15-PC-2",
+            "note": "The Coordinator classifies the absence as excused or unexcused, and an Invigilator cannot (BR-5, E5)."
+          },
+          {
+            "request": {
+              "text": "online paper ki hazri lagao",
+              "lang": "ur-Latn",
+              "gloss": "mark attendance for the online paper"
+            },
+            "goesTo": "Not offered.",
+            "note": "For an online exam a student whose attempt was never started is recorded absent automatically. There is nobody in a hall to observe it (BR-2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.paper.attendance.mark",
+            "inputs": {
+              "paper_id": "$request.paper_phrase",
+              "attendance": "$request.attendance",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every student entered for the paper is marked present or absent — a student unaccounted for is not the same as a student who did not come (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report. A student left unmarked, and attendance for a paper not yet sat, arrive as errors.",
+        "atomicity": "One write: the attendance and the audit entry together or not at all. An absent student's marks field is closed and no grace can be awarded to them (BR-3, BR-4). The guardian is told their child missed the paper (BR-10) — a family learning only at the report card that a paper was missed has been failed. The absence does nothing to the result until the Coordinator classifies it (BR-6, BR-12)."
+      },
+      "operations": [
+        {
+          "name": "exam.paper.attendance.mark",
+          "method": "POST",
+          "path": "/api/v1/papers/{paper_id}/attendance",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "paper_id + student_id, since a student is marked once per paper",
+          "purpose": "Mark every student entered for the paper present or absent.",
+          "parameters": [
+            {
+              "name": "paper_id",
+              "source": "resolved",
+              "sourceRef": "$request.paper_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "paper_schedule",
+                "fromPhrase": "$request.paper_phrase",
+                "onNoMatch": "Refuse. No scheduled paper matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their exam, subject, class and date."
+              },
+              "notes": "A scheduled paper of a published exam, already sat (E7)."
+            },
+            {
+              "name": "attendance",
+              "source": "request",
+              "sourceRef": "$request.attendance",
+              "required": true,
+              "type": "object[]",
+              "notes": "Per student: Present or Absent, and optionally a note of up to 250 characters on what the invigilator observed. Every student on the list carries one (BR-1, E1). The invigilator's own observation — a planner that filled in Present for the unnamed rest has said a child sat a paper."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The attendance as marked.",
+            "fields": [
+              {
+                "name": "paper_id",
+                "type": "string",
+                "description": "The paper."
+              },
+              {
+                "name": "present",
+                "type": "integer",
+                "description": "Students marked present."
+              },
+              {
+                "name": "absent",
+                "type": "integer",
+                "description": "Students marked absent. Their marks fields are now closed (BR-3)."
+              },
+              {
+                "name": "unmarked",
+                "type": "integer",
+                "description": "Students on the list still carrying neither. The attendance is not saved while any remains (E1)."
+              },
+              {
+                "name": "absences_recorded",
+                "type": "object[]",
+                "description": "Each absence, awaiting classification by the Coordinator (BR-12)."
+              },
+              {
+                "name": "approved_leave_found",
+                "type": "object[]",
+                "description": "Absent students holding approved leave covering the paper date. Shown to the Coordinator so an absence the school already sanctioned is not classified unexcused by mistake (BR-5)."
+              },
+              {
+                "name": "guardians_notified",
+                "type": "integer",
+                "description": "Families told their child missed the paper (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "STUDENT_UNMARKED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A student on the list was left unmarked.",
+              "written": "Nothing.",
+              "notWritten": "No attendance saved.",
+              "note": "The message names the students. A student unaccounted for is not the same as a student who did not come (BR-1)."
+            },
+            {
+              "code": "PAPER_NOT_SAT",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The paper has not yet been sat.",
+              "written": "Nothing.",
+              "notWritten": "No attendance saved."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never mark a student present who was not named. It says a child sat a paper, and it closes the question of why a missing script is missing.",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never record a zero instead of an absence. A zero says they sat the paper and answered nothing (BR-3), and an illness recorded as a failure is exactly what this use case exists to prevent.",
+          "derivedFrom": [
+            "BR-3",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never classify the absence in the same breath. The Coordinator decides whether it is excused, and that decision changes the result (BR-5, BR-6, E5).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-6",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the students holding approved leave for that date. It is shown so an absence the school already sanctioned is not classified as unexcused by mistake (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say plainly that the family is told. The guardian learns their child missed the paper as soon as this is saved (BR-10), which the invigilator marking a register may not expect.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never mark online-exam attendance. A student whose attempt was never started is recorded absent automatically, because there is nobody in a hall to observe it (BR-2).",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "exam.paper.attendance.correct",
+        "statement": "Correcting the attendance where the hall record was wrong, with the original kept. A student wrongly marked absent must not have to appeal a grade to fix a clerical error (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "maths ke paper ki hazri laga do — teen bache nahi aaye",
+            "lang": "ur-Latn",
+            "gloss": "mark the maths paper's attendance — three students did not come"
+          },
+          "context": "Invigilator, Johar Town branch, on a paper sat this morning, the three named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.attendance.mark",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "attendance": "the three named absent, the rest present as the invigilator confirmed",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The rest are marked present because the invigilator said so, not because three were named (PR-1)."
+            }
+          ],
+          "outcome": "Recorded. Report that the three families are told now (PR-5), that any of the three holding approved leave is flagged for the Coordinator (PR-4), and that nothing happens to their results until the absence is classified (PR-3)."
+        },
+        {
+          "request": {
+            "text": "jo bache paper mein nahi the un ke sifar laga do",
+            "lang": "ur-Latn",
+            "gloss": "put zeros for the students who were not there for the paper"
+          },
+          "context": "Invigilator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.attendance.mark",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "attendance": "the named students marked Absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Absence is recorded rather than a zero (PR-2)."
+            }
+          ],
+          "outcome": "Recorded as absences. Report that a zero would say they sat the paper and answered nothing — the classification decides what the absence does, and an excused one is left out of the percentage rather than counted against them."
+        },
+        {
+          "request": {
+            "text": "hazri laga do aur ghair haaziri ko excused kar do",
+            "lang": "ur-Latn",
+            "gloss": "mark the attendance and set the absences as excused"
+          },
+          "context": "Invigilator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.attendance.mark",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "attendance": "$request.attendance",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The attendance only. Classification is the Coordinator's (PR-3)."
+            }
+          ],
+          "outcome": "Attendance recorded. Report that the Coordinator classifies each absence with a reason — and that any approved leave covering the date is shown to them, so a sanctioned absence is not marked unexcused by mistake."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-15-PC-2",
+      "intent": {
+        "name": "exam.absence.classify",
+        "summary": "Classify an exam absence as excused or unexcused, with the reason, which decides what it does to the result. Coordinator only, one step.",
+        "routesHere": [
+          "classify this absence as excused — the student was on approved leave",
+          {
+            "text": "ghair haaziri ko excused kar do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "classify the absence as excused, with the reason"
+          },
+          {
+            "text": "bacha bemar tha, excused karo",
+            "lang": "ur-Latn",
+            "gloss": "the child was ill, mark it excused"
+          },
+          {
+            "text": "koi wajah nahi thi, unexcused karo",
+            "lang": "ur-Latn",
+            "gloss": "there was no reason, mark it unexcused"
+          },
+          "classify it and allow a makeup"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "natija mukammal karo",
+              "lang": "ur-Latn",
+              "gloss": "finalise the result"
+            },
+            "goesTo": "exam.results.approve — UC-06-03",
+            "note": "An absence with no classification blocks the result from being finalised. An unclassified absence is a decision nobody has taken (BR-12, E6)."
+          },
+          {
+            "request": {
+              "text": "makeup ka intezam kar do",
+              "lang": "ur-Latn",
+              "gloss": "arrange the makeup"
+            },
+            "goesTo": "exam.makeup.request — UC-06-16",
+            "note": "The classification records whether a makeup is allowed. Arranging and sitting it is a separate act (BR-9)."
+          },
+          {
+            "request": {
+              "text": "natije mein is ka asar khud tay karo",
+              "lang": "ur-Latn",
+              "gloss": "set what it does to the result separately"
+            },
+            "goesTo": "Not offered.",
+            "note": "The result treatment is derived from the classification, never chosen separately (BR-6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.absence.classify",
+            "inputs": {
+              "absence_id": "$request.absence_phrase",
+              "classification": "$request.classification",
+              "reason": "$request.reason",
+              "makeup_allowed": "$request.makeup_allowed",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it decides the result. An excused absence leaves that subject out of the overall percentage and marks the result incomplete until a makeup is taken; an unexcused one counts as zero (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. A classification with no reason, and an attempt by an Invigilator, arrive as errors.",
+        "atomicity": "One write: the classification, its reason, the result treatment it implies and the message to the guardian together or not at all. Either classification leaves the student out of that exam's merit list until every subject carries a final mark (BR-8). The family is told the classification once it is set (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "exam.absence.classify",
+          "method": "POST",
+          "path": "/api/v1/exam-absences/{absence_id}/classify",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "absence_id, since an absence carries one classification at a time",
+          "purpose": "Classify an exam absence as excused or unexcused, with the reason.",
+          "parameters": [
+            {
+              "name": "absence_id",
+              "source": "resolved",
+              "sourceRef": "$request.absence_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_absence",
+                "fromPhrase": "$request.absence_phrase",
+                "onNoMatch": "Refuse. No unclassified absence matches for that student and paper.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the paper, the date and any approved leave."
+              },
+              "notes": "The recorded absence, from the student and the paper."
+            },
+            {
+              "name": "classification",
+              "source": "request",
+              "sourceRef": "$request.classification",
+              "required": true,
+              "type": "enum: Excused | Unexcused",
+              "notes": "What the absence was (BR-5). It decides the result (BR-6) — an excused absence is left out of the percentage, an unexcused one counts as zero — so it is never assumed from approved leave or from anything else."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters. Required (E4). Why the absence is excused or not, which is what the family is told (BR-10)."
+            },
+            {
+              "name": "makeup_allowed",
+              "source": "request",
+              "sourceRef": "$request.makeup_allowed",
+              "required": false,
+              "type": "boolean",
+              "notes": "Whether a makeup is offered (BR-9). Arranging and sitting it is a separate act; this records the decision."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The classification and what it does.",
+            "fields": [
+              {
+                "name": "absence_id",
+                "type": "string",
+                "description": "The absence."
+              },
+              {
+                "name": "classification",
+                "type": "string",
+                "description": "Excused or Unexcused."
+              },
+              {
+                "name": "result_treatment",
+                "type": "string",
+                "description": "Derived, never chosen separately (BR-6): left out of the percentage with the result incomplete, or counted as zero."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given, and told to the family (BR-10)."
+              },
+              {
+                "name": "makeup_allowed",
+                "type": "boolean",
+                "description": "Whether a makeup is offered (BR-9)."
+              },
+              {
+                "name": "approved_leave",
+                "type": "object",
+                "description": "Any approved leave covering the date, shown so a sanctioned absence is not classified unexcused by mistake (BR-5)."
+              },
+              {
+                "name": "excluded_from_merit",
+                "type": "boolean",
+                "description": "True either way, until every subject carries a final mark (BR-8)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status (BR-10)."
+              },
+              {
+                "name": "makeup_flagged_for_review",
+                "type": "boolean",
+                "description": "True where the classification changed after a makeup was scheduled. It is flagged rather than silently invalidated (E8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "A classification was set with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not classified.",
+              "note": "It is what the family is told (BR-10). Ask; never compose one."
+            },
+            {
+              "code": "NOT_COORDINATOR",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "An Invigilator attempted to classify an absence.",
+              "written": "Nothing.",
+              "notWritten": "Not classified.",
+              "note": "The Coordinator classifies (BR-5)."
+            },
+            {
+              "code": "CLASSIFICATION_CHANGED_AFTER_MAKEUP",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "The classification was changed after a makeup was scheduled.",
+              "written": "The change is recorded.",
+              "notWritten": "Nothing invalidated silently.",
+              "treatedAsSuccess": true,
+              "note": "The makeup is flagged for review. Report it (E8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the classification. It decides whether a missed paper is left out of the percentage or counted as zero (BR-6) — a planner that picked excused because leave existed has made the school's decision about a child.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the approved leave rather than acting on it. It is shown so a sanctioned absence is not classified unexcused by mistake (BR-5), which is a prompt to the Coordinator and not a classification.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never compose the reason. The family is told it (BR-10), and a reason a planner wrote is the school explaining a child's missed paper in words nobody chose.",
+          "derivedFrom": [
+            "BR-10",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never set the result treatment separately. It is derived from the classification and never chosen (BR-6) — two fields that could disagree would let a paper be excused and counted as zero at once.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say plainly that the student stays out of the merit list either way, until every subject carries a final mark. A family expecting a position after an excused absence will not get one (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report where a makeup was already scheduled and the classification has changed. It is flagged for review rather than silently invalidated (E8), and somebody has to look at it.",
+          "derivedFrom": [
+            "BR-9",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A classification is set again rather than withdrawn, and the change is recorded. Where a makeup was already scheduled, it is flagged for review rather than silently invalidated (E8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is ghair haaziri ko excused kar do — bache ki manzoor shuda chhutti thi",
+            "lang": "ur-Latn",
+            "gloss": "classify this absence as excused — the child was on approved leave"
+          },
+          "context": "Coordinator, Johar Town branch, approved leave shown for the date.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.absence.classify",
+              "inputs": {
+                "absence_id": "$request.absence_phrase",
+                "classification": "Excused",
+                "reason": "The student held approved leave covering the paper date; the absence was sanctioned in advance.",
+                "makeup_allowed": "true",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The Coordinator said excused; the leave was the prompt, not the decision (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Classified. The subject is left out of the percentage and the result reads incomplete until a makeup is marked. Report that the student stays off the merit list until every subject carries a final mark (PR-5), and that the family is told the classification."
+        },
+        {
+          "request": {
+            "text": "jin bachon ki chhutti manzoor thi un sab ki ghair haaziri excused kar do",
+            "lang": "ur-Latn",
+            "gloss": "classify every absence as excused where leave was approved"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.absence.classify",
+              "inputs": {
+                "absence_id": "$request.absence_phrase — one at a time",
+                "classification": "$request.classification",
+                "reason": "$request.reason — absent",
+                "makeup_allowed": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Each absence carries its own reason, which the family is told (PR-3), and approved leave is a prompt rather than a classification (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is classified. List the absences with the leave found against each and ask the Coordinator to confirm them — a missed exam is not the same decision as a missed school day, and each family is told why."
+        },
+        {
+          "request": {
+            "text": "ghair haaziri ko excused karo lekin natije mein sifar hi gina jaye",
+            "lang": "ur-Latn",
+            "gloss": "classify it excused but still count it as zero in the result"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.absence.classify",
+              "inputs": {
+                "absence_id": "$request.absence_phrase",
+                "classification": "$request.classification",
+                "reason": "$request.reason",
+                "makeup_allowed": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted for a split of the two. The result treatment is derived from the classification and never chosen separately (PR-4)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that excused leaves the subject out of the percentage and unexcused counts it as zero — one decision, not two. If the absence should count as zero, it is unexcused, and the reason given to the family should say why."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-15-PC-3",
+      "intent": {
+        "name": "exam.paper.attendance.correct",
+        "summary": "Correct a paper attendance mark where the hall record was wrong, keeping the original. One step.",
+        "routesHere": [
+          "this student was marked absent in error — they sat the paper",
+          {
+            "text": "is bache ko ghalti se ghair haazir laga diya tha",
+            "lang": "ur-Latn",
+            "gloss": "this student was marked absent by mistake"
+          },
+          {
+            "text": "hall ka record ghalat tha, theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "the hall record was wrong, correct it"
+          },
+          {
+            "text": "bacha paper mein tha, hazri theek karo",
+            "lang": "ur-Latn",
+            "gloss": "the child was there for the paper, fix the attendance"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ghair haaziri ki wajah badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the reason for the absence"
+            },
+            "goesTo": "exam.absence.classify — UC-06-15-PC-2",
+            "note": "Correcting the mark says the child was there. Classifying says why they were not."
+          },
+          {
+            "request": {
+              "text": "number laga do",
+              "lang": "ur-Latn",
+              "gloss": "enter the mark"
+            },
+            "goesTo": "exam.mark.set — UC-06-02",
+            "note": "Correcting the attendance opens the marks field. Entering the score is the teacher's separate act."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.paper.attendance.correct",
+            "inputs": {
+              "paper_id": "$request.paper_phrase",
+              "student_id": "$request.student_phrase",
+              "attendance": "$request.attendance",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A student wrongly marked absent must not have to appeal a grade to fix a clerical error (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the corrected mark, the original kept beside it, and the audit entry together or not at all (BR-11). Where a student is corrected from absent to present their marks field opens and any recorded absence is withdrawn — the classification and anything derived from it go with it. Where a makeup had been scheduled on that absence, it is flagged for review rather than silently invalidated (E8)."
+      },
+      "operations": [
+        {
+          "name": "exam.paper.attendance.correct",
+          "method": "POST",
+          "path": "/api/v1/papers/{paper_id}/attendance/{student_id}/correct",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "paper_id + student_id + attendance, since a repeat must not stack correction records",
+          "purpose": "Correct one student's paper attendance, keeping the original mark.",
+          "parameters": [
+            {
+              "name": "paper_id",
+              "source": "resolved",
+              "sourceRef": "$request.paper_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "paper_schedule",
+                "fromPhrase": "$request.paper_phrase",
+                "onNoMatch": "Refuse. No scheduled paper matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their exam, subject, class and date."
+              },
+              "notes": "The paper."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student on that paper's list matches.",
+                "onAmbiguous": "Ask, naming the candidates with their roll number and current mark."
+              },
+              "notes": "The student whose mark was wrong."
+            },
+            {
+              "name": "attendance",
+              "source": "request",
+              "sourceRef": "$request.attendance",
+              "required": true,
+              "type": "enum: Present | Absent",
+              "notes": "What the record should say."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters. Why the hall record was wrong. It sits beside the original mark (BR-11)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The correction.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student."
+              },
+              {
+                "name": "previous_attendance",
+                "type": "string",
+                "description": "What the hall record said, kept (BR-11)."
+              },
+              {
+                "name": "attendance",
+                "type": "string",
+                "description": "What it says now."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "marks_field_open",
+                "type": "boolean",
+                "description": "True where the student is now present. Their score can be entered (BR-3)."
+              },
+              {
+                "name": "absence_withdrawn",
+                "type": "boolean",
+                "description": "True where a recorded absence and its classification are withdrawn with the correction."
+              },
+              {
+                "name": "makeup_flagged_for_review",
+                "type": "boolean",
+                "description": "True where a makeup had been scheduled on the withdrawn absence (E8)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Where the family had been told the child missed the paper, they are told of the correction (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SAME_VALUE",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The correction matches what the record already says.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            },
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "A correction was made with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. It sits beside the original mark for as long as the record exists (BR-11), and it is what explains a changed attendance to anybody who asks.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never correct an attendance to make a mark enterable. The correction says a child sat a paper, and that is a statement about the hall, not a route to an open marks field.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the classification withdrawn with the correction. A decision about why a child missed a paper falls away when it turns out they did not (BR-6).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report where a makeup had been scheduled. It is flagged for review rather than silently invalidated (E8), and a child may be expecting to sit a paper they no longer need.",
+          "derivedFrom": [
+            "BR-9",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that the family is told again. They were told the paper was missed (BR-10); they are owed the correction just as plainly.",
+          "derivedFrom": [
+            "BR-10",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A correction is not undone. A further change is another correction, each recorded with its own previous value and reason (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is bache ko ghalti se ghair haazir laga diya tha — wo paper mein maujood tha",
+            "lang": "ur-Latn",
+            "gloss": "this student was marked absent by mistake — they were present for the paper"
+          },
+          "context": "Coordinator, Johar Town branch, on a recorded absence with no makeup scheduled.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.attendance.correct",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "student_id": "$request.student_phrase",
+                "attendance": "Present",
+                "reason": "The hall record was wrong; the student sat the paper and their script was collected.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Coordinator's own (PR-1)."
+            }
+          ],
+          "outcome": "Corrected, with the original kept. The absence and its classification are withdrawn (PR-3) and the marks field opens — the teacher enters the score separately. The family is told (PR-5)."
+        },
+        {
+          "request": {
+            "text": "hazri theek kar do taake number laga sakein",
+            "lang": "ur-Latn",
+            "gloss": "fix the attendance so we can enter the mark"
+          },
+          "context": "Coordinator, Johar Town branch, on a student who genuinely did not sit the paper.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.attendance.correct",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "student_id": "$request.student_phrase",
+                "attendance": "Present",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The correction says a child sat a paper (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that the marks field is closed because the student did not sit it — if there is a script to mark, that is the reason for the correction and it should say so; if there is not, the absence stands and is classified instead."
+        },
+        {
+          "request": {
+            "text": "is bache ki hazri theek kar do, wo aaya tha",
+            "lang": "ur-Latn",
+            "gloss": "correct this student's attendance, they were there"
+          },
+          "context": "Coordinator, Johar Town branch, where a makeup was already scheduled on the absence.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.attendance.correct",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "student_id": "$request.student_phrase",
+                "attendance": "Present",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Corrected, and makeup_flagged_for_review comes back true. Report it plainly (PR-4) — a makeup is arranged for a paper the student turns out to have sat, and somebody has to tell the child before they turn up for it."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1701 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-14-08",
+    "name": "Let a guardian ask to meet a teacher about their own child, and have the teacher offer a slot from their own free time",
+    "module": "Communication",
+    "file": "../UseCases/UC-14-08.json",
+    "featureRef": "14.8 Parent-requested meeting with a teacher"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-14-08-PC-1",
+      "intent": {
+        "name": "meeting.request.submit",
+        "summary": "A guardian asks to meet a teacher who teaches their own child. One step, and the teacher chooses the time.",
+        "routesHere": [
+          "I would like to meet my son's maths teacher",
+          {
+            "text": "main apne bache ke maths ke ustad se milna chahta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I would like to meet my child's maths teacher"
+          },
+          {
+            "text": "class incharge se mulaqat karni hai",
+            "lang": "ur-Latn",
+            "gloss": "I want to meet the class incharge"
+          },
+          {
+            "text": "subah ka waqt behtar rahega",
+            "lang": "ur-Latn",
+            "gloss": "a morning slot would suit better"
+          },
+          "request a meeting about my daughter's progress"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ustad khud mulaqat ka waqt de dein",
+              "lang": "ur-Latn",
+              "gloss": "let the teacher propose the time themselves"
+            },
+            "goesTo": "That is what happens.",
+            "note": "The teacher chooses the slot, not the guardian. The guardian may state a preference and the teacher meets it where they can (BR-3)."
+          },
+          {
+            "request": {
+              "text": "parent-teacher meeting mein milenge",
+              "lang": "ur-Latn",
+              "gloss": "we will meet at the parent-teacher meeting"
+            },
+            "goesTo": "meetingdays.read — UC-14-11",
+            "note": "That is the school-wide meeting day, and it carries no slot at all: families attend during the announced window and see the teachers who are present (UC-14-11 BR-10). This is the everyday case, and it does carry a slot — the teacher chooses it (BR-9)."
+          },
+          {
+            "request": {
+              "text": "ustad ne bulaya hai",
+              "lang": "ur-Latn",
+              "gloss": "the teacher has asked to meet"
+            },
+            "goesTo": "teacher.meeting.request.respond — UC-14-12",
+            "note": "Where the teacher raised it, the slot is proposed first and the guardian confirms (UC-14-12 BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meeting.request.submit",
+            "inputs": {
+              "guardian_id": "$session.guardian_id",
+              "student_id": "$request.child_phrase",
+              "teacher_id": "$request.teacher_phrase",
+              "reason": "$request.reason",
+              "timing_preference": "$request.timing_preference",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. No coordinator is required for any of this to proceed — requiring one would make an everyday conversation into an event (BR-8), and there is no window, no slot grid and no opening or closing date (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. A teacher who does not teach the child is not offered, and a child who is not the guardian's is refused.",
+        "atomicity": "One write: the request and the audit entry together or not at all. **No time is fixed.** The teacher reads the reason, is offered the slots in which they are genuinely free, and chooses one (BR-2, BR-3). A request is never deleted — a declined or cancelled one stays on the record, so a family who asked three times and was declined three times is visible (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "meeting.request.submit",
+          "method": "POST",
+          "path": "/api/v1/meeting-requests",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "guardian_id + student_id + teacher_id + reason, since the same ask twice is one request",
+          "purpose": "Record a guardian's request to meet a teacher about their own child.",
+          "parameters": [
+            {
+              "name": "guardian_id",
+              "source": "session",
+              "sourceRef": "$session.guardian_id",
+              "required": true,
+              "type": "string",
+              "notes": "The requesting guardian's own record. A child who is not theirs cannot be selected (BR-1, E2)."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.child_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.child_phrase",
+                "onNoMatch": "Refuse. That child is not this guardian's (E2).",
+                "onAmbiguous": "Ask, naming the guardian's own children with their class and section."
+              },
+              "notes": "One of the guardian's own children (BR-1)."
+            },
+            {
+              "name": "teacher_id",
+              "source": "resolved",
+              "sourceRef": "$request.teacher_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.teacher_phrase",
+                "onNoMatch": "Refuse. That teacher does not teach this child (BR-1).",
+                "onAmbiguous": "Ask, naming the teachers who teach the child, with their subject."
+              },
+              "notes": "A teacher who teaches that child. A teacher who does not is not offered at all (BR-1, E1)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters, written by the guardian (E3). What the teacher reads before deciding, so it is the family's own words."
+            },
+            {
+              "name": "timing_preference",
+              "source": "request",
+              "sourceRef": "$request.timing_preference",
+              "required": false,
+              "type": "string",
+              "notes": "Any preference the guardian gives, which the teacher may or may not be able to meet (BR-3). A preference, not a booking."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The request.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "student",
+                "type": "string",
+                "description": "The child."
+              },
+              {
+                "name": "teacher",
+                "type": "string",
+                "description": "The teacher, who teaches them (BR-1)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Requested. No time is fixed and nothing is booked (BR-3)."
+              },
+              {
+                "name": "previous_requests",
+                "type": "integer",
+                "description": "Earlier requests from this guardian to this teacher, including declined and cancelled ones. A family who asked three times and was declined three times is visible (BR-11)."
+              },
+              {
+                "name": "coordinator_approval_needed",
+                "type": "boolean",
+                "description": "False. The coordinator sees what is happening in their sections; they do not approve it (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "TEACHER_DOES_NOT_TEACH",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The teacher does not teach that child.",
+              "written": "Nothing.",
+              "notWritten": "Not offered at all (BR-1)."
+            },
+            {
+              "code": "NOT_OWN_CHILD",
+              "mapsTo": "E2",
+              "httpStatus": 403,
+              "meaning": "The child is not this guardian's.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            },
+            {
+              "code": "NO_REASON",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "No reason is given.",
+              "written": "Nothing.",
+              "notWritten": "The request is not submitted.",
+              "note": "It is what the teacher reads before deciding."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. It is what the teacher reads before deciding whether and when to meet (BR-2), and a reason a planner wrote is a family's concern described by somebody who does not have it.",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never propose or fix a time. The teacher chooses the slot, not the guardian — that is what distinguishes this from the scheduled event (BR-3), and a preference stated is not a booking made.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never request a teacher who does not teach the child. They are not offered at all (BR-1, E1), and asking would put a family in front of somebody with nothing to say about their child.",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report earlier requests to the same teacher, including declined ones. A family who asked three times and was declined three times is visible for a reason (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never route this through a coordinator. None is required and requiring one would make an everyday conversation into an event (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "meeting.cancel",
+        "statement": "Cancelling the request before the meeting. It is never deleted — a declined or cancelled request stays on the record (BR-6, BR-11, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "main apne bache ke maths ke ustad se milna chahta hoon — subah behtar rahega",
+            "lang": "ur-Latn",
+            "gloss": "I would like to meet my child's maths teacher — a morning would suit better"
+          },
+          "context": "Parent, Johar Town branch, signed in.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.request.submit",
+              "inputs": {
+                "guardian_id": "$session.guardian_id",
+                "student_id": "$request.child_phrase",
+                "teacher_id": "$request.teacher_phrase → the maths teacher",
+                "reason": "as the guardian wrote it",
+                "timing_preference": "a morning, as stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is theirs (PR-1); the morning is a preference, not a booking (PR-2)."
+            }
+          ],
+          "outcome": "Requested. Report that the teacher chooses the slot from the times they are genuinely free and will meet the morning preference where they can — nothing is fixed yet."
+        },
+        {
+          "request": {
+            "text": "Principal se milna hai apne bache ke baare mein",
+            "lang": "ur-Latn",
+            "gloss": "I want to meet the Principal about my child"
+          },
+          "context": "Parent, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.request.submit",
+              "inputs": {
+                "guardian_id": "$session.guardian_id",
+                "student_id": "$request.child_phrase",
+                "teacher_id": "$request.teacher_phrase — the Principal does not teach the child",
+                "reason": "$request.reason",
+                "timing_preference": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Only a teacher who teaches the child can be requested (PR-3)."
+            }
+          ],
+          "outcome": "Nothing is requested. List the teachers who teach the child with their subjects and ask which — this capability covers meeting a teacher about their own teaching, and a meeting with the Principal is not something it can arrange."
+        },
+        {
+          "request": {
+            "text": "mulaqat ki darkhwast do aur mangal subah 10 baje ka waqt rakh do",
+            "lang": "ur-Latn",
+            "gloss": "request the meeting and set it for Tuesday at 10am"
+          },
+          "context": "Parent, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.request.submit",
+              "inputs": {
+                "guardian_id": "$session.guardian_id",
+                "student_id": "$request.child_phrase",
+                "teacher_id": "$request.teacher_phrase",
+                "reason": "$request.reason",
+                "timing_preference": "Tuesday at 10am, recorded as a preference",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The time is recorded as a preference, not fixed (PR-2)."
+            }
+          ],
+          "outcome": "Requested with Tuesday at 10 as the preference. Report that the teacher chooses the actual slot from the periods they are free — they may be teaching then, and the whole point of this route is that the time comes from the person who has to be free for it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-08-PC-2",
+      "intent": {
+        "name": "teacher.freeslots.list",
+        "summary": "List the slots in which a teacher is genuinely free. One step, reads only, and free means free.",
+        "routesHere": [
+          "when is this teacher actually free next week?",
+          {
+            "text": "ye ustad agle hafte kab khali hain",
+            "lang": "ur-Latn",
+            "gloss": "when is this teacher free next week"
+          },
+          {
+            "text": "mulaqat ke liye khali waqt dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show the free slots for a meeting"
+          },
+          {
+            "text": "is hafte koi period khali hai?",
+            "lang": "ur-Latn",
+            "gloss": "is any period free this week"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "slot pakka kar do",
+              "lang": "ur-Latn",
+              "gloss": "confirm the slot"
+            },
+            "goesTo": "meeting.slot.confirm — UC-14-08-PC-3",
+            "note": "The list is for choosing from; confirming is the act that fixes the meeting."
+          },
+          {
+            "request": {
+              "text": "chhutti ke baad ka waqt de do",
+              "lang": "ur-Latn",
+              "gloss": "give a time after school"
+            },
+            "goesTo": "meeting.slot.confirm with a slot outside timetabled hours",
+            "note": "The teacher may propose a slot outside timetabled hours where the school allows meetings after school (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "teacher.freeslots.list",
+            "inputs": {
+              "teacher_id": "$request.teacher_phrase",
+              "date_range": "$request.date_range",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reads only. Free means free: the published timetable, less any period the teacher is teaching, is covering another class as a substitute, or is on approved leave (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. Where no timetable is published for the section, free slots cannot be worked out at all and the teacher proposes a time by hand.",
+        "atomicity": "No write. It answers what the timetable, the cover arrangements and the approved leave say together — a teacher who looks free on their own timetable may be covering somebody else's class, and offering that slot to a family produces a meeting nobody can attend (BR-2)."
+      },
+      "operations": [
+        {
+          "name": "teacher.freeslots.list",
+          "method": "GET",
+          "path": "/api/v1/teachers/{teacher_id}/free-slots",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List a teacher's genuinely free slots in a date range.",
+          "parameters": [
+            {
+              "name": "teacher_id",
+              "source": "resolved",
+              "sourceRef": "$request.teacher_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.teacher_phrase",
+                "onNoMatch": "Refuse. No teacher matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their subject."
+              },
+              "notes": "The teacher."
+            },
+            {
+              "name": "date_range",
+              "source": "request",
+              "sourceRef": "$request.date_range",
+              "required": true,
+              "type": "string",
+              "notes": "The period being looked at. The actor's — a week and a fortnight give different answers."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The free slots.",
+            "fields": [
+              {
+                "name": "free_slots",
+                "type": "datetime[]",
+                "description": "Slots in which the teacher is genuinely free (BR-2)."
+              },
+              {
+                "name": "excluded",
+                "type": "object[]",
+                "description": "Slots not offered, each with what occupies it — teaching, substitute cover, or approved leave (BR-2)."
+              },
+              {
+                "name": "outside_timetabled_hours",
+                "type": "boolean",
+                "description": "Whether the school allows meetings after school, which is an open question in this use case (BR-4)."
+              },
+              {
+                "name": "no_timetable",
+                "type": "boolean",
+                "description": "True where no timetable is published for the section. Free slots cannot be worked out and the teacher proposes a time by hand (E5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_TIMETABLE",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "No timetable is published for the section.",
+              "written": "Nothing.",
+              "notWritten": "No free slots can be worked out.",
+              "treatedAsSuccess": true,
+              "note": "The teacher proposes a time by hand instead (BR-2)."
+            },
+            {
+              "code": "NO_FREE_SLOT",
+              "mapsTo": "E4",
+              "httpStatus": 200,
+              "meaning": "The teacher has no free slot at all in the period.",
+              "written": "Nothing.",
+              "notWritten": "An empty list.",
+              "treatedAsSuccess": true,
+              "note": "The teacher declines or proposes a time outside timetabled hours (BR-2, BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never offer a slot the teacher is not genuinely free in. A period they are covering as a substitute looks free on their own timetable (BR-2), and a meeting booked into it is one nobody can attend.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report an empty list as empty. Where a teacher has no free slot at all, the honest answer is none — they then decline or propose a time outside timetabled hours, and inventing a slot would commit them to a period they are teaching (E4).",
+          "derivedFrom": [
+            "BR-2",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report a missing timetable plainly. Free slots cannot be worked out without one and the teacher proposes a time by hand (E5) — the list is not empty because they are busy.",
+          "derivedFrom": [
+            "BR-2",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never choose a slot from the list. The teacher chooses (BR-3), and a slot picked for them is a commitment made on their behalf.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report that whether after-school meetings are allowed is undecided. BR-4 permits a slot outside timetabled hours where the school allows it, and nothing says whether this school does or within what times.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Nothing was written, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye ustad agle hafte kab khali hain",
+            "lang": "ur-Latn",
+            "gloss": "when is this teacher free next week"
+          },
+          "context": "Teacher, Johar Town branch, on a request they are answering.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "teacher.freeslots.list",
+              "inputs": {
+                "teacher_id": "$request.teacher_phrase",
+                "date_range": "next week, as named",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Four slots come back. Report what occupies the periods that were excluded (PR-1) — one of them is substitute cover, which looks free on the teacher's own timetable and is exactly the slot a meeting would be wrongly booked into."
+        },
+        {
+          "request": {
+            "text": "koi bhi waqt de do, ustad khali hi honge",
+            "lang": "ur-Latn",
+            "gloss": "give any time, the teacher will be free"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "teacher.freeslots.list",
+              "inputs": {
+                "teacher_id": "$request.teacher_phrase",
+                "date_range": "$request.date_range",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The list is read; no slot is chosen from it (PR-4)."
+            }
+          ],
+          "outcome": "The genuinely free slots come back. Report that the teacher chooses which — the list accounts for teaching, cover and approved leave, and picking one for them would commit them to a time they have not agreed to."
+        },
+        {
+          "request": {
+            "text": "is hafte ka khali waqt dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show this week's free slots"
+          },
+          "context": "Teacher, Johar Town branch, whose section has no published timetable.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "teacher.freeslots.list",
+              "inputs": {
+                "teacher_id": "$request.teacher_phrase",
+                "date_range": "this week",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns NO_TIMETABLE (E5) on the success path."
+            }
+          ],
+          "outcome": "No slots can be worked out. Report that this is because no timetable is published for the section rather than because the teacher is busy (PR-3) — they propose a time by hand instead, and the same gap will affect every meeting request for that section."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-08-PC-3",
+      "intent": {
+        "name": "meeting.slot.confirm",
+        "summary": "The teacher picks a slot and confirms the meeting. One step, and both sides are told.",
+        "routesHere": [
+          "confirm Tuesday period 4 for this meeting",
+          {
+            "text": "mangal ke chauthe period mein mulaqat pakki kar do",
+            "lang": "ur-Latn",
+            "gloss": "confirm the meeting for Tuesday period 4"
+          },
+          {
+            "text": "chhutti ke baad ka waqt de deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I will offer a time after school"
+          },
+          {
+            "text": "ye slot confirm kar do",
+            "lang": "ur-Latn",
+            "gloss": "confirm this slot"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mulaqat nahi kar sakta",
+              "lang": "ur-Latn",
+              "gloss": "I cannot meet"
+            },
+            "goesTo": "meeting.request.decline — UC-14-08-PC-4",
+            "note": "A decline carries a reason and the guardian is told it (BR-5)."
+          },
+          {
+            "request": {
+              "text": "khali waqt dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show me the free slots"
+            },
+            "goesTo": "teacher.freeslots.list — UC-14-08-PC-2"
+          },
+          {
+            "request": {
+              "text": "walidain khud waqt chun lein",
+              "lang": "ur-Latn",
+              "gloss": "let the guardian pick the time"
+            },
+            "goesTo": "Not offered.",
+            "note": "The teacher chooses the slot, not the guardian. The school-wide meeting day chooses no slot for anybody and asks families to come during a window instead (BR-3, UC-14-11 BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meeting.slot.confirm",
+            "inputs": {
+              "request_id": "$request.meeting_phrase",
+              "slot": "$request.slot",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The teacher chooses the slot and the guardian is told the outcome (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. A slot confirmed a moment earlier by another request is refused rather than double-booked.",
+        "atomicity": "One write: the confirmed slot and the message to the guardian together or not at all. A confirmed slot that later becomes unavailable — because the teacher's leave is approved, or their timetable changes — is released and both sides are told, rather than the meeting standing against a slot the teacher cannot keep (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "meeting.slot.confirm",
+          "method": "POST",
+          "path": "/api/v1/meeting-requests/{request_id}/confirm",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a request carries one confirmed slot",
+          "purpose": "Confirm the meeting at a slot the teacher has chosen.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.meeting_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "meeting_request",
+                "fromPhrase": "$request.meeting_phrase",
+                "onNoMatch": "Refuse. No meeting request matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the requests with the child, the teacher, the reason and the status."
+              },
+              "notes": "The meeting request, resolved from the child, the teacher and its state."
+            },
+            {
+              "name": "slot",
+              "source": "request",
+              "sourceRef": "$request.slot",
+              "required": true,
+              "type": "datetime",
+              "notes": "The slot the teacher selected (BR-3). Theirs to choose — it may be outside timetabled hours where the school allows meetings after school (BR-4), which is itself undecided here."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The confirmation.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "slot",
+                "type": "datetime",
+                "description": "As confirmed."
+              },
+              {
+                "name": "outside_timetabled_hours",
+                "type": "boolean",
+                "description": "Where the teacher proposed a time after school (BR-4)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Confirmed."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status. The guardian is told the outcome either way (BR-5)."
+              },
+              {
+                "name": "preference_met",
+                "type": "boolean",
+                "description": "Whether the guardian's stated preference was met (BR-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SLOT_TAKEN",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "Another request was confirmed on the same slot a moment earlier.",
+              "written": "Nothing.",
+              "notWritten": "Nothing confirmed.",
+              "note": "Per concurrency-and-locking. Choose another slot."
+            },
+            {
+              "code": "NOT_FREE",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The teacher is not free in that slot.",
+              "written": "Nothing.",
+              "notWritten": "Nothing confirmed.",
+              "note": "The message names what occupies it — teaching, substitute cover, or approved leave (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the slot for the teacher. It is their time and their decision (BR-3), and a slot picked for them is a commitment they have not made.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never confirm a slot the teacher is not free in. A period they are covering as a substitute looks free on their own timetable (BR-2), and the family arrives to find nobody there.",
+          "derivedFrom": [
+            "BR-2",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report whether the guardian's preference was met. They stated one and the teacher meets it where they can (BR-3) — a family told only a time does not know whether their morning request was considered.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that a confirmed slot can still be released. Approved leave or a timetable change releases it and both sides are told (BR-10), rather than the meeting standing against a slot the teacher cannot keep.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never confirm outside timetabled hours as a default. It is permitted only where the school allows meetings after school, and whether this one does — and within what times — is not decided (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "meeting.cancel",
+        "statement": "Cancelling before the meeting, from either side, which releases the slot and tells the other (BR-6)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mangal ke chauthe period mein mulaqat pakki kar do",
+            "lang": "ur-Latn",
+            "gloss": "confirm the meeting for Tuesday period 4"
+          },
+          "context": "Teacher, Johar Town branch, free in that slot, guardian had asked for a morning.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.slot.confirm",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "slot": "Tuesday, period 4",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The slot is the teacher's choice (PR-1)."
+            }
+          ],
+          "outcome": "Confirmed and the guardian is told. Report whether their morning preference was met (PR-3), and that the slot is released automatically if the teacher's leave is later approved (PR-4)."
+        },
+        {
+          "request": {
+            "text": "koi bhi munasib waqt confirm kar do",
+            "lang": "ur-Latn",
+            "gloss": "confirm any suitable time"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.slot.confirm",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "slot": "$request.slot — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The slot is the teacher's to choose (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is confirmed. List the slots the teacher is genuinely free in, with the guardian's stated preference beside them, and ask which — the family is told this time and will arrange their day around it."
+        },
+        {
+          "request": {
+            "text": "bade period mein confirm kar do, main us waqt cover par hoon lekin theek hai",
+            "lang": "ur-Latn",
+            "gloss": "confirm the long period — I am on cover then but it is fine"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.slot.confirm",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "slot": "the period they are covering",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns NOT_FREE (E4)."
+            }
+          ],
+          "outcome": "Nothing is confirmed. Report that the teacher is covering another class in that period — the class would be left unstaffed, and the family would arrive to find them teaching. The free-slot list excludes cover for exactly this reason."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-08-PC-4",
+      "intent": {
+        "name": "meeting.request.decline",
+        "summary": "Decline a meeting request with the reason the guardian is told. One step.",
+        "routesHere": [
+          "decline this request — I cannot meet before the exams",
+          {
+            "text": "ye darkhwast rad kar do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "decline this request with the reason"
+          },
+          {
+            "text": "abhi mulaqat nahi kar sakta",
+            "lang": "ur-Latn",
+            "gloss": "I cannot meet at the moment"
+          },
+          {
+            "text": "wajah likh kar mana kar do",
+            "lang": "ur-Latn",
+            "gloss": "decline it with a written reason"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti ke baad mil lete hain",
+              "lang": "ur-Latn",
+              "gloss": "let us meet after school"
+            },
+            "goesTo": "meeting.slot.confirm — UC-14-08-PC-3",
+            "note": "A slot outside timetabled hours is a confirmation, not a decline (BR-4)."
+          },
+          {
+            "request": {
+              "text": "baad mein dekh lenge",
+              "lang": "ur-Latn",
+              "gloss": "we will see later"
+            },
+            "goesTo": "Not offered.",
+            "note": "A request that goes unanswered is worse than one declined plainly (BR-5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meeting.request.decline",
+            "inputs": {
+              "request_id": "$request.meeting_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A decline carries a reason and the guardian is told it (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. A decline with no reason is not recorded at all.",
+        "atomicity": "One write: the decline, its reason and the message to the guardian together or not at all. A request that goes unanswered, or is refused with no explanation, is worse than one declined plainly (BR-5). The request stays on the record — a family who asked three times and was declined three times is visible (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "meeting.request.decline",
+          "method": "POST",
+          "path": "/api/v1/meeting-requests/{request_id}/decline",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a request carries one outcome",
+          "purpose": "Decline a meeting request with the reason.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.meeting_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "meeting_request",
+                "fromPhrase": "$request.meeting_phrase",
+                "onNoMatch": "Refuse. No meeting request matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the requests with the child, the teacher, the reason and the status."
+              },
+              "notes": "The meeting request, resolved from the child, the teacher and its state."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (BR-5, E6). The guardian is told it, and they asked to talk about their child."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decline.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Declined. It stays on the record (BR-11)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given, and told to the guardian (BR-5)."
+              },
+              {
+                "name": "declined_by",
+                "type": "string",
+                "description": "The teacher."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status."
+              },
+              {
+                "name": "previous_declines",
+                "type": "integer",
+                "description": "Earlier requests from this guardian to this teacher that were declined. A family declined repeatedly is visible (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "The teacher declined with no reason.",
+              "written": "Nothing.",
+              "notWritten": "It is not recorded.",
+              "note": "A request refused with no explanation is worse than one declined plainly (BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. A guardian asked to talk about their child and is being told no, and the school's own words are the least they are owed (BR-5).",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report earlier declines to the same family. A family who asked three times and was declined three times is visible for a reason (BR-11), and the third decline is a different act from the first.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never decline where a time outside timetabled hours would do. Proposing one is a confirmation rather than a refusal, where the school allows it (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never leave a request unanswered instead. A request that goes unanswered is worse than one declined plainly (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A decline is terminal for that request. The guardian may raise it again, and both requests stay on the record (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye darkhwast rad kar do — imtihan se pehle waqt nahi hai",
+            "lang": "ur-Latn",
+            "gloss": "decline this request — there is no time before the exams"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.request.decline",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "reason": "The examinations run for the next two weeks and I hold no free period. I can meet in the week after.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the teacher's own words (PR-1)."
+            }
+          ],
+          "outcome": "Declined and the guardian is told why. Report whether this family has been declined before (PR-2) — a third decline about the same child is worth the coordinator seeing."
+        },
+        {
+          "request": {
+            "text": "darkhwast rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "decline the request"
+          },
+          "context": "Teacher, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.request.decline",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The decline is not recorded at all without a reason (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written and the request stays open. Ask what the guardian should be told — they asked to talk about their child, and a refusal with no explanation is worse for them than one given plainly."
+        },
+        {
+          "request": {
+            "text": "timetable mein waqt nahi hai, rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "there is no time in the timetable, decline it"
+          },
+          "context": "Teacher, Johar Town branch, where the school allows after-school meetings.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.request.decline",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A decline is planned only if that is what is meant (PR-3)."
+            }
+          ],
+          "outcome": "Report first that a slot outside timetabled hours is available as a confirmation where the school allows meetings after school — declining and offering an after-school time are different answers to the family. Whether this school allows it, and within what times, is not decided anywhere in this use case."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-08-PC-5",
+      "intent": {
+        "name": "meeting.cancel",
+        "summary": "Cancel a meeting before it happens, from either side, with the reason. One step, and the slot is released.",
+        "routesHere": [
+          "cancel the meeting — I cannot come on Tuesday",
+          {
+            "text": "mulaqat cancel kar do, main mangal ko nahi aa sakta",
+            "lang": "ur-Latn",
+            "gloss": "cancel the meeting, I cannot come on Tuesday"
+          },
+          {
+            "text": "ustad ki chhutti manzoor ho gayi hai, mulaqat cancel karo",
+            "lang": "ur-Latn",
+            "gloss": "the teacher's leave is approved, cancel the meeting"
+          },
+          {
+            "text": "wajah ke sath mulaqat mansookh karo",
+            "lang": "ur-Latn",
+            "gloss": "cancel the meeting with a reason"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "waqt badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the time"
+            },
+            "goesTo": "meeting.cancel then a fresh request or slot",
+            "note": "Either side may cancel and the request may be raised again (BR-6). Changing the time is cancelling and re-arranging."
+          },
+          {
+            "request": {
+              "text": "mulaqat ho chuki hai",
+              "lang": "ur-Latn",
+              "gloss": "the meeting has happened"
+            },
+            "goesTo": "meeting.outcome.record — UC-14-08-PC-6",
+            "note": "Cancelling is before the meeting; recording the outcome is after it."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meeting.cancel",
+            "inputs": {
+              "request_id": "$request.meeting_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The slot is released, the other side is told, and the request may be raised again (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the cancellation, its reason, the released slot and the message to the other side together or not at all (BR-6). The request is never deleted — a cancelled one stays on the record, which is what makes a pattern visible (BR-11). The same capability serves a request the guardian raised and one the teacher raised (UC-14-12 BR-6)."
+      },
+      "operations": [
+        {
+          "name": "meeting.cancel",
+          "method": "POST",
+          "path": "/api/v1/meeting-requests/{request_id}/cancel",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a request is cancelled once",
+          "purpose": "Cancel a meeting before it happens, releasing the slot.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.meeting_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "meeting_request",
+                "fromPhrase": "$request.meeting_phrase",
+                "onNoMatch": "Refuse. No meeting request matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the requests with the child, the teacher, the slot and the status."
+              },
+              "notes": "The meeting request, resolved from the child, the teacher and its state. The same capability serves a request the guardian raised and one the teacher raised (UC-14-12 BR-6)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters, from whichever side cancels. The other side is told it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The cancellation.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Cancelled. It stays on the record (BR-11)."
+              },
+              {
+                "name": "cancelled_by",
+                "type": "string",
+                "description": "Which side cancelled."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given, and told to the other side (BR-6)."
+              },
+              {
+                "name": "slot_released",
+                "type": "datetime",
+                "description": "The slot, now free again."
+              },
+              {
+                "name": "other_side_notified",
+                "type": "string",
+                "description": "Delivery status."
+              },
+              {
+                "name": "may_be_raised_again",
+                "type": "boolean",
+                "description": "True. The request may be raised again (BR-6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "A cancellation was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing cancelled."
+            },
+            {
+              "code": "MEETING_PASSED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The slot has already passed.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "A meeting that has passed is recorded as having taken place or not (BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. The other side is told it, and a family or a teacher who rearranged their day around this deserves the actual explanation.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report that the request may be raised again. Cancelling does not close the matter — a guardian who cancels and wants to ask again simply asks (BR-6, A5).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the released slot. It is free for another family from that moment, and a teacher deciding whether to cancel should know they are giving it up.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never cancel a meeting that has already passed. It is recorded as having taken place or not, which is a different act with a different meaning (BR-7, E9).",
+          "derivedFrom": [
+            "BR-7",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A cancellation is not undone. The request may be raised again, and both stay on the record (BR-6, BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mulaqat cancel kar do, main mangal ko nahi aa sakta",
+            "lang": "ur-Latn",
+            "gloss": "cancel the meeting, I cannot come on Tuesday"
+          },
+          "context": "Parent, Johar Town branch, two days before.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.cancel",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "reason": "I am travelling on Tuesday and cannot attend.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the guardian's own (PR-1)."
+            }
+          ],
+          "outcome": "Cancelled and the teacher is told. Report that the slot is free again (PR-3) and that the request may be raised again whenever the family wants to (PR-2)."
+        },
+        {
+          "request": {
+            "text": "mulaqat ka waqt badal do, budh kar do",
+            "lang": "ur-Latn",
+            "gloss": "change the meeting to Wednesday"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.cancel",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Cancelling is the first of two acts, and the reason is still asked for (PR-1)."
+            }
+          ],
+          "outcome": "Report that changing the time is cancelling and re-arranging — the guardian is told the Tuesday slot is off, and a Wednesday slot is confirmed separately from the teacher's free periods. Ask what the family should be told about the change."
+        },
+        {
+          "request": {
+            "text": "kal wali mulaqat cancel kar do",
+            "lang": "ur-Latn",
+            "gloss": "cancel yesterday's meeting"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.cancel",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns MEETING_PASSED (E9)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the slot has passed — what is recorded now is whether it took place, and where nobody attended that is recorded too, which is what makes a family who books and does not come visible."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-08-PC-6",
+      "intent": {
+        "name": "meeting.outcome.record",
+        "summary": "Record after the meeting whether it took place, and any note. One step, and the note is held against the student.",
+        "routesHere": [
+          "record that the meeting took place, with a note",
+          {
+            "text": "mulaqat ho gayi hai, note likh do",
+            "lang": "ur-Latn",
+            "gloss": "the meeting happened, record a note"
+          },
+          {
+            "text": "koi nahi aaya, darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "nobody came, record it"
+          },
+          {
+            "text": "mulaqat ka natija darj karo",
+            "lang": "ur-Latn",
+            "gloss": "record the meeting outcome"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mulaqat se pehle cancel karni hai",
+              "lang": "ur-Latn",
+              "gloss": "we need to cancel before the meeting"
+            },
+            "goesTo": "meeting.cancel — UC-14-08-PC-5"
+          },
+          {
+            "request": {
+              "text": "note walidain ko dikha do",
+              "lang": "ur-Latn",
+              "gloss": "show the note to the parents"
+            },
+            "goesTo": "Not offered.",
+            "note": "Whether the guardian sees the note the teacher recorded, or whether it is internal, is not decided anywhere in this use case."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meeting.outcome.record",
+            "inputs": {
+              "request_id": "$request.meeting_phrase",
+              "took_place": "$request.took_place",
+              "note": "$request.note",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The note is held against the student and is visible to the coordinator, so a pattern of concerns about one child is visible to somebody (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A note about a child the teacher does not teach is refused.",
+        "atomicity": "One write: the outcome, the note against the student and the audit entry together or not at all. The note is visible to the coordinator (BR-7) — whether the guardian sees it is not decided anywhere in this use case. Where nobody attended, that is recorded too (A7), which is what makes a family who arranges a meeting and does not come visible."
+      },
+      "operations": [
+        {
+          "name": "meeting.outcome.record",
+          "method": "POST",
+          "path": "/api/v1/meeting-requests/{request_id}/outcome",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a meeting carries one outcome",
+          "purpose": "Record whether the meeting took place, and any note arising.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.meeting_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "meeting_request",
+                "fromPhrase": "$request.meeting_phrase",
+                "onNoMatch": "Refuse. No meeting request matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the requests with the child, the teacher, the slot and the status."
+              },
+              "notes": "The meeting request, resolved from the child, the teacher and its state. The same capability serves a request the guardian raised and one the teacher raised (UC-14-12 BR-6)."
+            },
+            {
+              "name": "took_place",
+              "source": "request",
+              "sourceRef": "$request.took_place",
+              "required": true,
+              "type": "boolean",
+              "notes": "Whether it happened (BR-7). Where nobody attended, that is recorded rather than left blank (A7)."
+            },
+            {
+              "name": "note",
+              "source": "request",
+              "sourceRef": "$request.note",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 1000 characters. What arose, held against the student and visible to the coordinator (BR-7). The teacher's own account of a conversation about a child."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The outcome.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "took_place",
+                "type": "boolean",
+                "description": "As recorded."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Took place, or Did not take place."
+              },
+              {
+                "name": "note_held_against",
+                "type": "string",
+                "description": "The student. Visible to the coordinator (BR-7)."
+              },
+              {
+                "name": "note_visible_to_guardian",
+                "type": "boolean",
+                "description": "Not decided anywhere in this use case."
+              },
+              {
+                "name": "previous_notes",
+                "type": "integer",
+                "description": "Earlier meeting notes about this child. A pattern of concerns about one child is visible to somebody (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_THEIR_STUDENT",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "The teacher does not teach that child.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "There is no route to record a note about a child they do not teach."
+            },
+            {
+              "code": "MEETING_NOT_DUE",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The slot has not yet passed.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "The outcome is recorded after the meeting."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the note. It is the teacher's account of a conversation about a child, held against that child and read by the coordinator (BR-7) — a summary a planner produced would be a record of something it did not hear.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never record a meeting as having taken place unless the actor says so. Where nobody attended, that is what is recorded (A7), and it is what makes a family who arranges and does not come visible.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the note is visible to the coordinator, and that whether the guardian sees it is undecided. A teacher writing about a child should know who reads it, and this use case does not settle the second half.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report earlier notes about the same child. A pattern of concerns is the reason the note is held against the student rather than against the meeting (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An outcome is not withdrawn. It records what happened at a meeting on a date, and the note stays against the student."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mulaqat ho gayi, note likh diya hai",
+            "lang": "ur-Latn",
+            "gloss": "the meeting happened, here is the note"
+          },
+          "context": "Teacher, Johar Town branch, after the slot.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.outcome.record",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "took_place": "true",
+                "note": "as the teacher wrote it",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The note is the teacher's own (PR-1)."
+            }
+          ],
+          "outcome": "Recorded against the child. Report that the coordinator can see it and that earlier notes about this child exist (PR-4) — and that whether the guardian sees it is not settled anywhere (PR-3)."
+        },
+        {
+          "request": {
+            "text": "mulaqat theek rahi, note tum likh do",
+            "lang": "ur-Latn",
+            "gloss": "the meeting went well, you write the note"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.outcome.record",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "took_place": "true",
+                "note": "$request.note — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The outcome is recorded; the note is left empty rather than composed (PR-1)."
+            }
+          ],
+          "outcome": "Recorded as having taken place, with no note. Report that the note is optional but is the teacher's own account — it is held against the child and read by the coordinator later, so a summary written by anything other than the person in the room would be a record of a conversation it did not hear."
+        },
+        {
+          "request": {
+            "text": "koi nahi aaya, mulaqat hui hi nahi — chhorh do",
+            "lang": "ur-Latn",
+            "gloss": "nobody came, the meeting did not happen — leave it"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meeting.outcome.record",
+              "inputs": {
+                "request_id": "$request.meeting_phrase",
+                "took_place": "false",
+                "note": "$request.note",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Recorded as not having taken place rather than left blank (PR-2)."
+            }
+          ],
+          "outcome": "Recorded. Report that a meeting nobody attended is worth recording rather than leaving — it is what makes a family who arranges a meeting and does not come visible to the coordinator, and an unrecorded one simply disappears."
+        }
+      ]
+    }
+  ]
+}

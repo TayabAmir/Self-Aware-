@@ -1,0 +1,671 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-05-02",
+    "name": "Mark attendance for an individual lecture rather than once for the whole day",
+    "module": "Attendance",
+    "file": "../UseCases/UC-05-02.json",
+    "featureRef": "5.2 Per-lecture / period attendance"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-05-02-PC-1",
+      "intent": {
+        "name": "attendance.lecture.mark",
+        "summary": "Mark attendance for one period of the timetable, for the lecture assigned to the acting teacher. One step, and it says nothing about any other period.",
+        "routesHere": [
+          "mark attendance for my third period maths lecture",
+          {
+            "text": "meri chauthi period ki hazri laga do",
+            "lang": "ur-Latn",
+            "gloss": "mark attendance for my fourth period"
+          },
+          {
+            "text": "is lecture mein do bachay ghair hazir hain",
+            "lang": "ur-Latn",
+            "gloss": "two children are absent in this lecture"
+          },
+          {
+            "text": "period ki attendance mark karo — sab present",
+            "lang": "ur-Latn",
+            "gloss": "mark the period's attendance — everyone present"
+          },
+          "record the register for today's second period"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "poore din ki hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark attendance for the whole day"
+            },
+            "goesTo": "attendance.daily.mark — UC-05-01-PC-1",
+            "note": "Period marking and daily marking are separate records, and neither overwrites the other (BR-9)."
+          },
+          {
+            "request": {
+              "text": "mark theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the mark"
+            },
+            "goesTo": "attendance.lecture.correct — UC-05-02-PC-2"
+          },
+          {
+            "request": {
+              "text": "din bhar ka pattern dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show the day's pattern"
+            },
+            "goesTo": "The period comparison view.",
+            "note": "A student present for three periods and absent for the rest is the pattern this use case exists to reveal (BR-8) — reading it is a separate act."
+          },
+          {
+            "request": {
+              "text": "walidain ko bata do konse lecture miss hue",
+              "lang": "ur-Latn",
+              "gloss": "tell the parents which lectures were missed"
+            },
+            "goesTo": "attendance.alert.send — UC-05-09",
+            "note": "Where attendance is per lecture the alert names the subjects missed (UC-05-09 BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "attendance.lecture.mark",
+            "inputs": {
+              "lecture_id": "$request.lecture_phrase",
+              "date": "$request.date",
+              "marks": "$request.marks",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A teacher marks only the lectures the timetable assigns to them (BR-2), and approved leave is applied before they begin (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. A lecture not assigned to the acting teacher, no lecture scheduled, a closed day, an unmarked student and a period already marked are all enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: every student's mark for that period, the stamps and the audit entry together or not at all. The mark applies to that period alone — marking a student absent in the fourth period says nothing about the fifth (BR-3). It does not touch any daily register (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "attendance.lecture.mark",
+          "method": "POST",
+          "path": "/api/v1/attendance/lectures",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "lecture_id + date, since a period carries one register and a repeat returns ALREADY_MARKED",
+          "purpose": "Save one mark per student for a single timetabled period.",
+          "parameters": [
+            {
+              "name": "lecture_id",
+              "source": "resolved",
+              "sourceRef": "$request.lecture_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "timetable_slot",
+                "fromPhrase": "$request.lecture_phrase",
+                "onNoMatch": "Refuse. No lecture matches, or none assigned to the acting user on that date.",
+                "onAmbiguous": "Ask, naming the candidates with period, subject, class and section."
+              },
+              "notes": "A period from the timetable, scheduled to the acting teacher on that date. A lecture nobody was scheduled to teach cannot be marked (BR-2, E1, E2)."
+            },
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the future, and a working day (E3)."
+            },
+            {
+              "name": "marks",
+              "source": "request",
+              "sourceRef": "$request.marks",
+              "required": true,
+              "type": "object[]",
+              "notes": "One entry per student on the lecture roster, each with a mark. Every student carries one (E4), and the marks come from what the actor stated."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The period's register as saved.",
+            "fields": [
+              {
+                "name": "lecture_attendance_id",
+                "type": "string",
+                "description": "This period's record, stored separately from every other (BR-1)."
+              },
+              {
+                "name": "period",
+                "type": "string",
+                "description": "Which period of the day."
+              },
+              {
+                "name": "subject",
+                "type": "string",
+                "description": "What was being taught."
+              },
+              {
+                "name": "marked_at",
+                "type": "datetime",
+                "description": "The correction window runs from here (BR-5)."
+              },
+              {
+                "name": "counts",
+                "type": "object",
+                "description": "present, absent, late, on_leave for this period alone (BR-3)."
+              },
+              {
+                "name": "pre_marked_on_leave",
+                "type": "object[]",
+                "description": "Students the roster already carried as on approved leave (BR-4)."
+              },
+              {
+                "name": "day_pattern",
+                "type": "object[]",
+                "description": "The student's marks across every period of the day, side by side — the pattern this use case exists to reveal (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_ASSIGNED",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The lecture is not assigned to the acting teacher.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved.",
+              "note": "A teacher marks only the lectures the timetable assigns to them (BR-2)."
+            },
+            {
+              "code": "NO_LECTURE_SCHEDULED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "No lecture is scheduled for that period on that date.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved.",
+              "note": "A period the timetable did not schedule cannot be marked (BR-11)."
+            },
+            {
+              "code": "CLOSED_DAY",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The date is an off-day or a holiday.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved."
+            },
+            {
+              "code": "STUDENT_UNMARKED",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "A student on the roster carries no mark.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved."
+            },
+            {
+              "code": "ALREADY_MARKED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The period has already been marked.",
+              "written": "Nothing.",
+              "notWritten": "No second record.",
+              "note": "The message names the time. Changing it is a correction (BR-6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report the roster and the counts before the plan is emitted, exactly as for a daily register. \"Everyone present\" asserts a mark per child, and each is evidence.",
+          "derivedFrom": [
+            "BR-1",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never let a mark in one period speak for another. A mark applies to that period alone (BR-3), so a request covering \"the rest of the day\" is several plans, one per lecture, each against a lecture the timetable assigns.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never mark a lecture the timetable did not schedule to the acting teacher. E1 and E2 are BR-2 working — a lecture nobody was scheduled to teach has no register to write.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-11",
+            "E1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never write a daily register from period marks, or the reverse. The two are separate records read side by side, and neither overwrites the other (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never overwrite a pre-applied leave mark. Approved leave is applied before the teacher begins so a child on sanctioned leave is not marked absent in any period (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A saved period register is not deleted or re-saved. A wrong mark is corrected through attendance.lecture.correct, and the previous mark stays visible (BR-6). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "meri chauthi period ki hazri laga do — Ayesha aur Bilal ghair hazir",
+            "lang": "ur-Latn",
+            "gloss": "mark my fourth period attendance — Ayesha and Bilal absent"
+          },
+          "context": "Teacher, Johar Town branch. The timetable schedules them to 6-A period 4 today.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.lecture.mark",
+              "inputs": {
+                "lecture_id": "$request.lecture_phrase → \"period 4, 6-A, Mathematics\"",
+                "date": "2026-09-08",
+                "marks": "$request.marks → Ayesha and Bilal Absent; the remaining 26 Present",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The roster and counts are reported first (PR-1). This says nothing about periods 3 or 5 (PR-2)."
+            }
+          ],
+          "outcome": "Period 4's register is saved: 26 present, 2 absent. day_pattern comes back showing both students' marks across the whole day — which is what reveals a child present in the morning and gone by the afternoon (BR-8)."
+        },
+        {
+          "request": {
+            "text": "baaqi din ki bhi hazri laga do",
+            "lang": "ur-Latn",
+            "gloss": "mark the attendance for the rest of the day too"
+          },
+          "context": "Teacher, Johar Town branch, assigned to periods 4 and 6.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.lecture.mark",
+              "inputs": {
+                "lecture_id": "$request.lecture_phrase → \"period 4\"",
+                "date": "2026-09-08",
+                "marks": "$request.marks",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One plan per period, and only for periods the timetable assigns to this teacher (PR-2, PR-3)."
+            }
+          ],
+          "outcome": "Period 4 is marked. Report that period 6 is the actor's other lecture and needs its own marks — and that periods 1, 2, 3 and 5 belong to other teachers, so nothing here can mark them."
+        },
+        {
+          "request": {
+            "text": "paanchvi period ki hazri laga do",
+            "lang": "ur-Latn",
+            "gloss": "mark attendance for the fifth period"
+          },
+          "context": "Teacher, Johar Town branch, where period 5 is assigned to another teacher.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.lecture.mark",
+              "inputs": {
+                "lecture_id": "$request.lecture_phrase → \"period 5\"",
+                "date": "2026-09-08",
+                "marks": "$request.marks",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_ASSIGNED (E1)."
+            }
+          ],
+          "outcome": "Nothing is saved. Report that period 5 is assigned to another teacher — a lecture nobody was scheduled to teach cannot be marked, and this one was scheduled to somebody else (PR-3)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-02-PC-2",
+      "intent": {
+        "name": "attendance.lecture.correct",
+        "summary": "Change a mark on a period already marked, with the reason. One step, and the previous mark stays visible.",
+        "routesHere": [
+          "change Ayesha to present in period four, she was at the assembly",
+          {
+            "text": "chauthi period mein Ayesha ko present kar do",
+            "lang": "ur-Latn",
+            "gloss": "change Ayesha to present in period four"
+          },
+          {
+            "text": "is period ka mark galat tha",
+            "lang": "ur-Latn",
+            "gloss": "this period's mark was wrong"
+          },
+          {
+            "text": "bacha assembly mein tha, absent nahi tha",
+            "lang": "ur-Latn",
+            "gloss": "the child was at the assembly, not absent"
+          },
+          "correct the second period mark for this student"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "lecture ki hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark the lecture attendance"
+            },
+            "goesTo": "attendance.lecture.mark — UC-05-02-PC-1"
+          },
+          {
+            "request": {
+              "text": "din ka mark theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the day's mark"
+            },
+            "goesTo": "attendance.daily.correct — UC-05-01-PC-2",
+            "note": "The daily register and the period registers are separate records (BR-9)."
+          },
+          {
+            "request": {
+              "text": "saare periods theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct all the periods"
+            },
+            "goesTo": "One correction per period.",
+            "note": "A mark applies to that period alone (BR-3), and each correction carries its own reason."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "attendance.lecture.correct",
+            "inputs": {
+              "lecture_attendance_id": "$request.lecture_attendance_phrase",
+              "student_id": "$request.student_phrase",
+              "new_mark": "$request.new_mark",
+              "correction_reason": "$request.correction_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Within the hour the teacher may change what they marked; after it the Coordinator does (BR-5, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A closed correction window and a missing reason are enforced by the API and arrive as errors.",
+        "atomicity": "One write: the new mark, the previous one kept beside it, who changed it and why, together with the audit entry or not at all (BR-6). It changes that period alone — no other period and no daily register is touched (BR-3, BR-9)."
+      },
+      "operations": [
+        {
+          "name": "attendance.lecture.correct",
+          "method": "POST",
+          "path": "/api/v1/attendance/lectures/{lecture_attendance_id}/corrections",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "lecture_attendance_id + student_id + new_mark",
+          "purpose": "Change one student's mark for one period, keeping the previous mark visible.",
+          "parameters": [
+            {
+              "name": "lecture_attendance_id",
+              "source": "resolved",
+              "sourceRef": "$request.lecture_attendance_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "lecture_attendance_record",
+                "fromPhrase": "$request.lecture_attendance_phrase",
+                "onNoMatch": "Refuse. No marked period matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with period, subject, class and when they were marked."
+              },
+              "notes": "The period's saved register, resolved from the period, class and date the actor named."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student on that register matches.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The student whose mark changes."
+            },
+            {
+              "name": "new_mark",
+              "source": "request",
+              "sourceRef": "$request.new_mark",
+              "required": true,
+              "type": "enum: Present | Absent | Late | On leave",
+              "notes": "What the mark becomes for this period alone (BR-3)."
+            },
+            {
+              "name": "correction_reason",
+              "source": "request",
+              "sourceRef": "$request.correction_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters. Required for every change (BR-6, E6). The actor's own words."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The correction, and what it replaced.",
+            "fields": [
+              {
+                "name": "correction_id",
+                "type": "string",
+                "description": "The correction."
+              },
+              {
+                "name": "period",
+                "type": "string",
+                "description": "Which period changed."
+              },
+              {
+                "name": "changed_from",
+                "type": "string",
+                "description": "The previous mark, kept beside the new one (BR-6)."
+              },
+              {
+                "name": "new_mark",
+                "type": "string",
+                "description": "What it is now."
+              },
+              {
+                "name": "corrected_by",
+                "type": "string",
+                "description": "Who changed it."
+              },
+              {
+                "name": "within_teacher_window",
+                "type": "boolean",
+                "description": "True where the teacher's hour had not passed (BR-5)."
+              },
+              {
+                "name": "day_pattern",
+                "type": "object[]",
+                "description": "The student's marks across the day after the change (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WINDOW_PASSED",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "The teacher's correction window has passed.",
+              "written": "Nothing.",
+              "notWritten": "Not corrected.",
+              "note": "After the hour the Coordinator makes the change (BR-7)."
+            },
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "A change was made with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not corrected.",
+              "note": "Ask; never compose one."
+            },
+            {
+              "code": "NOT_ASSIGNED",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The lecture is not assigned to the acting user.",
+              "written": "Nothing.",
+              "notWritten": "Not corrected."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the correction reason. Every change is logged with who made it and why (BR-6), and a reason nobody gave explains nothing.",
+          "derivedFrom": [
+            "BR-6",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Correct one period at a time. A mark applies to that period alone (BR-3), and a child absent in the fourth and present in the fifth is two facts with two reasons.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never treat WINDOW_PASSED as something to route around. After the hour the Coordinator makes the change (BR-7).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-7",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the day pattern after the change. It is what the period marking exists to reveal (BR-8), and a correction that fixes one period may make the rest of the day read differently.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A correction is not undone. Correcting again is another recorded change with the previous mark still visible (BR-6). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "chauthi period mein Ayesha ko present kar do — wo assembly mein thi",
+            "lang": "ur-Latn",
+            "gloss": "change Ayesha to present in period four — she was at the assembly"
+          },
+          "context": "Teacher, Johar Town branch, ten minutes after saving period 4.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.lecture.correct",
+              "inputs": {
+                "lecture_attendance_id": "$request.lecture_attendance_phrase → \"period 4, 6-A, 08-09-2026\"",
+                "student_id": "$request.student_phrase → \"Ayesha\"",
+                "new_mark": "Present",
+                "correction_reason": "Was at the school assembly during the period.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Period 4 now reads Present with Absent kept beside it. day_pattern comes back showing her whole day — report it, because the same assembly may explain period 3 too (PR-4)."
+        },
+        {
+          "request": {
+            "text": "teesri aur chauthi dono period theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "correct both the third and fourth periods"
+          },
+          "context": "Teacher, Johar Town branch, assigned to both.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.lecture.correct",
+              "inputs": {
+                "lecture_attendance_id": "$request.lecture_attendance_phrase → \"period 3\"",
+                "student_id": "$request.student_phrase",
+                "new_mark": "$request.new_mark",
+                "correction_reason": "$request.correction_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One plan per period, each with its own reason (PR-2)."
+            }
+          ],
+          "outcome": "Period 3 is corrected. Period 4 is a separate plan — confirm the reason applies to both before emitting the second, since a child may have been elsewhere for one and not the other."
+        },
+        {
+          "request": {
+            "text": "kal ke period ka mark theek karna hai",
+            "lang": "ur-Latn",
+            "gloss": "yesterday's period mark needs correcting"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.lecture.correct",
+              "inputs": {
+                "lecture_attendance_id": "$request.lecture_attendance_phrase",
+                "student_id": "$request.student_phrase",
+                "new_mark": "$request.new_mark",
+                "correction_reason": "$request.correction_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns WINDOW_PASSED (E5)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the Coordinator makes changes after the hour, and that the teacher can ask them (PR-3)."
+        }
+      ]
+    }
+  ]
+}

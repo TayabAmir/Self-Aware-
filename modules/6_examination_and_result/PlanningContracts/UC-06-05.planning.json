@@ -1,0 +1,647 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-06-05",
+    "name": "Combine several exams into one overall figure for each student",
+    "module": "Examination",
+    "file": "../UseCases/UC-06-05.json",
+    "featureRef": "6.5 Cumulative results across terms"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-06-05-PC-1",
+      "intent": {
+        "name": "exam.weighting.set",
+        "summary": "Set what each exam is worth in the year's cumulative figure. One step, and the weights must total a hundred.",
+        "routesHere": [
+          "set the weighting — first term 30, mid-term 30, final 40",
+          {
+            "text": "first term 30, mid-term 30, final 40 rakh do",
+            "lang": "ur-Latn",
+            "gloss": "make it first term 30, mid-term 30, final 40"
+          },
+          {
+            "text": "har term ka weight set kar do",
+            "lang": "ur-Latn",
+            "gloss": "set each term's weight"
+          },
+          {
+            "text": "aakhri term ka wazan zyada rakho",
+            "lang": "ur-Latn",
+            "gloss": "give the final term more weight"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "cumulative natija nikal do",
+              "lang": "ur-Latn",
+              "gloss": "produce the cumulative result"
+            },
+            "goesTo": "exam.cumulative.run — UC-06-05-PC-2",
+            "note": "Setting the weights decides what each exam is worth. Running the aggregation produces the figures."
+          },
+          {
+            "request": {
+              "text": "position nikal do",
+              "lang": "ur-Latn",
+              "gloss": "work out the positions"
+            },
+            "goesTo": "merit.list.generate — UC-06-12",
+            "note": "No position is calculated here. Ranking is produced only by the merit list (BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.weighting.set",
+            "inputs": {
+              "session_id": "$session.academic_session_id",
+              "exam_weights": "$request.exam_weights",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The weights together must total a hundred (BR-2) — a final term worth more than a first is a deliberate decision, and weights that do not total a hundred produce a figure nobody can interpret."
+          }
+        ],
+        "onFailure": "Stop and report. Weights that do not total a hundred arrive as an error naming the total they came to.",
+        "atomicity": "One write: the weighting and the audit entry together or not at all. The weighting used is recorded with each figure the aggregation produces (BR-8), so a cumulative result stays explainable after the weighting changes. Setting weights calculates nothing on its own."
+      },
+      "operations": [
+        {
+          "name": "exam.weighting.set",
+          "method": "PUT",
+          "path": "/api/v1/sessions/{session_id}/exam-weighting",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "session_id, since a session carries one weighting at a time",
+          "purpose": "Set the weight each exam carries in the cumulative figure.",
+          "parameters": [
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "exam_weights",
+              "source": "request",
+              "sourceRef": "$request.exam_weights",
+              "required": true,
+              "type": "object[]",
+              "notes": "Per exam: the exam and its weight, each greater than zero, together totalling a hundred (BR-2, E1). Every figure is the Coordinator's — a planner that divided a hundred evenly across the terms has decided what the year is worth."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The weighting as set.",
+            "fields": [
+              {
+                "name": "session_id",
+                "type": "string",
+                "description": "The session."
+              },
+              {
+                "name": "weights",
+                "type": "object[]",
+                "description": "Each exam with its weight."
+              },
+              {
+                "name": "total",
+                "type": "number",
+                "description": "A hundred."
+              },
+              {
+                "name": "exams_not_weighted",
+                "type": "string[]",
+                "description": "Exams in the session carrying no weight, which take no part in the cumulative figure."
+              },
+              {
+                "name": "figures_stale",
+                "type": "boolean",
+                "description": "True where a cumulative figure was already produced under a different weighting. It is not recalculated by this; the aggregation is run again (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WEIGHTS_NOT_HUNDRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The weights do not total a hundred.",
+              "written": "Nothing.",
+              "notWritten": "No weighting saved.",
+              "note": "The message names the total they came to (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply or adjust a weight. What a term is worth is a decision about how the school values the year (BR-2), and a planner that split a hundred three ways has made it.",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never normalise weights to reach a hundred. E1 is BR-2 working — report the total they came to and let the Coordinator say which figure is wrong.",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the exams left unweighted. They take no part in the cumulative figure, and an exam quietly excluded from a student's standing is not obvious from anywhere else.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain the aggregation. Setting weights calculates nothing, and running it is a separate decision about when the standing is produced.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report where figures already exist under an older weighting. They are not recalculated by this (BR-10), and a standing produced under the old weights sits beside the new ones until the aggregation is run again.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A weighting is set again rather than withdrawn. The weighting used stays recorded with each figure already produced, so an earlier cumulative result remains explainable (BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "first term 30, mid-term 30 aur final 40 rakh do",
+            "lang": "ur-Latn",
+            "gloss": "make it first term 30, mid-term 30 and final 40"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.weighting.set",
+              "inputs": {
+                "session_id": "$session.academic_session_id",
+                "exam_weights": "first term 30, mid-term 30, final 40",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Every figure is the Coordinator's (PR-1)."
+            }
+          ],
+          "outcome": "The weighting is set. Report any exam in the session left unweighted (PR-3), and that nothing is calculated until the aggregation is run (PR-4)."
+        },
+        {
+          "request": {
+            "text": "teeno terms ka barabar wazan rakh do",
+            "lang": "ur-Latn",
+            "gloss": "give all three terms equal weight"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.weighting.set",
+              "inputs": {
+                "session_id": "$session.academic_session_id",
+                "exam_weights": "$request.exam_weights — three equal weights",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The Coordinator said equal, which is a figure. Thirds do not total a hundred exactly, so the plan carries their own numbers rather than a rounding a planner chose (PR-2)."
+            }
+          ],
+          "outcome": "Where the Coordinator gave 33, 33 and 34 it is set. Where they said only \"equal\", ask which term carries the extra mark — a planner that put it on the final has decided the year's weighting by rounding."
+        },
+        {
+          "request": {
+            "text": "first term 30 aur final 40 kar do",
+            "lang": "ur-Latn",
+            "gloss": "make first term 30 and final 40"
+          },
+          "context": "Coordinator, Johar Town branch, with a mid-term in the session and no weight given for it.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.weighting.set",
+              "inputs": {
+                "session_id": "$session.academic_session_id",
+                "exam_weights": "first term 30, final 40",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as stated. The API returns WEIGHTS_NOT_HUNDRED (E1) at 70."
+            }
+          ],
+          "outcome": "Nothing is saved. Report that the weights come to 70 and ask what the mid-term is worth — never make up the missing 30 (PR-2)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-05-PC-2",
+      "intent": {
+        "name": "exam.cumulative.run",
+        "summary": "Combine approved exam results into one weighted figure per student across a section, a class or the session year. One step.",
+        "routesHere": [
+          "run the cumulative results for class 8",
+          {
+            "text": "cumulative natija nikal do",
+            "lang": "ur-Latn",
+            "gloss": "produce the cumulative result"
+          },
+          {
+            "text": "saal bhar ka mila jula natija banao",
+            "lang": "ur-Latn",
+            "gloss": "produce the combined result for the whole year"
+          },
+          {
+            "text": "class 8 ke liye teeno terms mila do",
+            "lang": "ur-Latn",
+            "gloss": "combine all three terms for class 8"
+          },
+          "run the aggregation again — a mark was corrected"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "position ya rank nikal do",
+              "lang": "ur-Latn",
+              "gloss": "work out the position or rank"
+            },
+            "goesTo": "merit.list.generate — UC-06-12",
+            "note": "No position is calculated here. Ranking is produced only by the merit list, and a cumulative figure that quietly implied an order would compete with it (BR-7)."
+          },
+          {
+            "request": {
+              "text": "natija theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the result"
+            },
+            "goesTo": "exam.mark.correct — UC-06-02-PC-4, then run again",
+            "note": "The aggregation reads the exam results and never changes them. Correcting a cumulative figure means correcting a mark and running this again (BR-9)."
+          },
+          {
+            "request": {
+              "text": "report card banao",
+              "lang": "ur-Latn",
+              "gloss": "produce the report card"
+            },
+            "goesTo": "Not offered here.",
+            "note": "The cumulative record is carried onto the final report card or transcript, which is produced elsewhere (BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.cumulative.run",
+            "inputs": {
+              "session_id": "$session.academic_session_id",
+              "scope": "$request.scope",
+              "class_id": "$request.class_phrase",
+              "section_id": "$request.section_phrase",
+              "exam_ids": "$request.exam_phrases",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step across every student in scope (BR-3). Nothing is typed: each figure is the weighted sum of results the aggregation reads."
+          }
+        ],
+        "onFailure": "Stop and report. Unapproved results, fewer than two exams, and an unclassified absence all arrive as errors naming what is at fault.",
+        "atomicity": "One write: a cumulative figure for every student in scope, each stamped with the weighting used (BR-8), together or not at all. It reads the exam results and never changes them (BR-9). Re-running replaces the previous figure and records that it was re-run, so a changed standing is visible rather than silent (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "exam.cumulative.run",
+          "method": "POST",
+          "path": "/api/v1/sessions/{session_id}/cumulative-results",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "session_id + scope + class_id + section_id + exam_ids, since a repeat replaces rather than stacks",
+          "purpose": "Run the cumulative aggregation across the students in scope.",
+          "parameters": [
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "scope",
+              "source": "request",
+              "sourceRef": "$request.scope",
+              "required": true,
+              "type": "enum: Section | Class | Session year",
+              "notes": "What the aggregation covers. The actor's; never widened from a class to the year."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the scope is Class or Section. Omitted for Session year."
+            },
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No section matches within that class.",
+                "onAmbiguous": "Ask, naming the sections."
+              },
+              "notes": "Required where the scope is Section."
+            },
+            {
+              "name": "exam_ids",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrases",
+              "required": true,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrases",
+                "onNoMatch": "Refuse. One or more exams named do not match.",
+                "onAmbiguous": "Ask, naming the candidates with their code, dates and whether their results are approved."
+              },
+              "notes": "Two or more exams whose results have been approved (BR-1, E2, E3). Named by the actor — the aggregation does not decide which exams make up a student's year."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The run and what it produced.",
+            "fields": [
+              {
+                "name": "run_at",
+                "type": "datetime",
+                "description": "When the aggregation ran. It reads the results as committed at that moment (E8)."
+              },
+              {
+                "name": "run_by",
+                "type": "string",
+                "description": "The Coordinator."
+              },
+              {
+                "name": "students_calculated",
+                "type": "integer",
+                "description": "Students with a complete cumulative figure."
+              },
+              {
+                "name": "students_incomplete",
+                "type": "integer",
+                "description": "Students with an outstanding excused absence, shown as incomplete until the makeup is marked (BR-5)."
+              },
+              {
+                "name": "students_not_aggregated",
+                "type": "object[]",
+                "description": "Students with an unclassified absence in a combined exam, and students who sat none of the exams (E4, E5)."
+              },
+              {
+                "name": "weighting_applied",
+                "type": "object[]",
+                "description": "The weights used, recorded with each figure (BR-8)."
+              },
+              {
+                "name": "replaced_previous_run",
+                "type": "boolean",
+                "description": "True where an earlier figure was replaced. The re-run is recorded so a changed standing is visible (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RESULTS_NOT_APPROVED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "An exam included has results not yet approved.",
+              "written": "Nothing.",
+              "notWritten": "Nothing calculated.",
+              "note": "The message names the exams. An exam whose results the Coordinator has not released is not part of anybody's overall standing (BR-1)."
+            },
+            {
+              "code": "TOO_FEW_EXAMS",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "Fewer than two exams were selected.",
+              "written": "Nothing.",
+              "notWritten": "Nothing calculated."
+            },
+            {
+              "code": "ABSENCE_UNCLASSIFIED",
+              "mapsTo": "E4",
+              "httpStatus": 200,
+              "meaning": "A student's absence in a combined exam has not been classified.",
+              "written": "Every other student in scope is aggregated.",
+              "notWritten": "That student is not aggregated.",
+              "treatedAsSuccess": true,
+              "note": "Not a refusal for the run. How the exam counts for them is not yet decided (BR-4). Report them by name."
+            },
+            {
+              "code": "NO_EXAMS_SAT",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "A student sat none of the combined exams.",
+              "written": "Every other student is aggregated.",
+              "notWritten": "No figure for them.",
+              "treatedAsSuccess": true,
+              "note": "Report them by name."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose which exams make up a student's year. They are named by the actor (BR-1) — a planner that swept in every exam in the session has decided what a child's standing is made of.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never widen the scope. Section, Class and Session year are three different questions, and running the year when a section was asked for produces figures for children nobody was looking at.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never include an exam whose results are not approved. E2 is BR-1 working, and approving one to clear the way would put a grade in front of families as a side effect of an aggregation.",
+          "derivedFrom": [
+            "BR-1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never present a cumulative figure as a position. No rank is calculated here, and one implied in a reply would compete with the merit list (BR-7).",
+          "derivedFrom": [
+            "BR-7",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the students left out by name, and why. An unclassified absence and a student who sat nothing are different cases (E4, E5), and both are invisible in a total.",
+          "derivedFrom": [
+            "BR-4",
+            "E4",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report that an earlier figure was replaced. Re-running replaces the previous standing and records the re-run (BR-10), and somebody looking at a figure from this morning should know it has moved.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never plan a correction alongside a re-run. The aggregation reads results and never changes them; correcting a figure means correcting a mark first (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An aggregation is not undone. It is run again, which replaces the previous figure and records that it was re-run (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "class 8 ke liye teeno terms mila kar natija nikal do",
+            "lang": "ur-Latn",
+            "gloss": "combine all three terms and produce the result for class 8"
+          },
+          "context": "Coordinator, Johar Town branch, all three exams approved.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.cumulative.run",
+              "inputs": {
+                "session_id": "$session.academic_session_id",
+                "scope": "Class",
+                "class_id": "$request.class_phrase → \"class 8\"",
+                "section_id": "omitted",
+                "exam_ids": "the three exams the Coordinator named",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The exams are the Coordinator's list, not every exam in the session (PR-1)."
+            }
+          ],
+          "outcome": "Figures produced for every student in class 8, each stamped with the weighting used. Report the incomplete ones and anybody left out by name (PR-5), and that no position is implied by any of it (PR-4)."
+        },
+        {
+          "request": {
+            "text": "saal bhar ka natija mila do, final term abhi manzoor nahi hua",
+            "lang": "ur-Latn",
+            "gloss": "combine the whole year's results, the final term is not approved yet"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.cumulative.run",
+              "inputs": {
+                "session_id": "$session.academic_session_id",
+                "scope": "Session year",
+                "class_id": "omitted",
+                "section_id": "omitted",
+                "exam_ids": "the exams named, including the unapproved final",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. No release is chained to clear the way (PR-3). The API returns RESULTS_NOT_APPROVED (E2)."
+            }
+          ],
+          "outcome": "Nothing is calculated. Report that the final term's results are not released and that releasing them puts a grade in front of every family — which is a decision to take on its own, not to get an aggregation to run."
+        },
+        {
+          "request": {
+            "text": "cumulative natija nikal kar position bhi bata do",
+            "lang": "ur-Latn",
+            "gloss": "produce the cumulative result and tell me the positions too"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.cumulative.run",
+              "inputs": {
+                "session_id": "$session.academic_session_id",
+                "scope": "$request.scope",
+                "class_id": "$request.class_phrase",
+                "section_id": "$request.section_phrase",
+                "exam_ids": "$request.exam_phrases",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The aggregation only. No ordering is produced or implied (PR-4)."
+            }
+          ],
+          "outcome": "The figures are produced. Report that ranking comes only from the merit list, which decides how much of the order families are shown — a position quietly read off a cumulative figure would bypass that decision entirely."
+        }
+      ]
+    }
+  ]
+}

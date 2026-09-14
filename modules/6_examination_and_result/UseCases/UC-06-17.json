@@ -1,0 +1,992 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-06-17",
+  "featureRef": "6.17 Missed quiz and makeup quiz",
+  "name": "Handle a student who misses a quiz without recording a false zero",
+  "module": "Examination",
+  "alsoAffectsModules": [
+    "Messaging (SMS, WhatsApp, Email)"
+  ],
+  "priority": "MVP",
+  "priorityReason": "A quiz average pulled down by a zero the student never earned misrepresents them, and quizzes are frequent.",
+  "goal": {
+    "actor": "a Teacher",
+    "capability": "to mark a student absent from a quiz and decide whether to offer a makeup",
+    "outcome": "a missed quiz is left out of the average rather than counted as a failure, and I can put it right without a committee"
+  },
+  "primaryActor": "Teacher",
+  "secondaryActors": [
+    {
+      "actor": "Student",
+      "involvement": "Sits the makeup quiz."
+    },
+    {
+      "actor": "Coordinator",
+      "involvement": "Sees quiz absences across classes."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "involvement": "Is told their child missed the quiz, and told the result if a makeup is taken."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "An online quiz window closes with a student who never attempted it, which marks them absent automatically.",
+        "source": "UC-06-08"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "A quiz exists and is being marked.",
+      "establishedBy": {
+        "id": "UC-06-08",
+        "name": "Quiz creation",
+        "link": "UC-06-08.json"
+      }
+    },
+    {
+      "condition": "An authenticated session exists and the quiz belongs to the acting teacher's subject.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "For an online quiz, the attempt window has closed."
+    }
+  ],
+  "postConditions": [
+    "The student carries Absent for that quiz rather than a score of zero.",
+    "The quiz is left out of their quiz average, so an average they never earned a zero on is not pulled down by one.",
+    "The teacher decided whether to offer a makeup, without needing coordinator approval or an admin release.",
+    "Where a makeup was taken the score replaced the Absent flag and is tagged as a makeup.",
+    "Where no makeup was offered the quiz stayed out of the average and the absence stands on the record.",
+    "The guardian was told the quiz was missed, and told the result where a makeup was taken.",
+    "The Coordinator can see quiz absences across classes, so a pattern is visible even though each quiz is informal.",
+    "Nothing about the formal examination flow was involved. A quiz absence needs neither classification nor approval."
+  ],
+  "screens": [
+    {
+      "name": "Mark quiz",
+      "route": "/quizzes/{quizId}/mark",
+      "sidebar": "Examination",
+      "columns": [
+        "Roll number",
+        "Student",
+        "Score",
+        "Absent",
+        "Makeup",
+        "Note"
+      ],
+      "defaultSort": "Roll number ascending",
+      "actions": [
+        "Enter scores",
+        "Mark absent",
+        "Offer makeup",
+        "Submit"
+      ],
+      "visibleTo": [
+        "Teacher",
+        "Coordinator"
+      ]
+    },
+    {
+      "name": "Quiz absences",
+      "route": "/quizzes/absences",
+      "sidebar": "Examination",
+      "columns": [
+        "Student",
+        "Class",
+        "Subject",
+        "Quiz",
+        "Date",
+        "Makeup offered",
+        "Makeup score",
+        "Status"
+      ],
+      "defaultSort": "Date, newest first",
+      "filters": [
+        "Class",
+        "Subject",
+        "Makeup outstanding",
+        "Date range"
+      ],
+      "actions": [
+        "Open",
+        "Export"
+      ],
+      "visibleTo": [
+        "Teacher",
+        "Coordinator",
+        "School Admin"
+      ]
+    },
+    {
+      "name": "Makeup quiz",
+      "route": "/quizzes/{quizId}/makeup/{studentId}",
+      "sidebar": "Examination",
+      "actions": [
+        "Reopen online quiz",
+        "Record a paper score",
+        "Mark absent again",
+        "Save"
+      ],
+      "visibleTo": [
+        "Teacher"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Quiz",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "A quiz of the acting teacher's subject.",
+      "example": "Chapter 4 quiz — Grade 9 Physics",
+      "lookupSource": "The teacher's quizzes"
+    },
+    {
+      "name": "Score",
+      "type": "number",
+      "required": "conditional",
+      "validation": "0 to the quiz total. Closed for an absent student (BR-2).",
+      "example": 8,
+      "requiredWhen": "The student attempted the quiz"
+    },
+    {
+      "name": "Absent",
+      "type": "boolean",
+      "required": "yes",
+      "validation": "Marked instead of entering a score. Set automatically for an online quiz never attempted (BR-1).",
+      "default": false,
+      "example": true
+    },
+    {
+      "name": "Makeup offered",
+      "type": "boolean",
+      "required": "no",
+      "validation": "The teacher's own decision. Needs neither coordinator approval nor admin release (BR-4).",
+      "default": false,
+      "example": true
+    },
+    {
+      "name": "Makeup route",
+      "type": "enum",
+      "required": "conditional",
+      "validation": "How the makeup is given — the online quiz reopened for that student with a new window, or the printed quiz marked by hand (BR-5).",
+      "example": "Reopen the online quiz",
+      "enumValues": [
+        "Reopen the online quiz",
+        "Printed quiz marked by hand"
+      ],
+      "requiredWhen": "A makeup is being offered"
+    },
+    {
+      "name": "New window",
+      "type": "datetime",
+      "required": "conditional",
+      "validation": "The window for the reopened online quiz.",
+      "example": "18-11-2026 14:00 to 15:00",
+      "requiredWhen": "The makeup route is to reopen the online quiz"
+    },
+    {
+      "name": "Makeup score",
+      "type": "number",
+      "required": "conditional",
+      "validation": "0 to the quiz total. Replaces the Absent flag (BR-6).",
+      "example": 7,
+      "requiredWhen": "The makeup has been taken"
+    },
+    {
+      "name": "Makeup tag",
+      "type": "generated",
+      "required": "no",
+      "validation": "Marks the score as earned in a makeup (BR-6).",
+      "example": "Makeup"
+    },
+    {
+      "name": "Note",
+      "type": "text",
+      "required": "no",
+      "validation": "Maximum 250 characters.",
+      "example": "Was at a sports fixture."
+    },
+    {
+      "name": "Status",
+      "type": "generated",
+      "required": "no",
+      "validation": "See the lifecycle below.",
+      "default": "Absent",
+      "example": "Makeup taken"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Quiz mark",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One per student per quiz, holding the score or the Absent state. Never deleted."
+    },
+    {
+      "entity": "Quiz absence",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One per absent student per quiz, with any makeup offered."
+    },
+    {
+      "entity": "Quiz",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read for the total and the subject."
+    },
+    {
+      "entity": "Online quiz attempt",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read for an attempt never started, which marks the student absent (BR-1)."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Every absence, every makeup offered and every makeup score."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Teacher",
+      "actions": [
+        "view",
+        "create",
+        "edit"
+      ],
+      "rowScope": "Their own quizzes only.",
+      "notes": "Marks a student absent, decides whether to offer a makeup, and marks it. No approval is needed (BR-4)."
+    },
+    {
+      "actor": "Coordinator",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Classes in their remit.",
+      "notes": "Sees quiz absences across classes, so a pattern is visible even though each quiz is informal (BR-8)."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Reviews quiz absences."
+    },
+    {
+      "actor": "Student",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own quizzes only.",
+      "notes": "Sits the makeup where one is offered."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own children only.",
+      "notes": "Is told the quiz was missed and the makeup result."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches."
+    },
+    {
+      "actor": "Staff, Accounts",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "The teacher may mark a student Absent instead of entering a score. For an online quiz, a student who never attempts it within the window is marked absent automatically."
+    },
+    {
+      "id": "BR-2",
+      "rule": "An absent quiz is left out of the student's quiz average rather than counted as zero. A zero says they attempted it and answered nothing, which is a different and false statement."
+    },
+    {
+      "id": "BR-3",
+      "rule": "Absent is a state on the quiz mark, and the score field is closed for it, exactly as for a formal exam."
+    },
+    {
+      "id": "BR-4",
+      "rule": "The teacher decides whether to offer a makeup. Because a quiz is informal this needs neither coordinator approval nor admin release, and requiring one would mean quizzes are never put right."
+    },
+    {
+      "id": "BR-5",
+      "rule": "Where a makeup is offered the teacher either reopens the online quiz for that student with a new window, or gives them the printed quiz and marks it by hand."
+    },
+    {
+      "id": "BR-6",
+      "rule": "The makeup score replaces the Absent flag and is tagged as a makeup, so a mark earned in a second sitting is distinguishable."
+    },
+    {
+      "id": "BR-7",
+      "rule": "Where no makeup is offered the quiz stays out of the average and the absence stands on the record. Nothing is counted as zero by default."
+    },
+    {
+      "id": "BR-8",
+      "rule": "The Coordinator can see quiz absences across classes. A student missing quizzes repeatedly is a pattern worth seeing even though each quiz is informal."
+    },
+    {
+      "id": "BR-9",
+      "rule": "The guardian is told the quiz was missed, and told the result where a makeup is taken."
+    },
+    {
+      "id": "BR-10",
+      "rule": "A student absent from the makeup too is recorded absent again, and the quiz stays out of the average."
+    },
+    {
+      "id": "BR-11",
+      "rule": "None of this touches the formal examination flow. A quiz absence needs no classification, no approval and no release."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Quiz absence",
+      "states": [
+        "Absent",
+        "Makeup offered",
+        "Makeup taken",
+        "Missed again",
+        "No makeup"
+      ],
+      "initial": "Absent",
+      "terminal": [
+        "Makeup taken",
+        "Missed again",
+        "No makeup"
+      ],
+      "transitions": [
+        {
+          "from": "Absent",
+          "to": "Makeup offered",
+          "triggeredBy": "Teacher",
+          "condition": "The teacher offers a makeup (BR-4)."
+        },
+        {
+          "from": "Absent",
+          "to": "No makeup",
+          "triggeredBy": "Teacher",
+          "condition": "No makeup is offered. The quiz stays out of the average (BR-7)."
+        },
+        {
+          "from": "Makeup offered",
+          "to": "Makeup taken",
+          "triggeredBy": "Teacher",
+          "condition": "The makeup score replaces the Absent flag (BR-6)."
+        },
+        {
+          "from": "Makeup offered",
+          "to": "Missed again",
+          "triggeredBy": "Teacher or System",
+          "condition": "The student is absent from the makeup too (BR-10)."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Teacher",
+      "navigation": "Login → Examination → Mark quiz",
+      "userAction": "Marks the quiz, and marks a student Absent instead of entering a score where they did not attempt it.",
+      "function": "markQuizAbsent(quizId, studentId)",
+      "systemResponse": "Sets Absent as a state on the mark and closes the score field for that student.",
+      "rules": [
+        "BR-1",
+        "BR-3"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "excludeFromQuizAverage(quizId, studentId)",
+      "systemResponse": "Leaves the quiz out of the student's quiz average rather than counting it as zero.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "Teacher",
+      "navigation": "Mark quiz → Offer makeup",
+      "userAction": "Decides whether to offer a makeup, without needing approval from anybody.",
+      "function": "offerQuizMakeup(quizId, studentId, route)",
+      "systemResponse": "Records the decision and the route chosen.",
+      "rules": [
+        "BR-4",
+        "BR-5"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "Teacher",
+      "navigation": "Makeup quiz → Reopen online quiz, or Record a paper score",
+      "userAction": "Reopens the online quiz for that student with a new window, or gives them the printed quiz.",
+      "function": "reopenQuizForStudent(quizId, studentId, window)",
+      "systemResponse": "Opens the new window, or waits for a hand-marked score.",
+      "rules": [
+        "BR-5"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "Student",
+      "navigation": "Sits the makeup",
+      "userAction": "Attempts the reopened quiz, or sits the printed one.",
+      "function": "—",
+      "systemResponse": "—",
+      "rules": []
+    },
+    {
+      "step": 6,
+      "actor": "Teacher",
+      "navigation": "Makeup quiz → Save",
+      "userAction": "Records the makeup score.",
+      "function": "recordQuizMakeupScore(quizId, studentId, score)",
+      "systemResponse": "Replaces the Absent flag, tags the score as a makeup and returns the quiz to the average.",
+      "rules": [
+        "BR-6"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "notifyGuardianOfQuiz(quizId, studentId)",
+      "systemResponse": "Tells the guardian the quiz was missed, and tells them the result where a makeup was taken.",
+      "rules": [
+        "BR-9"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 1,
+      "condition": "The quiz was online and the student never attempted it",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "They are marked absent automatically when the window closes, since there is nobody to observe it (BR-1).",
+      "function": "markQuizAbsent(quizId, studentId)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 3,
+      "condition": "The teacher offers no makeup",
+      "actor": "Teacher",
+      "navigation": "Mark quiz → Submit",
+      "behaviour": "The quiz stays out of the average and the absence stands on the record. Nothing is counted as zero by default (BR-7).",
+      "function": "markQuizAbsent(quizId, studentId)",
+      "resumesAtStep": 7
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 4,
+      "condition": "The makeup is given on paper",
+      "actor": "Teacher",
+      "navigation": "Makeup quiz → Record a paper score",
+      "behaviour": "The printed quiz is marked by hand and the score entered directly (BR-5).",
+      "function": "recordQuizMakeupScore(quizId, studentId, score)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 5,
+      "condition": "The student misses the makeup too",
+      "actor": "Teacher / System",
+      "navigation": "Makeup quiz → Mark absent again",
+      "behaviour": "They are recorded absent again and the quiz stays out of the average (BR-10).",
+      "function": "markQuizAbsent(quizId, studentId)",
+      "resumesAtStep": 7
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 1,
+      "condition": "The Coordinator reviews quiz absences across classes",
+      "actor": "Coordinator",
+      "navigation": "Login → Examination → Quiz absences",
+      "behaviour": "A student missing quizzes repeatedly is visible, even though each quiz is informal (BR-8).",
+      "function": "openQuizAbsences(scope, dateRange)"
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 1,
+      "condition": "A score is entered for a student marked absent",
+      "systemResponse": "The field is closed (BR-3).",
+      "messageShown": "This student was absent. A score cannot be entered, and Absent is not a zero.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E2",
+      "atStep": 6,
+      "condition": "A makeup score above the quiz total is entered",
+      "systemResponse": "It is refused.",
+      "messageShown": "Enter a score between 0 and 10.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E3",
+      "atStep": 4,
+      "condition": "An online quiz is reopened with a window in the past",
+      "systemResponse": "It is not saved.",
+      "messageShown": "Choose a window that has not already passed.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E4",
+      "atStep": 1,
+      "condition": "A teacher opens a quiz that is not theirs",
+      "systemResponse": "It does not open.",
+      "messageShown": "You do not have permission to view this record.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 6,
+      "condition": "A makeup score is recorded for a student who was not marked absent",
+      "systemResponse": "It is refused, since there is no Absent flag to replace.",
+      "messageShown": "This student has a score already.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 3,
+      "condition": "A makeup is offered for a quiz already closed and averaged",
+      "systemResponse": "It is permitted, and the average recalculates when the score is recorded.",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E7",
+      "atStep": 2,
+      "condition": "Every student in the class was absent",
+      "systemResponse": "The quiz is left out of every average.",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Quiz missed",
+      "recipient": "Parent / Guardian",
+      "channels": [
+        "whatsapp",
+        "inApp"
+      ],
+      "template": "QUIZ_MISSED",
+      "contents": [
+        "Child name",
+        "Subject",
+        "Quiz",
+        "Date",
+        "Whether a makeup is offered"
+      ],
+      "retry": "Per the Messaging module policy.",
+      "blocking": false
+    },
+    {
+      "event": "Makeup quiz available",
+      "recipient": "Student and Parent / Guardian",
+      "channels": [
+        "inApp",
+        "push"
+      ],
+      "template": "QUIZ_MAKEUP_AVAILABLE",
+      "contents": [
+        "Subject",
+        "Quiz",
+        "The new window",
+        "How to take it"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Makeup quiz marked",
+      "recipient": "Parent / Guardian",
+      "channels": [
+        "inApp"
+      ],
+      "template": "QUIZ_MAKEUP_RESULT",
+      "contents": [
+        "Child name",
+        "Quiz",
+        "Score",
+        "That it was earned in a makeup"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "The quiz is left out of the student's quiz average until a makeup score is recorded.",
+      "affects": {
+        "id": "UC-06-08",
+        "name": "Quiz creation",
+        "link": "UC-06-08.json"
+      }
+    },
+    {
+      "effect": "An online quiz never attempted marks the student absent automatically.",
+      "affects": {
+        "id": "UC-06-08",
+        "name": "Quiz creation",
+        "link": "UC-06-08.json"
+      }
+    },
+    {
+      "effect": "Quiz absences appear in the Coordinator's cross-class view.",
+      "affects": {
+        "id": "UC-24-01",
+        "name": "Custom report builder",
+        "link": "UC-24-01.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Quiz absences",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Student",
+        "Class",
+        "Subject",
+        "Quiz",
+        "Date",
+        "Makeup offered",
+        "Makeup score",
+        "Status"
+      ],
+      "grouping": "By class and subject",
+      "totals": "Absences per student, and count with no makeup offered"
+    },
+    {
+      "name": "Quiz averages",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Student",
+        "Subject",
+        "Quizzes set",
+        "Quizzes taken",
+        "Quizzes missed",
+        "Average"
+      ],
+      "grouping": "By subject",
+      "totals": "Class average across quizzes taken"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "A student who did not attempt a quiz",
+      "when": "the teacher marks them absent",
+      "then": "the score field is closed and no score can be entered"
+    },
+    {
+      "id": "AC-2",
+      "given": "The same student",
+      "when": "their quiz average is calculated",
+      "then": "the missed quiz is left out rather than counted as zero"
+    },
+    {
+      "id": "AC-3",
+      "given": "An online quiz whose window closed with a student who never opened it",
+      "when": "the window closes",
+      "then": "they are marked absent automatically"
+    },
+    {
+      "id": "AC-4",
+      "given": "A teacher offering a makeup",
+      "when": "they do so",
+      "then": "no coordinator approval and no admin release is needed"
+    },
+    {
+      "id": "AC-5",
+      "given": "A makeup taken on the reopened online quiz",
+      "when": "the score is recorded",
+      "then": "it replaces the Absent flag and is tagged as a makeup"
+    },
+    {
+      "id": "AC-6",
+      "given": "A makeup given on paper",
+      "when": "the teacher records the score",
+      "then": "it replaces the Absent flag in the same way"
+    },
+    {
+      "id": "AC-7",
+      "given": "A student absent from the makeup too",
+      "when": "the teacher records it",
+      "then": "they are absent again and the quiz stays out of the average"
+    },
+    {
+      "id": "AC-8",
+      "given": "A quiz where no makeup was offered",
+      "when": "the record is read",
+      "then": "the quiz stays out of the average and the absence stands"
+    },
+    {
+      "id": "AC-9",
+      "given": "A Coordinator opening quiz absences across classes",
+      "when": "the view renders",
+      "then": "a student missing quizzes repeatedly is visible"
+    },
+    {
+      "id": "AC-10",
+      "given": "A missed quiz",
+      "when": "the guardian's messages are checked",
+      "then": "they were told the quiz was missed, and told the result where a makeup was taken"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-06-08",
+        "name": "Quiz creation",
+        "link": "UC-06-08.json",
+        "why": "Owns the quiz, its total and its average."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Limits a teacher to their own quizzes."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      },
+      {
+        "id": "UC-15-01",
+        "name": "Parent and student portal",
+        "link": "UC-15-01.json",
+        "why": "Where the student sits a reopened quiz.",
+        "optional": true
+      }
+    ],
+    "masterData": [
+      "Quizzes and their totals",
+      "Quiz averaging rules"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Creating and setting the quiz",
+      "handledBy": {
+        "id": "UC-06-08",
+        "name": "Quiz creation",
+        "link": "UC-06-08.json"
+      }
+    },
+    {
+      "item": "A missed formal examination, which needs classification and approval",
+      "handledBy": {
+        "id": "UC-06-15",
+        "name": "Recording a student absent from an exam",
+        "link": "UC-06-15.json"
+      }
+    },
+    {
+      "item": "Arranging a formal makeup exam",
+      "handledBy": {
+        "id": "UC-06-16",
+        "name": "Makeup exam for an absent student",
+        "link": "UC-06-16.json"
+      }
+    },
+    {
+      "item": "The online quiz mechanism itself",
+      "handledBy": {
+        "id": "UC-06-06",
+        "name": "Online and computer-based exams",
+        "link": "UC-06-06.json"
+      }
+    },
+    {
+      "item": "Grading and result publication",
+      "handledBy": {
+        "id": "UC-06-03",
+        "name": "Gradebook and automatic grade calculation",
+        "link": "UC-06-03.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "No false zero",
+        "requirement": "There is no route by which a missed quiz becomes a zero. It is either left out of the average or replaced by a makeup score."
+      },
+      {
+        "aspect": "No approval overhead",
+        "requirement": "A teacher can mark an absence and offer a makeup without any approval step, because a quiz needing a committee is a quiz nobody puts right."
+      },
+      {
+        "aspect": "Average recalculation",
+        "requirement": "The quiz average recalculates the moment an absence or a makeup score is recorded."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Quiz marks and absences are retained for the academic session and its reporting."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "How many quizzes may a student miss before it is escalated beyond the teacher?",
+      "assumption": "Not specified. The Coordinator can see the pattern but nothing acts on it.",
+      "confirmWith": "Coordinator",
+      "blocksBuild": true
+    },
+    {
+      "question": "Is there a limit on how long after a quiz a makeup may be offered?",
+      "assumption": "Not specified.",
+      "confirmWith": "Coordinator",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should a makeup quiz score be capped, as a makeup exam might be?",
+      "assumption": "Not capped as modelled, since a quiz is informal.",
+      "confirmWith": "Coordinator",
+      "blocksBuild": false
+    },
+    {
+      "question": "Does a student who misses every quiz in a term have a quiz average at all?",
+      "assumption": "Not specified, and an average over nothing is not a figure.",
+      "confirmWith": "Coordinator",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should the guardian be told about every missed quiz, or only a pattern of them?",
+      "assumption": "Every one as modelled. That may be too many messages.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

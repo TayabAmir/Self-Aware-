@@ -1,0 +1,1321 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-02",
+    "name": "Raise fee invoices against the approved structure, at school, class, section or student scope",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-02.json",
+    "featureRef": "4.2 Issuing fee invoices at different scopes"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-02-PC-1",
+      "intent": {
+        "name": "fee.invoice.preview",
+        "summary": "Calculate what a fee run would bill, at whatever scope, without creating a single invoice. One step, and nothing is charged.",
+        "routesHere": [
+          "preview the September invoices for Grade 4",
+          {
+            "text": "Grade 4 ke September ke invoice ka preview dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show me the preview of Grade 4's September invoices"
+          },
+          {
+            "text": "agar abhi bill banayen to kitna banega?",
+            "lang": "ur-Latn",
+            "gloss": "if we bill now, how much will it come to?"
+          },
+          {
+            "text": "poore school ka bill preview karo",
+            "lang": "ur-Latn",
+            "gloss": "preview the invoices for the whole school"
+          },
+          "what would the October run come to for section 9-A"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "invoice bana do",
+              "lang": "ur-Latn",
+              "gloss": "raise the invoices"
+            },
+            "goesTo": "fee.invoice.issue — UC-04-02-PC-2",
+            "note": "A preview creates nothing. Issuing is the deliberate act that charges families."
+          },
+          {
+            "request": {
+              "text": "kis ne fees nahi di?",
+              "lang": "ur-Latn",
+              "gloss": "who has not paid?"
+            },
+            "goesTo": "fee.overdue.list — UC-04-06",
+            "note": "A preview is what would be billed; the overdue list is what was billed and not paid."
+          },
+          {
+            "request": {
+              "text": "structure approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the structure"
+            },
+            "goesTo": "fee.structure.approve — UC-04-01-PC-3",
+            "note": "A run finds nothing to bill against a class whose structure is still in draft (UC-04-01 BR-1)."
+          },
+          {
+            "request": {
+              "text": "ek student ka bill banao",
+              "lang": "ur-Latn",
+              "gloss": "raise one student's bill"
+            },
+            "goesTo": "fee.invoice.issue with scope Student — UC-04-02-PC-2"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.invoice.preview",
+            "inputs": {
+              "scope": "$request.scope",
+              "billing_period": "$request.billing_period",
+              "issue_date": "$request.issue_date",
+              "due_date": "$request.due_date",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. Every amount is calculated inside it, in the fixed order (BR-2); the plan supplies no figure at all."
+          }
+        ],
+        "onFailure": "Stop and report. A missing approved structure, a period outside the session and a due date before the issue date are all enforced by the API and arrive as errors. A student the run cannot bill is excluded and listed rather than aborting it (BR-3, BR-12, BR-14).",
+        "atomicity": "A calculation, not a charge. The batch exists at Preview and no invoice, no ledger posting, no credit drawdown and no concession drawdown is created — the family credit and the concession are read, not touched (AC-10). Nothing is sent to any guardian. The preview is frozen for a school-wide run so it cannot change while it waits for authorisation (A1)."
+      },
+      "operations": [
+        {
+          "name": "fee.invoice.preview",
+          "method": "POST",
+          "path": "/api/v1/fee-invoices/preview",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "scope + the scope id + billing_period + session_id, so a repeat returns the same preview rather than a second batch",
+          "purpose": "Calculate every student's amount for a period at the chosen scope, in the fixed order, and return the run for checking before anything is issued.",
+          "parameters": [
+            {
+              "name": "scope",
+              "source": "request",
+              "sourceRef": "$request.scope",
+              "required": true,
+              "type": "enum: School-wide | Class | Section | Student",
+              "notes": "What the run covers. School-wide requires School Admin authorisation before anything is created (BR-9, E6)."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No active class of that name this session.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the scope is Class."
+            },
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No such active section.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the scope is Section. The class is derived from it."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No placed, active student matches.",
+                "onAmbiguous": "Ask, naming the candidates with class and section."
+              },
+              "notes": "Required where the scope is Student."
+            },
+            {
+              "name": "billing_period",
+              "source": "request",
+              "sourceRef": "$request.billing_period",
+              "required": true,
+              "type": "string",
+              "notes": "The month or term being billed, within the open academic session (E4). Only where the request states it."
+            },
+            {
+              "name": "issue_date",
+              "source": "request",
+              "sourceRef": "$request.issue_date",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the future and not before the session start."
+            },
+            {
+              "name": "due_date",
+              "source": "request",
+              "sourceRef": "$request.due_date",
+              "required": true,
+              "type": "date",
+              "notes": "On or after the issue date (E5). Overdue tracking and any late fee run from it, so a date invented here decides when families start being chased."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What the run would bill, student by student, with the calculation shown.",
+            "fields": [
+              {
+                "name": "batch_id",
+                "type": "string",
+                "description": "The batch at Preview. No invoice exists against it."
+              },
+              {
+                "name": "student_count",
+                "type": "integer",
+                "description": "How many would be billed."
+              },
+              {
+                "name": "batch_total",
+                "type": "string",
+                "description": "What the run comes to."
+              },
+              {
+                "name": "lines",
+                "type": "object[]",
+                "description": "Per student: structure_amount, concession, credit_applied, installment_share, late_fee_carried, withholding_tax, net_payable — each its own line, so the family can see what was taken off and what was added (BR-10)."
+              },
+              {
+                "name": "excluded",
+                "type": "object[]",
+                "description": "student_id and reason — no approved structure for the period, not placed, already billed for this period (BR-3, BR-12, BR-14). Listed, never silently dropped."
+              },
+              {
+                "name": "credit_to_be_drawn",
+                "type": "string",
+                "description": "Family credit the run would consume. Read, not drawn (AC-10)."
+              },
+              {
+                "name": "requires_authorisation",
+                "type": "boolean",
+                "description": "True for a school-wide scope (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_APPROVED_STRUCTURE",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "No approved structure covers the class for the billing period.",
+              "written": "Nothing.",
+              "notWritten": "No preview line for those students.",
+              "note": "The message names the class and period. Approving a structure is UC-04-01 and a separate act — never chained here."
+            },
+            {
+              "code": "TAX_NOT_CONFIGURED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The withholding tax rate or household threshold is not configured.",
+              "written": "Nothing.",
+              "notWritten": "No preview.",
+              "note": "Configuration, not a billing problem. It is UC-04-17."
+            },
+            {
+              "code": "PERIOD_OUTSIDE_SESSION",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "The billing period falls outside the open academic session.",
+              "written": "Nothing.",
+              "notWritten": "No preview."
+            },
+            {
+              "code": "DUE_BEFORE_ISSUE",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The due date is before the issue date.",
+              "written": "Nothing.",
+              "notWritten": "No preview.",
+              "note": "Never adjust either date. Both came from the actor and both appear on the family's bill."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply, adjust or round an amount. Every figure on an invoice is calculated by the API in one fixed order — structure, less concession, less credit, split by installment, plus late fee, plus tax (BR-1, BR-2) — and a number a planner supplies is money charged to a family that no rule produced.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply the issue date or the due date. Overdue tracking and any late fee run from the due date (BR-7 of UC-04-15), so a date invented here decides when families start being chased and fined.",
+          "derivedFrom": [
+            "BR-2",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain an issue onto a preview. The preview is what the office checks before charging anybody; a plan that previews and issues in one run removes the check the two-step shape exists to provide.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the excluded students by name and reason. A student with no approved structure, not yet placed, or already billed for the period is excluded and listed rather than aborting the run (BR-3, BR-12, BR-14) — and a preview reported as a clean total hides them.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-12",
+            "BR-14",
+            "AC-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never approve a structure to make a preview complete. NO_APPROVED_STRUCTURE means the price list for that class has not been agreed, which is a decision by a different person under UC-04-01.",
+          "derivedFrom": [
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A preview creates no invoice and moves no money, so there is nothing to reverse. An unwanted preview batch is simply not issued."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 4 ke September ke bill ka preview dikhao — 1 September ko issue, 10 ko due",
+            "lang": "ur-Latn",
+            "gloss": "show me the preview of Grade 4's September bills — issued on the 1st, due on the 10th"
+          },
+          "context": "Accounts, Johar Town branch, academic session 2025-26. Grade 4 has 30 students, all with an approved structure.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.invoice.preview",
+              "inputs": {
+                "scope": "Class",
+                "class_id": "$request.class_phrase → \"Grade 4\"",
+                "billing_period": "Sep 2026",
+                "issue_date": "2026-09-01",
+                "due_date": "2026-09-10",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "No amount is supplied. The API calculates each student in the fixed order (PR-1)."
+            }
+          ],
+          "outcome": "30 lines totalling PKR 150,000 (AC-1). Each line shows the structure amount, the concession, the credit applied, the installment share, the late fee and the tax separately (BR-10). Nothing is charged and no credit is drawn."
+        },
+        {
+          "request": {
+            "text": "poore school ka September ka bill preview karo",
+            "lang": "ur-Latn",
+            "gloss": "preview September's bills for the whole school"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.invoice.preview",
+              "inputs": {
+                "scope": "School-wide",
+                "billing_period": "Sep 2026",
+                "issue_date": "$request.issue_date",
+                "due_date": "$request.due_date",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              }
+            }
+          ],
+          "outcome": "The preview comes back with requires_authorisation true. Report that: Accounts may prepare and preview a school-wide run, but nothing is created until a School Admin authorises it (BR-9, AC-11)."
+        },
+        {
+          "request": {
+            "text": "Grade 9 ka bill preview karo",
+            "lang": "ur-Latn",
+            "gloss": "preview Grade 9's bills"
+          },
+          "context": "Accounts, Johar Town branch, where Grade 9's structure is still awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.invoice.preview",
+              "inputs": {
+                "scope": "Class",
+                "class_id": "$request.class_phrase → \"Grade 9\"",
+                "billing_period": "$request.billing_period",
+                "issue_date": "$request.issue_date",
+                "due_date": "$request.due_date",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Emitted unchanged. The API returns NO_APPROVED_STRUCTURE (E1)."
+            }
+          ],
+          "outcome": "Nothing is calculated. Report that Grade 9's structure is not approved yet, so nothing can be billed against it — and that approving it is the School Admin's decision under UC-04-01, not a step to take here (PR-5)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-02-PC-2",
+      "intent": {
+        "name": "fee.invoice.issue",
+        "summary": "Issue the invoices of a previewed run, which charges every family in it and sends them their bill. One step, and it is not reversible per family.",
+        "routesHere": [
+          "issue the September invoices for Grade 4",
+          {
+            "text": "Grade 4 ke September ke invoice bana do",
+            "lang": "ur-Latn",
+            "gloss": "raise Grade 4's September invoices"
+          },
+          {
+            "text": "preview theek hai, bill jaari kar do",
+            "lang": "ur-Latn",
+            "gloss": "the preview is fine, issue the bills"
+          },
+          {
+            "text": "is ek student ka bill bana do",
+            "lang": "ur-Latn",
+            "gloss": "raise this one student's bill"
+          },
+          "go ahead and bill section 9-A for October"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "preview dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show me the preview"
+            },
+            "goesTo": "fee.invoice.preview — UC-04-02-PC-1",
+            "note": "Nothing is charged by a preview. Issuing is what charges."
+          },
+          {
+            "request": {
+              "text": "poore school ka bill jaari karo",
+              "lang": "ur-Latn",
+              "gloss": "issue the invoices for the whole school"
+            },
+            "goesTo": "fee.batch.authorise — UC-04-02-PC-3",
+            "note": "A school-wide run holds for School Admin authorisation and is issued by that act (BR-9)."
+          },
+          {
+            "request": {
+              "text": "galat bill bana diya, wapas lo",
+              "lang": "ur-Latn",
+              "gloss": "the bill was wrong, take it back"
+            },
+            "goesTo": "fee.cancellation.raise — UC-04-08, or fee.batch.reverse — UC-04-02-PC-4",
+            "note": "An issued invoice is never edited (BR-16). One wrong charge is cancelled if unpaid; a whole run raised in error is reversed as a unit."
+          },
+          {
+            "request": {
+              "text": "ek student ki fees kam kar do",
+              "lang": "ur-Latn",
+              "gloss": "reduce one student's fee"
+            },
+            "goesTo": "fee.concession.record — UC-04-13",
+            "note": "A reduction is a concession applied at the next issue, not an edit to a bill already raised."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.invoice.issue",
+            "inputs": {
+              "batch_id": "$request.batch_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step, over a batch that has already been previewed. The invoices, their lines, the credit drawdown, the concession drawdown and the ledger postings all happen inside it, per student, atomically (BR-15)."
+          }
+        ],
+        "onFailure": "Stop and report. Authorisation, a duplicate run for the same scope and period, and a ledger posting that fails for one student are all enforced by the API and arrive as errors. A school-wide run is not refused — it is held for authorisation (E6), which is an outcome to report.",
+        "atomicity": "Two guarantees, and they matter separately. **Per student it is atomic**: the invoice, its lines, the credit drawdown, the concession drawdown and the ledger postings are all created or none are, so a credit is never consumed without a bill to show for it (BR-15, E7). **The batch is not**: a student whose posting fails is listed and the rest are issued. Invoice numbers are gapless and never reused, and a failed run consumes none (BR-13). The messages to guardians are separate again and do not block (E10). Report all three layers."
+      },
+      "operations": [
+        {
+          "name": "fee.invoice.issue",
+          "method": "POST",
+          "path": "/api/v1/fee-invoices/batches/{batch_id}/issue",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "batch_id, and BR-13 backs it — invoice numbers are gapless and never reused, so a repeat returns ALREADY_ISSUED rather than billing a class twice",
+          "purpose": "Create every invoice in a previewed batch, draw down the credits and concessions it uses, post to both ledgers, and send each family their bill.",
+          "parameters": [
+            {
+              "name": "batch_id",
+              "source": "resolved",
+              "sourceRef": "$request.batch_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "fee_issue_batch",
+                "fromPhrase": "$request.batch_phrase",
+                "onNoMatch": "Refuse. No batch matches in this branch at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with batch number, scope, period, student count and status."
+              },
+              "notes": "The issue batch, resolved from how the actor named it — the batch number, the scope and period, or the most recent run."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "A per-student result, because one failed posting does not abandon the rest.",
+            "fields": [
+              {
+                "name": "batch_number",
+                "type": "string",
+                "description": "Groups every invoice in the run, so it can be traced and reversed as a unit (BR-11)."
+              },
+              {
+                "name": "issued",
+                "type": "object[]",
+                "description": "student_id, invoice_number, net_payable, message_delivery_status."
+              },
+              {
+                "name": "failed",
+                "type": "object[]",
+                "description": "student_id and reason. Listed, never silently dropped (E7)."
+              },
+              {
+                "name": "excluded",
+                "type": "object[]",
+                "description": "Carried from the preview — no structure, not placed, already billed (BR-3, BR-12, BR-14)."
+              },
+              {
+                "name": "batch_total",
+                "type": "string",
+                "description": "What was actually billed."
+              },
+              {
+                "name": "credit_drawn",
+                "type": "string",
+                "description": "Family credit consumed by the run (BR-5)."
+              },
+              {
+                "name": "tax_assessed",
+                "type": "string",
+                "description": "Withholding tax added, at family code level (BR-8)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Issued, or Awaiting authorisation for a school-wide run."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NEEDS_AUTHORISATION",
+              "mapsTo": "E6",
+              "httpStatus": 202,
+              "meaning": "A school-wide issue was attempted by Accounts.",
+              "written": "Nothing. The preview is frozen so the run cannot change while it waits (A1).",
+              "notWritten": "No invoice created.",
+              "treatedAsSuccess": true,
+              "note": "Not a failure. Report that the batch is with the School Admin and nothing has been charged (AC-11). Never split the scope to get round it."
+            },
+            {
+              "code": "ALREADY_ISSUED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "These invoices have already been issued for this scope and period.",
+              "written": "Nothing.",
+              "notWritten": "No second invoice.",
+              "note": "The message names the existing batch. The same fee is not billed twice for the same period (BR-14)."
+            },
+            {
+              "code": "POSTING_FAILED_FOR_STUDENT",
+              "mapsTo": "E7",
+              "httpStatus": 200,
+              "meaning": "A ledger posting failed for one student.",
+              "written": "Nothing for that student — no invoice, no credit drawn, no concession drawn (BR-15).",
+              "notWritten": "That student's invoice.",
+              "treatedAsSuccess": true,
+              "note": "Listed under failed with the reason. Every other student is issued."
+            },
+            {
+              "code": "CREDIT_CONTENTION",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "Two runs drew on the same family credit at once.",
+              "written": "Nothing for the losing run.",
+              "notWritten": "No double drawdown.",
+              "note": "The credit is drawn down once and a second run applies only what remains (AC-9). Re-preview rather than retrying blind."
+            },
+            {
+              "code": "MESSAGE_FAILED",
+              "mapsTo": "E10",
+              "httpStatus": 200,
+              "meaning": "An invoice message to a guardian failed.",
+              "written": "The invoices are all issued.",
+              "notWritten": "Some families have not been sent their bill.",
+              "treatedAsSuccess": true,
+              "note": "Report both halves — a family who has not seen a bill will not pay it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply, adjust or round an amount. Every figure on an invoice is calculated by the API in one fixed order — structure, less concession, less credit, split by installment, plus late fee, plus tax (BR-1, BR-2) — and a number a planner supplies is money charged to a family that no rule produced.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the batch total and the student count before the plan is emitted. Issuing charges every family in the run, sends them a bill, draws down their credits and posts to the ledger — and an issued invoice is never edited (BR-16).",
+          "derivedFrom": [
+            "BR-11",
+            "BR-16"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never issue a batch that was not previewed, and never re-preview and issue in one plan. The preview is what somebody checked; issuing something calculated in the same breath means nobody looked.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never split a school-wide run into class-sized ones to avoid authorisation. The threshold exists so a School Admin sees a school-wide charge before it goes (BR-9); four class runs bill the same families with nobody having looked.",
+          "derivedFrom": [
+            "BR-9",
+            "E6",
+            "AC-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the three layers separately — issued, failed, and whose message did not arrive. A run reported as a single success hides both the students BR-15 refused to half-create and the families who never received a bill.",
+          "derivedFrom": [
+            "BR-15",
+            "E7",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never re-emit after ALREADY_ISSUED. The same fee is not billed twice for the same period (BR-14), and the answer is the batch that already exists.",
+          "derivedFrom": [
+            "BR-14",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "fee.batch.reverse",
+        "statement": "fee.batch.reverse reverses every unpaid invoice in the run as a unit and returns any credit the run applied to the family code (A7). Paid invoices are refused and listed, because money received is not undone by reversing a bill — those go through cancellation or credit under UC-04-08 and UC-04-10. This is a compensating act somebody decides on, never one the controller performs after a failure."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "preview theek hai, Grade 4 ke September ke bill jaari kar do",
+            "lang": "ur-Latn",
+            "gloss": "the preview is fine, issue Grade 4's September bills"
+          },
+          "context": "Accounts, Johar Town branch, on a previewed batch of 30 students totalling PKR 150,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.invoice.issue",
+              "inputs": {
+                "batch_id": "$request.batch_phrase → the Grade 4 Sep 2026 preview",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The count and total are reported to the actor before the plan is emitted (PR-2)."
+            }
+          ],
+          "outcome": "30 invoices issued under one batch number, each with gapless numbering, each sent to its guardians. Report the total billed, the credit drawn and any message that did not arrive."
+        },
+        {
+          "request": {
+            "text": "poore school ka bill jaari kar do",
+            "lang": "ur-Latn",
+            "gloss": "issue the invoices for the whole school"
+          },
+          "context": "Accounts, Johar Town branch, on a school-wide preview.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.invoice.issue",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Emitted unchanged; the plan does not test the scope beforehand. The API returns NEEDS_AUTHORISATION (E6) on the success path."
+            }
+          ],
+          "outcome": "No invoice exists, the batch is awaiting authorisation and the School Admin has been notified (AC-11). Report that plainly — the actor will otherwise assume the school has been billed."
+        },
+        {
+          "request": {
+            "text": "Grade 5 ka bill bana do",
+            "lang": "ur-Latn",
+            "gloss": "raise Grade 5's bills"
+          },
+          "context": "Accounts, Johar Town branch, where one student's ledger posting fails.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.invoice.issue",
+              "inputs": {
+                "batch_id": "$request.batch_phrase → the Grade 5 preview",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              }
+            }
+          ],
+          "outcome": "27 of 28 issued. The 28th is listed under failed — and nothing partial exists for them: no invoice, no credit drawn, no concession consumed (BR-15, E7). Report the one by name; their bill has to be raised again."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-02-PC-3",
+      "intent": {
+        "name": "fee.batch.authorise",
+        "summary": "Authorise a school-wide fee run so its invoices are created and every family in the school is billed. School Admin only, one step.",
+        "routesHere": [
+          "authorise the school-wide September run",
+          {
+            "text": "poore school wala bill authorise kar do",
+            "lang": "ur-Latn",
+            "gloss": "authorise the whole-school billing run"
+          },
+          {
+            "text": "jo batch approval ka intezaar kar raha hai wo jaari kar do",
+            "lang": "ur-Latn",
+            "gloss": "issue the batch that is waiting for approval"
+          },
+          "approve the pending school-wide invoice batch"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "class ka bill jaari kar do",
+              "lang": "ur-Latn",
+              "gloss": "issue a class's bills"
+            },
+            "goesTo": "fee.invoice.issue — UC-04-02-PC-2",
+            "note": "A run below school-wide scope needs no authorisation."
+          },
+          {
+            "request": {
+              "text": "batch cancel kar do",
+              "lang": "ur-Latn",
+              "gloss": "cancel the batch"
+            },
+            "goesTo": "fee.batch.reverse — UC-04-02-PC-4, once issued",
+            "note": "A frozen preview that is never authorised simply stays unissued; a run already issued is reversed."
+          },
+          {
+            "request": {
+              "text": "preview dobara dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show the preview again"
+            },
+            "goesTo": "fee.invoice.preview — UC-04-02-PC-1",
+            "note": "The preview is frozen while it waits, so what is authorised is what was previewed (A1)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.batch.authorise",
+            "inputs": {
+              "batch_id": "$request.batch_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step, and it issues the run. Authorising is not an approval that sits waiting — it charges every family in the school, so everything the issue contract says about atomicity applies here too."
+          }
+        ],
+        "onFailure": "Stop and report. The acting role and the batch's status are enforced by the API and arrive as errors.",
+        "atomicity": "The same two guarantees as the issue: atomic per student, not atomic across the batch (BR-15). The preview was frozen while it waited, so what is created is what the School Admin was shown (A1). Every family in the school is charged and sent a bill, and an issued invoice is never edited (BR-16)."
+      },
+      "operations": [
+        {
+          "name": "fee.batch.authorise",
+          "method": "POST",
+          "path": "/api/v1/fee-invoices/batches/{batch_id}/authorise",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "batch_id, so a repeated authorisation does not bill the school twice",
+          "purpose": "Authorise a school-wide batch and create its invoices.",
+          "parameters": [
+            {
+              "name": "batch_id",
+              "source": "resolved",
+              "sourceRef": "$request.batch_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "fee_issue_batch",
+                "fromPhrase": "$request.batch_phrase",
+                "onNoMatch": "Refuse. No batch matches in this branch at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with batch number, scope, period, student count and status."
+              },
+              "notes": "The issue batch, resolved from how the actor named it — the batch number, the scope and period, or the most recent run."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The same per-student result the issue returns, since authorising is what issues it.",
+            "fields": [
+              {
+                "name": "batch_number",
+                "type": "string",
+                "description": "The run."
+              },
+              {
+                "name": "authorised_by",
+                "type": "string",
+                "description": "The acting School Admin."
+              },
+              {
+                "name": "requested_by",
+                "type": "string",
+                "description": "Who prepared and previewed it. Worth reporting — the authorisation was on their behalf."
+              },
+              {
+                "name": "student_count",
+                "type": "integer",
+                "description": "How many families were billed."
+              },
+              {
+                "name": "batch_total",
+                "type": "string",
+                "description": "What was billed in total."
+              },
+              {
+                "name": "issued",
+                "type": "object[]",
+                "description": "Per student."
+              },
+              {
+                "name": "failed",
+                "type": "object[]",
+                "description": "student_id and reason (E7)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Issued."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The acting user is not a School Admin.",
+              "written": "Nothing.",
+              "notWritten": "No invoice created.",
+              "note": "Only a School Admin authorises a school-wide run (BR-9). In practice the capability is absent from an Accounts allow-list."
+            },
+            {
+              "code": "POSTING_FAILED_FOR_STUDENT",
+              "mapsTo": "E7",
+              "httpStatus": 200,
+              "meaning": "A ledger posting failed for one student.",
+              "written": "Nothing for that student (BR-15).",
+              "notWritten": "That invoice.",
+              "treatedAsSuccess": true,
+              "note": "Listed under failed."
+            },
+            {
+              "code": "ALREADY_ISSUED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The batch has already been issued.",
+              "written": "Nothing.",
+              "notWritten": "No second invoice."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report what is being authorised before the plan is emitted — the student count, the total and who prepared it. This charges every family in the school in one act, and an issued invoice is never edited (BR-16).",
+          "derivedFrom": [
+            "BR-9",
+            "BR-16"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never authorise a batch the acting user previewed themselves without saying so. The authorisation exists so a second person sees a school-wide charge (BR-9), and a School Admin authorising their own preview is within their rights but worth stating.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never re-preview before authorising. The preview is frozen so the run cannot change while it waits (A1); recalculating it means the School Admin authorises something other than what they were shown.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the failures exactly as the issue contract does. A school-wide run reported as a clean success hides the students whose invoices were not created.",
+          "derivedFrom": [
+            "BR-15",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "fee.batch.reverse",
+        "statement": "fee.batch.reverse, on the same terms as an ordinary run: unpaid invoices reversed as a unit and applied credit returned, paid ones refused and listed (A7). A decision somebody takes, never a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "poore school wala September ka batch authorise kar do",
+            "lang": "ur-Latn",
+            "gloss": "authorise the whole-school September batch"
+          },
+          "context": "School Admin, Johar Town branch. Accounts previewed 1,284 students totalling PKR 6,420,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.batch.authorise",
+              "inputs": {
+                "batch_id": "$request.batch_phrase → the school-wide Sep 2026 batch",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The count, the total and who prepared it are reported before the plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "1,284 invoices issued in one batch, every family billed and sent their bill. Report the total, the credit drawn, the tax assessed and any student who failed."
+        },
+        {
+          "request": {
+            "text": "batch authorise kar do",
+            "lang": "ur-Latn",
+            "gloss": "authorise the batch"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.batch.authorise",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "In practice the capability is absent from an Accounts allow-list, so this plan is never built."
+            }
+          ],
+          "outcome": "Nothing is created. Report that a School Admin must authorise it and that the request is already with them — the batch is not stuck, it is waiting."
+        },
+        {
+          "request": "authorise it — I previewed it myself but I'm the admin",
+          "context": "School Admin, Johar Town branch, on a batch they previewed.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.batch.authorise",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Permitted. requested_by comes back as the same person (PR-2)."
+            }
+          ],
+          "outcome": "The school is billed. Report that the run was prepared and authorised by the same person — within their rights, and the kind of thing the audit log is read for later."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-02-PC-4",
+      "intent": {
+        "name": "fee.batch.reverse",
+        "summary": "Reverse a whole fee run raised in error, unbilling every unpaid invoice in it and returning any credit it drew. One step, and paid invoices are refused.",
+        "routesHere": [
+          "reverse the September batch, it was raised against the wrong period",
+          {
+            "text": "poora batch reverse kar do, galat period ka bill ban gaya tha",
+            "lang": "ur-Latn",
+            "gloss": "reverse the whole batch, it was billed for the wrong period"
+          },
+          {
+            "text": "ye run galti se chal gaya tha, wapas lo",
+            "lang": "ur-Latn",
+            "gloss": "this run went by mistake, take it back"
+          },
+          "unbill the Grade 4 run we issued twice"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ek galat charge cancel kar do",
+              "lang": "ur-Latn",
+              "gloss": "cancel one wrong charge"
+            },
+            "goesTo": "fee.cancellation.raise — UC-04-08",
+            "note": "One invoice raised in error is cancelled through its own use case, with its own approval."
+          },
+          {
+            "request": {
+              "text": "family ne paisa de diya hai, wo wapas karo",
+              "lang": "ur-Latn",
+              "gloss": "the family has paid, return it"
+            },
+            "goesTo": "fee.credit.raise — UC-04-10, then fee.refund.raise — UC-04-11",
+            "note": "Money received is not undone by reversing a bill. A wrong charge already paid is credited, and an unused credit is refunded."
+          },
+          {
+            "request": {
+              "text": "bill dobara banao",
+              "lang": "ur-Latn",
+              "gloss": "raise the bills again"
+            },
+            "goesTo": "fee.invoice.preview then fee.invoice.issue",
+            "note": "A reversal does not re-bill. Raising the run correctly is a fresh preview and a fresh issue."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.batch.reverse",
+            "inputs": {
+              "batch_id": "$request.batch_phrase",
+              "reverse_reason": "$request.reverse_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every unpaid invoice in the batch is reversed as a unit and any credit the run applied is returned to the family code; paid invoices are refused and listed (A7, BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. Paid invoices in the batch are refused and listed rather than aborting the reversal — money received is not undone by reversing a bill.",
+        "atomicity": "The unpaid invoices are reversed as a unit, with the credit and concession the run drew returned to the family code and the ledger entries reversed — together or not at all. Paid invoices are untouched and listed, so a batch containing both leaves a mixed state that is the correct outcome, not a partial failure. The invoice numbers consumed are not reused (BR-13). Guardians already sent a bill are not automatically told it was withdrawn — report that."
+      },
+      "operations": [
+        {
+          "name": "fee.batch.reverse",
+          "method": "POST",
+          "path": "/api/v1/fee-invoices/batches/{batch_id}/reverse",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "batch_id, since a batch carries one reversal",
+          "purpose": "Reverse every unpaid invoice in an issued batch and return the credit it applied, refusing any invoice against which money was received.",
+          "parameters": [
+            {
+              "name": "batch_id",
+              "source": "resolved",
+              "sourceRef": "$request.batch_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "fee_issue_batch",
+                "fromPhrase": "$request.batch_phrase",
+                "onNoMatch": "Refuse. No batch matches in this branch at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with batch number, scope, period, student count and status."
+              },
+              "notes": "The issue batch, resolved from how the actor named it — the batch number, the scope and period, or the most recent run."
+            },
+            {
+              "name": "reverse_reason",
+              "source": "request",
+              "sourceRef": "$request.reverse_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. The actor's own words — a whole run withdrawn is read back later by whoever asks why a class was billed and then unbilled."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was reversed and what was refused.",
+            "fields": [
+              {
+                "name": "batch_number",
+                "type": "string",
+                "description": "The run reversed."
+              },
+              {
+                "name": "reversed",
+                "type": "object[]",
+                "description": "invoice_number and amount for each unpaid invoice withdrawn."
+              },
+              {
+                "name": "refused",
+                "type": "object[]",
+                "description": "invoice_number and the payment against it. Money received is not undone by reversing a bill (A7)."
+              },
+              {
+                "name": "credit_returned",
+                "type": "string",
+                "description": "Family credit the run drew, returned to the family code."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Reversed, where every unpaid invoice was withdrawn."
+              },
+              {
+                "name": "guardians_not_notified",
+                "type": "integer",
+                "description": "Families sent a bill that has now been withdrawn and not told. Worth reporting."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "PAID_INVOICES_IN_BATCH",
+              "mapsTo": null,
+              "httpStatus": 200,
+              "meaning": "Some invoices in the batch have been paid.",
+              "written": "The unpaid ones are reversed.",
+              "notWritten": "The paid ones are untouched.",
+              "treatedAsSuccess": true,
+              "note": "Listed under refused. Not a failure — it is A7 working. Those go through cancellation or credit under UC-04-08 and UC-04-10. UC-04-02 defines no E-id for it; see OPEN-QUESTIONS."
+            },
+            {
+              "code": "ALREADY_REVERSED",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The batch has already been reversed.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "UC-04-02 defines no E-id for it — see OPEN-QUESTIONS."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. A whole run withdrawn is read back later by whoever asks why a class was billed and then unbilled.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report what the batch contains before the plan is emitted — how many invoices, how many already paid, and the total. A reversal withdraws bills families have already been sent.",
+          "derivedFrom": [
+            "BR-11",
+            "BR-16"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain a credit or a refund onto the refused invoices. Money received is not undone by reversing a bill (A7); crediting a paid charge is UC-04-10, with its own approval, and refunding is UC-04-11.",
+          "derivedFrom": [
+            "BR-16"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain a fresh run onto a reversal. Re-billing correctly is a new preview somebody checks and a new issue somebody authorises.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the families who were sent a bill that has now been withdrawn. Nothing tells them automatically, and a parent holding a challan for a reversed invoice will take it to the bank.",
+          "derivedFrom": [
+            "BR-16"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A reversal is not undone. Re-billing is a fresh preview and a fresh issue, with new invoice numbers — the reversed ones are never reused (BR-13). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "September ka poora batch reverse kar do — galat period ka bill ban gaya tha",
+            "lang": "ur-Latn",
+            "gloss": "reverse the whole September batch — it was billed for the wrong period"
+          },
+          "context": "Accounts, Johar Town branch, on a 30-invoice batch where none has been paid.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.batch.reverse",
+              "inputs": {
+                "batch_id": "$request.batch_phrase → the Grade 4 Sep 2026 batch",
+                "reverse_reason": "Billed for the wrong period.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The batch contents are reported first: 30 invoices, none paid, PKR 150,000 (PR-2)."
+            }
+          ],
+          "outcome": "All 30 are reversed, the credit the run drew is returned to the family codes and the ledger entries are reversed. Report that 30 families were sent a bill and none has been told it is withdrawn (PR-5)."
+        },
+        {
+          "request": {
+            "text": "ye run galti se chal gaya tha, wapas lo",
+            "lang": "ur-Latn",
+            "gloss": "this run went by mistake, take it back"
+          },
+          "context": "Accounts, Johar Town branch, on a batch of 28 where 4 families have already paid.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.batch.reverse",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "reverse_reason": "Run issued in error.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "24 reversed, 4 refused and listed with the payments against them. That mixed outcome is correct, not a partial failure — money received is not undone by reversing a bill (A7). The 4 need crediting under UC-04-10, which is a separate decision."
+        },
+        {
+          "request": {
+            "text": "batch reverse kar do",
+            "lang": "ur-Latn",
+            "gloss": "reverse the batch"
+          },
+          "context": "Accounts, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.batch.reverse",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "reverse_reason": "$request.reverse_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: reverse_reason is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why the run is being withdrawn — a class billed and then unbilled is something the school has to be able to explain."
+        }
+      ]
+    }
+  ]
+}

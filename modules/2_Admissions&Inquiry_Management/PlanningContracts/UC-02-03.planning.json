@@ -1,0 +1,918 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-02-03",
+    "name": "Approve a reviewed inquiry and send the single-use admission-form invite",
+    "module": "Admissions & Inquiry Management",
+    "file": "../UseCases/UC-02-03.json",
+    "featureRef": "2.3 Inquiry approval and admission-form invite"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-02-03-PC-1",
+      "intent": {
+        "name": "inquiry.approve",
+        "summary": "Approve a reviewed inquiry, which issues the single-use admission-form invite and sends it by WhatsApp to the number on the inquiry. One step.",
+        "routesHere": [
+          "approve the Ahmed Raza inquiry",
+          {
+            "text": "is inquiry ko approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this inquiry"
+          },
+          {
+            "text": "Ayesha ki inquiry approve karke form bhej do",
+            "lang": "ur-Latn",
+            "gloss": "approve Ayesha's inquiry and send the form"
+          },
+          "approve this one into grade 4 instead of grade 3",
+          {
+            "text": "ye family theek hai, admission form ka link bhej do",
+            "lang": "ur-Latn",
+            "gloss": "this family is fine, send them the admission form link"
+          },
+          "approve the forwarded inquiries for grade 1"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is inquiry ko reject kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject this inquiry"
+            },
+            "goesTo": "inquiry.reject — UC-02-03-PC-2"
+          },
+          {
+            "request": {
+              "text": "link dobara bhejo, unko mila nahi",
+              "lang": "ur-Latn",
+              "gloss": "send the link again, they did not get it"
+            },
+            "goesTo": "admission.invite.resend — UC-02-03-PC-3",
+            "note": "Resending does not create a second invite (BR-7)."
+          },
+          {
+            "request": {
+              "text": "principal ko bhej do",
+              "lang": "ur-Latn",
+              "gloss": "forward it to the principal"
+            },
+            "goesTo": "inquiry.review — UC-02-02-PC-1",
+            "note": "Forwarding is the School Admin's recommendation. Approving is this."
+          },
+          {
+            "request": {
+              "text": "is bache ko admit kar do",
+              "lang": "ur-Latn",
+              "gloss": "admit this child"
+            },
+            "goesTo": "applicant.admit — UC-02-07-PC-2",
+            "note": "Approval here creates an invite and nothing else (BR-10). Admission comes after the form and the test."
+          },
+          {
+            "request": "approve this re-admission",
+            "goesTo": "inquiry.approve, but no invite is issued",
+            "note": "A re-admission skips the admission form entirely (UC-02-04 BR-9), so approval issues nothing to send."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "inquiry.approve",
+            "inputs": {
+              "inquiry_id": "$request.inquiry_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The invite is created and sent inside it — there is no separate send to plan, and no channel to choose (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. The inquiry's status, the acting role and the messaging balance are enforced by the API and arrive as errors. A failed WhatsApp send does not fail the approval (E4): the invite exists and can be resent, which is an outcome to report rather than a failure to retry.",
+        "atomicity": "One write, atomic in itself: the decision, the status change, the invite and the audit entry are created together or not at all. The message is separate and does not block (E4, E5) — so the ordinary partial outcome here is an approval that stands with an invite that has not reached the family yet. Report both halves. No student record and no fee record are created (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "inquiry.approve",
+          "method": "POST",
+          "path": "/api/v1/inquiries/{inquiry_id}/approve",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "inquiry_id, since an inquiry carries one decision and a repeat returns ALREADY_DECIDED rather than issuing a second invite",
+          "purpose": "Record the Principal's approval, issue the single-use admission-form invite, and send it by WhatsApp to the number on the inquiry.",
+          "parameters": [
+            {
+              "name": "inquiry_id",
+              "source": "resolved",
+              "sourceRef": "$request.inquiry_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "inquiry",
+                "fromPhrase": "$request.inquiry_phrase",
+                "onNoMatch": "Refuse. No inquiry matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with child name, guardian and target class."
+              },
+              "notes": "The inquiry, resolved from how the actor named it — a reference, the child's name, or the guardian's number."
+            },
+            {
+              "name": "approved_class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No such class in this academic session.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Only where the Principal approves into a class other than the one the family asked for. Omit otherwise — the API defaults to the requested class. Approving into a different class is recorded, because the family will be told a class they did not ask for (BR-9)."
+            },
+            {
+              "name": "decision_note",
+              "source": "request",
+              "sourceRef": "$request.decision_note",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 500 characters. Visible to School Admin, never to the family."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision, and the invite it issued.",
+            "fields": [
+              {
+                "name": "inquiry_id",
+                "type": "string",
+                "description": "The inquiry approved."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved."
+              },
+              {
+                "name": "invite_id",
+                "type": "string",
+                "description": "The single-use invite."
+              },
+              {
+                "name": "invite_expiry",
+                "type": "date",
+                "description": "Issue date plus the configured validity period (BR-5)."
+              },
+              {
+                "name": "delivery_status",
+                "type": "string",
+                "description": "Queued until the provider says otherwise. Never reported as delivered on the strength of the call succeeding."
+              },
+              {
+                "name": "approved_class_name",
+                "type": "string",
+                "description": "The class approved into, which may differ from the one requested (BR-9)."
+              },
+              {
+                "name": "invite_issued",
+                "type": "boolean",
+                "description": "False for a re-admission, where the admission form is skipped entirely (UC-02-04 BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E2",
+              "httpStatus": 403,
+              "meaning": "A School Admin attempted to approve.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Only the Principal or Director may decide (BR-2). In practice the capability is absent from a School Admin allow-list and never planned with."
+            },
+            {
+              "code": "ALREADY_DECIDED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The inquiry has already been approved or rejected.",
+              "written": "Nothing.",
+              "notWritten": "No second decision recorded.",
+              "note": "The message names the date. Open the invite instead; do not retry."
+            },
+            {
+              "code": "INVITE_SEND_FAILED",
+              "mapsTo": "E4",
+              "httpStatus": 200,
+              "meaning": "The WhatsApp send failed.",
+              "written": "The approval, the decision record and the invite are all written.",
+              "notWritten": "The family has not received the link.",
+              "treatedAsSuccess": true,
+              "note": "Not a failure of the approval. Report that the family has not been sent the link and that it can be resent from the inquiry (BR-7)."
+            },
+            {
+              "code": "NO_MESSAGING_BALANCE",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "There is no WhatsApp balance for the channel.",
+              "written": "The approval and the invite are written; the message is queued.",
+              "notWritten": "Not sent.",
+              "treatedAsSuccess": true,
+              "note": "Report that the invite exists and will go when the balance is topped up. Never fall back to another channel — the invite goes by WhatsApp to the number on the inquiry and to no other (BR-6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose approved_class_id yourself. Omitting it approves into the class the family asked for, which is the ordinary case; supplying one puts the child in a class nobody named and the family is then told a class they did not ask for (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never plan an approval for a set. Each approval issues a live invite to a family and is a decision the Principal takes on that child; a batch here would send admission forms to people nobody looked at. Where several are to be approved, they are several plans, each reported.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never re-emit after ALREADY_DECIDED. A second approval is not recorded, and a second invite is not what is wanted — the existing one is resent through admission.invite.resend.",
+          "derivedFrom": [
+            "E3",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the send and the approval separately. The approval stands even where the message failed (E4, E5), and reporting a clean approval while the family has no link is how a family sits waiting for something that was never sent.",
+          "derivedFrom": [
+            "BR-7",
+            "E4",
+            "E5",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain a message onto this plan to make up for a failed send. The invite goes by WhatsApp to the number on the inquiry and to no other (BR-6); a link sent as ordinary text through inquiry.message puts a live single-use address outside its own record.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never change the destination number to get the invite delivered. Changing where the invite goes is a correction to the inquiry, recorded as one (BR-6), and a number supplied in passing is not that.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-approve. The decision is recorded and the invite is live once sent; BR-11 of UC-02-07 states the principle for the module — a decision is never edited, and a correction is a further recorded decision. Where an approval was wrong, the invite is revoked by the School Admin, which is not written as a capability here. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ahmed Raza wali inquiry approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the Ahmed Raza inquiry"
+          },
+          "context": "Principal, Johar Town branch. The inquiry is at Forwarded to Principal.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.approve",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Ahmed Raza\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "approved_class_id is omitted, so the approval is into the class the family asked for (PR-1)."
+            }
+          ],
+          "outcome": "The inquiry moves to Approved, a single-use invite is issued with its expiry, and the link is queued to the number on the inquiry form. Reported as queued, not delivered. No student record and no fee record exist (BR-10)."
+        },
+        {
+          "request": "approve Sana Malik but into grade 4, not grade 3 — she's too old for grade 3",
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.approve",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Sana Malik\"",
+                "approved_class_id": "$request.class_phrase → \"grade 4\"",
+                "decision_note": "Too old for grade 3.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The class is named in the request, so it is carried. The note is visible to School Admin and never to the family."
+            }
+          ],
+          "outcome": "Approved into grade 4 with the change recorded, because the family asked for grade 3 and will be told grade 4 (BR-9). The invite goes out for the approved class."
+        },
+        {
+          "request": {
+            "text": "is inquiry ko approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this inquiry"
+          },
+          "context": "Principal, Johar Town branch, with no WhatsApp balance on the account.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.approve",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged; it does not check the balance beforehand. The API returns NO_MESSAGING_BALANCE (E5) on the success path."
+            }
+          ],
+          "outcome": "The approval stands and the invite exists — but the family has not been sent it. Report both halves: approved, and the link is waiting on WhatsApp balance. Never report this as a clean approval (PR-4)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-02-03-PC-2",
+      "intent": {
+        "name": "inquiry.reject",
+        "summary": "Reject a reviewed inquiry with the reason the family will be told, and close the enquiry. One step.",
+        "routesHere": [
+          "reject the Sana Malik inquiry — no seat in grade 3",
+          {
+            "text": "is inquiry ko reject kar do, grade 3 mein seat nahi hai",
+            "lang": "ur-Latn",
+            "gloss": "reject this inquiry, there is no seat in grade 3"
+          },
+          {
+            "text": "ye inquiry mana kar do",
+            "lang": "ur-Latn",
+            "gloss": "turn this inquiry down"
+          },
+          "decline this one, the child is too young for the class",
+          {
+            "text": "is family ko reject karo aur wajah bhi likho",
+            "lang": "ur-Latn",
+            "gloss": "reject this family and write the reason too"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is inquiry ko approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve this inquiry"
+            },
+            "goesTo": "inquiry.approve — UC-02-03-PC-1"
+          },
+          {
+            "request": {
+              "text": "family ne khud mana kar diya",
+              "lang": "ur-Latn",
+              "gloss": "the family said no themselves"
+            },
+            "goesTo": "inquiry.close — UC-02-11-PC-1",
+            "note": "A family withdrawing is a closure the school records; a rejection is a decision the school takes. They are different acts and different lines in the loss report."
+          },
+          {
+            "request": {
+              "text": "wapas bhej do, information adhoori hai",
+              "lang": "ur-Latn",
+              "gloss": "send it back, the information is incomplete"
+            },
+            "goesTo": "inquiry.review — UC-02-02-PC-1",
+            "note": "An incomplete inquiry is returned, not rejected. Rejecting it tells the family no when the school has not decided."
+          },
+          {
+            "request": "reject this applicant after the test",
+            "goesTo": "applicant.reject — UC-02-07-PC-3",
+            "note": "A decision on an applicant who sat the test is a different use case, with the score in front of the decider."
+          },
+          {
+            "request": {
+              "text": "reject ki hui inquiry dobara kholo",
+              "lang": "ur-Latn",
+              "gloss": "re-open a rejected inquiry"
+            },
+            "goesTo": "Not offered.",
+            "note": "An enquiry closed by a rejection cannot be re-opened (UC-02-11 E8). A decision is never edited."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "inquiry.reject",
+            "inputs": {
+              "inquiry_id": "$request.inquiry_phrase",
+              "rejection_reason": "$request.rejection_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The reason is mandatory because the family is told it — an unexplained rejection is not permitted (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. The inquiry's status and the acting role are enforced by the API and arrive as errors. A failed send does not fail the rejection; the decision stands and the family has not been told, which is an outcome to report.",
+        "atomicity": "One write, atomic in itself: the decision, the status change, the closure of the enquiry and the audit entry together or not at all. The rejection message is separate and does not block. Nothing is created — no student record, no invite. The enquiry closes carrying the rejection reason, so a second reason is never invented for it (UC-02-11 BR-9), and it cannot afterwards be re-opened (UC-02-11 E8)."
+      },
+      "operations": [
+        {
+          "name": "inquiry.reject",
+          "method": "POST",
+          "path": "/api/v1/inquiries/{inquiry_id}/reject",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "inquiry_id, since an inquiry carries one decision",
+          "purpose": "Record the Principal's rejection with its reason, tell the family, and close the enquiry.",
+          "parameters": [
+            {
+              "name": "inquiry_id",
+              "source": "resolved",
+              "sourceRef": "$request.inquiry_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "inquiry",
+                "fromPhrase": "$request.inquiry_phrase",
+                "onNoMatch": "Refuse. No inquiry matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with child name, guardian and target class."
+              },
+              "notes": "The inquiry, resolved from how the actor named it — a reference, the child's name, or the guardian's number."
+            },
+            {
+              "name": "rejection_reason",
+              "source": "request",
+              "sourceRef": "$request.rejection_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Mandatory — the family is told why, so an unexplained rejection is not permitted (BR-3, E1). The Principal's own words, carried across untranslated."
+            },
+            {
+              "name": "decision_note",
+              "source": "request",
+              "sourceRef": "$request.decision_note",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 500 characters. Visible to School Admin, never to the family. Where the reason given to the family and the reason internally differ, the second belongs here."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision, and what it closed.",
+            "fields": [
+              {
+                "name": "inquiry_id",
+                "type": "string",
+                "description": "The inquiry rejected."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Rejected."
+              },
+              {
+                "name": "enquiry_status",
+                "type": "string",
+                "description": "Not interested, closed carrying the rejection reason (UC-02-11 BR-9)."
+              },
+              {
+                "name": "delivery_status",
+                "type": "string",
+                "description": "Queued until the provider says otherwise."
+              },
+              {
+                "name": "reopenable",
+                "type": "boolean",
+                "description": "False. An enquiry closed by a rejection is not re-opened (UC-02-11 E8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "Reject was chosen with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not rejected.",
+              "note": "Message: \"Give a reason. The family is told why their inquiry was not successful.\" Ask for the reason; never compose one."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E2",
+              "httpStatus": 403,
+              "meaning": "A School Admin attempted to decide.",
+              "written": "Nothing.",
+              "notWritten": "Not rejected.",
+              "note": "Only the Principal or Director may decide (BR-2)."
+            },
+            {
+              "code": "ALREADY_DECIDED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The inquiry has already been decided.",
+              "written": "Nothing.",
+              "notWritten": "No second decision recorded."
+            },
+            {
+              "code": "SEND_FAILED",
+              "mapsTo": "E4",
+              "httpStatus": 200,
+              "meaning": "The rejection message failed to send.",
+              "written": "The rejection and the closure are written.",
+              "notWritten": "The family has not been told.",
+              "treatedAsSuccess": true,
+              "note": "Report both halves. The decision stands."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the rejection reason. It is sent to the family in the school's name, and E1 refuses the rejection without one precisely so that a person writes it. A planner's reason is the school telling a family something nobody at the school said.",
+          "derivedFrom": [
+            "BR-3",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never soften or rewrite the reason on the way through. It is carried onto the closure and read in the loss report afterwards (UC-02-11 BR-9), and the words the Principal chose are the record.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never reject an inquiry the school has not decided on. An incomplete one is returned (UC-02-02), a family who withdrew is closed (UC-02-11); rejecting either tells a family no on the school's behalf when no decision was taken.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never plan a rejection for a set. Each one is a decision on a child and a message to a family, and neither can be recalled.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the decision and the send separately. The rejection stands even where the message failed (E4), and a family who has not been told is a fact worth stating.",
+          "derivedFrom": [
+            "E4"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-reject, and the enquiry it closes cannot be re-opened either (UC-02-11 E8). A decision is never edited; where the school changes its mind, that is a fresh inquiry, not a reversal. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Sana Malik wali inquiry reject kar do — grade 3 mein koi seat nahi hai",
+            "lang": "ur-Latn",
+            "gloss": "reject the Sana Malik inquiry — there is no seat in grade 3"
+          },
+          "context": "Principal, Johar Town branch. The inquiry is at Forwarded to Principal.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.reject",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Sana Malik\"",
+                "rejection_reason": "There is no seat available in grade 3.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Principal's own, carried across. The plan does not phrase it more gently on the way (PR-2)."
+            }
+          ],
+          "outcome": "The inquiry is rejected, the family is sent the reason, and the enquiry closes carrying it — so the loss report shows a rejection rather than a second reason invented for it. It cannot be re-opened."
+        },
+        {
+          "request": "reject this one — the child is well below the age range for the class, and note internally that the parents were told to try next year",
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.reject",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "rejection_reason": "The child is below the age range for this class.",
+                "decision_note": "Parents advised to apply again next year.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Two different audiences, two different fields: the reason goes to the family, the note stays with School Admin."
+            }
+          ],
+          "outcome": "Rejected with the reason sent, and the internal note held where the family never sees it."
+        },
+        {
+          "request": {
+            "text": "ye inquiry reject kar do",
+            "lang": "ur-Latn",
+            "gloss": "reject this inquiry"
+          },
+          "context": "Principal, Johar Town branch, with no reason given in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.reject",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "rejection_reason": "$request.rejection_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan cannot be completed: rejection_reason is required and has nothing to take it from. No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask the Principal for the reason the family should be given, then emit the plan. This is the ordinary case, not an error — E1 exists because the reason has to come from a person."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-02-03-PC-3",
+      "intent": {
+        "name": "admission.invite.resend",
+        "summary": "Resend an admission-form invite the family did not receive, without creating a second one. One step.",
+        "routesHere": [
+          "resend the admission form link to the Ahmed Raza family",
+          {
+            "text": "unko form ka link dobara bhejo, unko mila nahi",
+            "lang": "ur-Latn",
+            "gloss": "send them the form link again, they did not get it"
+          },
+          {
+            "text": "invite dobara bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the invite again"
+          },
+          "they say the WhatsApp never arrived — send it again",
+          {
+            "text": "link phir se bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send the link once more"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "link expire ho gaya hai, naya banao",
+              "lang": "ur-Latn",
+              "gloss": "the link has expired, make a new one"
+            },
+            "goesTo": "Not offered.",
+            "note": "An expired invite is reissued by the School Admin (BR-5), and no capability for reissuing is written. Resending does not revive an expired link."
+          },
+          {
+            "request": {
+              "text": "form bhar do",
+              "lang": "ur-Latn",
+              "gloss": "fill in the form"
+            },
+            "goesTo": "UC-02-04 — not planned",
+            "note": "The family completes their own form."
+          },
+          {
+            "request": {
+              "text": "is inquiry ko approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve this inquiry"
+            },
+            "goesTo": "inquiry.approve — UC-02-03-PC-1",
+            "note": "Approval issues the invite in the first place."
+          },
+          {
+            "request": "send them the fee structure",
+            "goesTo": "inquiry.message — UC-02-12",
+            "note": "An ordinary message. The invite is not sent that way (BR-6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "admission.invite.resend",
+            "inputs": {
+              "inquiry_id": "$request.inquiry_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Resending does not create a second invite (BR-7) — the same link goes again, to the same number, and the send is logged with its own date and delivery status."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the invite is still valid, and whether the family has already used it, are enforced by the API and arrive as errors.",
+        "atomicity": "One write: a further send against the existing invite, with its own log entry and delivery status. The invite itself is unchanged — no second link exists, and the expiry does not move (BR-7). Nothing else is touched."
+      },
+      "operations": [
+        {
+          "name": "admission.invite.resend",
+          "method": "POST",
+          "path": "/api/v1/inquiries/{inquiry_id}/invite/resend",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "invite_id + the send timestamp, so a repeated call does not inflate resend_count",
+          "purpose": "Send the existing admission-form invite again to the number on the inquiry, logging the send.",
+          "parameters": [
+            {
+              "name": "inquiry_id",
+              "source": "resolved",
+              "sourceRef": "$request.inquiry_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "inquiry",
+                "fromPhrase": "$request.inquiry_phrase",
+                "onNoMatch": "Refuse. No inquiry matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with child name, guardian and target class."
+              },
+              "notes": "The inquiry, resolved from how the actor named it — a reference, the child's name, or the guardian's number."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The send, and where the invite now stands.",
+            "fields": [
+              {
+                "name": "invite_id",
+                "type": "string",
+                "description": "The existing invite. Unchanged."
+              },
+              {
+                "name": "resend_count",
+                "type": "integer",
+                "description": "How many times it has been sent (BR-7)."
+              },
+              {
+                "name": "invite_expiry",
+                "type": "date",
+                "description": "Unchanged by a resend."
+              },
+              {
+                "name": "delivery_status",
+                "type": "string",
+                "description": "Queued until the provider says otherwise."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_USED",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The family has already submitted the admission form.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "Message: \"This family has already submitted the admission form.\" The invite is spent (UC-02-04 BR-4), and there is nothing to resend."
+            },
+            {
+              "code": "SEND_FAILED",
+              "mapsTo": "E4",
+              "httpStatus": 200,
+              "meaning": "The WhatsApp send failed again.",
+              "written": "The send attempt is logged.",
+              "notWritten": "Not delivered.",
+              "treatedAsSuccess": true,
+              "note": "Report it. Repeating the same call does not make it arrive."
+            },
+            {
+              "code": "NO_MESSAGING_BALANCE",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "There is no WhatsApp balance.",
+              "written": "The send is queued.",
+              "notWritten": "Not sent.",
+              "treatedAsSuccess": true,
+              "note": "Report that it is waiting on balance."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never plan an approval to get an invite where there is none. An inquiry with no invite has not been approved, and approving it is the Principal's decision — not a step towards resending.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never re-emit after ALREADY_USED. The invite is spent because the family has submitted the form (UC-02-04 BR-4); the answer is that they are further along than the actor thought.",
+          "derivedFrom": [
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never repeat the call to make a failed send arrive. Each attempt is logged, and a run of identical entries in the invite's history says nothing except that someone kept trying.",
+          "derivedFrom": [
+            "BR-7",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never send the link by any other channel or to any other number. The invite goes by WhatsApp to the number on the inquiry and to no other (BR-6), and a single-use link outside its own record cannot be tracked or revoked.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-4"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A send cannot be unsent. The invite is unchanged by a resend, so there is nothing to undo — but the link is now in one more place, which is why PR-4 keeps it on the one channel."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ahmed Raza wali family ko link dobara bhej do, unko mila nahi",
+            "lang": "ur-Latn",
+            "gloss": "send the Ahmed Raza family the link again, they did not get it"
+          },
+          "context": "School Admin, Johar Town branch. The invite was issued four days ago and is unused.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.invite.resend",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Ahmed Raza\"",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The same link goes again to the same number. resend_count moves to 2, the expiry does not move, and no second invite exists (BR-7)."
+        },
+        {
+          "request": "resend the invite for Sana Malik",
+          "context": "School Admin, Johar Town branch, on an inquiry whose family submitted the form yesterday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.invite.resend",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Sana Malik\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged; it does not check whether the invite is spent. The API returns ALREADY_USED (E6)."
+            }
+          ],
+          "outcome": "Nothing is sent. Report that the family already submitted the form and the applicant is waiting on a test — which is what the actor actually wanted to know."
+        },
+        {
+          "request": {
+            "text": "invite phir bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send the invite again"
+          },
+          "context": "School Admin, Johar Town branch, with no WhatsApp balance.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.invite.resend",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The send is queued rather than sent. Report that it is waiting on balance, never that the family has been sent it."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,994 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-02-07",
+    "name": "Flag eligibility, approve the admission, and issue the student and guardian credentials",
+    "module": "Admissions & Inquiry Management",
+    "file": "../UseCases/UC-02-07.json",
+    "featureRef": "2.7 Eligibility flagging and admission approval"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-02-07-PC-1",
+      "intent": {
+        "name": "applicant.eligibility.flag",
+        "summary": "Record the School Admin's judgement that an applicant is worth putting to the Principal, or is not, with the reason either way. One step.",
+        "routesHere": [
+          "flag this applicant eligible — good score and complete documents",
+          {
+            "text": "is applicant ko eligible mark kar do",
+            "lang": "ur-Latn",
+            "gloss": "flag this applicant as eligible"
+          },
+          {
+            "text": "ye applicant eligible nahi hai, score bohat kam hai",
+            "lang": "ur-Latn",
+            "gloss": "this applicant is not eligible, the score is very low"
+          },
+          "mark APP-2026-0417 not eligible, the documents are still missing",
+          {
+            "text": "Bilal ko eligible laga do, principal ko bhej do",
+            "lang": "ur-Latn",
+            "gloss": "flag Bilal eligible, put him to the principal"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is bache ko admit kar do",
+              "lang": "ur-Latn",
+              "gloss": "admit this child"
+            },
+            "goesTo": "applicant.admit — UC-02-07-PC-2",
+            "note": "Eligibility and approval are separate acts by separate people (BR-2). Flagging says who is worth putting forward; the Principal decides who is admitted."
+          },
+          {
+            "request": {
+              "text": "is applicant ko reject kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject this applicant"
+            },
+            "goesTo": "applicant.reject — UC-02-07-PC-3",
+            "note": "Flagging not eligible is a recommendation. Rejecting is the Principal's decision, and it tells the family."
+          },
+          {
+            "request": {
+              "text": "score theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the score"
+            },
+            "goesTo": "admission.test.correct — UC-02-06-PC-2"
+          },
+          {
+            "request": "what did this applicant score?",
+            "goesTo": "A read of the applicant record.",
+            "note": "The form and the score are shown together (BR-1); reading them is not this capability, which records a judgement on them."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "applicant.eligibility.flag",
+            "inputs": {
+              "applicant_id": "$request.applicant_phrase",
+              "eligibility": "$request.eligibility",
+              "eligibility_reason": "$request.eligibility_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The reason is required either way — a flag with no reason tells the Principal nothing and cannot be defended later (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the applicant has a form and a score, and whether they have already been decided, are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the flag, its reason, who set it and the audit entry together or not at all. No student record is created and nobody is admitted — flagging puts an applicant in front of the Principal and does nothing else. Nothing is sent to the family."
+      },
+      "operations": [
+        {
+          "name": "applicant.eligibility.flag",
+          "method": "POST",
+          "path": "/api/v1/applicants/{applicant_id}/eligibility",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "applicant_id + eligibility, so a repeat does not record a second flag",
+          "purpose": "Record whether an applicant is worth putting to the Principal, with the reason, and surface the eligible ones for decision.",
+          "parameters": [
+            {
+              "name": "applicant_id",
+              "source": "resolved",
+              "sourceRef": "$request.applicant_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "applicant",
+                "fromPhrase": "$request.applicant_phrase",
+                "onNoMatch": "Refuse. No applicant matches in this branch at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with temporary ID, child name, target class and test score. Never pick the likeliest — this decision creates a person's record."
+              },
+              "notes": "The applicant, resolved from how the actor named them — the temporary ID, or the child's name. Everything from the form to the decision hangs off this identifier."
+            },
+            {
+              "name": "eligibility",
+              "source": "request",
+              "sourceRef": "$request.eligibility",
+              "required": true,
+              "type": "enum: Eligible | Not eligible",
+              "notes": "The School Admin's judgement on the form and the score together (BR-1). Not a decision on the admission (BR-2)."
+            },
+            {
+              "name": "eligibility_reason",
+              "source": "request",
+              "sourceRef": "$request.eligibility_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required either way (BR-3, E1). A flag with no reason tells the Principal nothing and cannot be defended later. The admin's own words."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The flag as recorded.",
+            "fields": [
+              {
+                "name": "applicant_id",
+                "type": "string",
+                "description": "The applicant flagged."
+              },
+              {
+                "name": "eligibility",
+                "type": "string",
+                "description": "Eligible or Not eligible."
+              },
+              {
+                "name": "flagged_by",
+                "type": "string",
+                "description": "The acting School Admin."
+              },
+              {
+                "name": "flagged_on",
+                "type": "datetime",
+                "description": "DD-MM-YYYY HH:mm, school-local."
+              },
+              {
+                "name": "test_attendance",
+                "type": "string",
+                "description": "Absent where the applicant did not sit the test. Shown to the decider rather than treated as a score (BR-12)."
+              },
+              {
+                "name": "score",
+                "type": "number",
+                "description": "The recorded score, returned so the flag and what it was made on are read together (BR-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "An eligibility flag was set with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not flagged.",
+              "note": "Message: \"Give a reason. The Principal decides on this.\" Ask for it; never compose one."
+            },
+            {
+              "code": "ALREADY_DECIDED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The applicant has already been admitted or rejected.",
+              "written": "Nothing.",
+              "notWritten": "Not flagged.",
+              "note": "The message names the date. There is nothing left to flag."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the eligibility reason. The Principal reads it before deciding a child's admission, and BR-3 requires it either way precisely so the judgement can be defended later. A planner's reason is a judgement nobody made.",
+          "derivedFrom": [
+            "BR-3",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never infer eligibility from the score. No pass mark exists (UC-02-06 BR-5), the form matters as much as the number (BR-1), and an absence is shown to the decider rather than treated as a result (BR-12). The flag is a person's judgement on both together.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never re-emit after ALREADY_DECIDED. The applicant has moved past this; the answer is what was decided and when.",
+          "derivedFrom": [
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain an admission onto a flag. Eligibility and approval are separate acts by separate people (BR-2), and one plan doing both erases the check the separation exists to provide.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A flag is a recorded judgement and is not withdrawn. A change of view is a further flag with its own reason, and both stay readable. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Bilal Khan ko eligible mark kar do — 87 number hain aur documents poore hain",
+            "lang": "ur-Latn",
+            "gloss": "flag Bilal Khan eligible — 87 marks and the documents are complete"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "applicant.eligibility.flag",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase → \"Bilal Khan\"",
+                "eligibility": "Eligible",
+                "eligibility_reason": "87 marks and a complete document set.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Flagged eligible with the admin's own reason, and the applicant appears on the Principal's list. Nothing is created and the family is told nothing."
+        },
+        {
+          "request": {
+            "text": "ye applicant eligible nahi hai — test mein aaya hi nahi aur birth certificate bhi nahi diya",
+            "lang": "ur-Latn",
+            "gloss": "this applicant is not eligible — did not sit the test and has not given the birth certificate"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "applicant.eligibility.flag",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase",
+                "eligibility": "Not eligible",
+                "eligibility_reason": "Did not sit the test and the birth certificate is missing.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A reason is required for Not eligible exactly as for Eligible (BR-3). The absence is stated, not read as a zero."
+            }
+          ],
+          "outcome": "Flagged not eligible with the reason. The applicant does not go to the Principal, and nothing is sent to the family — a rejection is a separate decision that the Principal takes."
+        },
+        {
+          "request": {
+            "text": "Sana ka score 64 hai, dekh lo eligible hai ya nahi",
+            "lang": "ur-Latn",
+            "gloss": "Sana's score is 64, see whether she is eligible or not"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "applicant.eligibility.flag",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase → \"Sana\"",
+                "eligibility": "$request.eligibility — absent",
+                "eligibility_reason": "$request.eligibility_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The request asks the assistant to judge, and there is no pass mark to judge against (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is written. Report the score, the attendance and whether the documents are complete, and leave the judgement to the admin — which is what the flag records."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-02-07-PC-2",
+      "intent": {
+        "name": "applicant.admit",
+        "summary": "Admit an applicant the School Admin flagged eligible, which creates the student record, the guardian, the family, the enrolment and the accounts, and sends the credentials. One step, and the largest write in the module.",
+        "routesHere": [
+          "admit Bilal Khan into grade 4 section B",
+          {
+            "text": "Bilal ko admit kar do, grade 4 section B mein",
+            "lang": "ur-Latn",
+            "gloss": "admit Bilal into grade 4 section B"
+          },
+          {
+            "text": "is applicant ka admission approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this applicant's admission"
+          },
+          "approve APP-2026-0417 and put them in section A",
+          {
+            "text": "in teenon eligible applicants ko admit kar do",
+            "lang": "ur-Latn",
+            "gloss": "admit these three eligible applicants"
+          },
+          {
+            "text": "admission de do, section baad mein rakh lenge",
+            "lang": "ur-Latn",
+            "gloss": "grant the admission, we will place the section later"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is applicant ko reject kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject this applicant"
+            },
+            "goesTo": "applicant.reject — UC-02-07-PC-3"
+          },
+          {
+            "request": {
+              "text": "eligible mark kar do",
+              "lang": "ur-Latn",
+              "gloss": "flag as eligible"
+            },
+            "goesTo": "applicant.eligibility.flag — UC-02-07-PC-1",
+            "note": "An applicant not flagged eligible cannot be admitted (E3), and flagging is a different person's act."
+          },
+          {
+            "request": {
+              "text": "purane student ko dobara admit karna hai",
+              "lang": "ur-Latn",
+              "gloss": "re-admit a former student"
+            },
+            "goesTo": "readmission.reactivate — UC-02-09-PC-2",
+            "note": "A returning student reuses their existing record and keeps their original student ID. Creating a new one is the failure that use case exists to prevent."
+          },
+          {
+            "request": {
+              "text": "inquiry approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the inquiry"
+            },
+            "goesTo": "inquiry.approve — UC-02-03-PC-1",
+            "note": "That approval issues an admission form. This one creates a student."
+          },
+          {
+            "request": "move this student to another section",
+            "goesTo": "Not this use case.",
+            "note": "Placing an admitted student is enrolment, not admission."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "applicant.admit",
+            "inputs": {
+              "applicant_ids": "$request.applicant_phrase",
+              "section_id": "$request.section_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step, whether the request names one applicant or several. Everything downstream — student, guardian, family, enrolment, accounts, credentials — is created inside it (BR-5, BR-6, BR-7). There is no sequence to plan and nothing to wire between steps."
+          }
+        ],
+        "onFailure": "Stop and report. Eligibility, section capacity, the numbering pattern and whether the applicant has already been decided are all enforced by the API and arrive as errors; the plan does not test for them beforehand. A failed credentials message does not fail the admission (E8) — the student exists and the family has not been told, which is an outcome to report.",
+        "atomicity": "Each admission is atomic in itself: the student, guardian, family, enrolment and accounts are created together or not at all, so a failure part way leaves nothing behind (E7). Across a batch the guarantee is different — each applicant is approved individually inside it and one failure does not abandon the rest (BR-10), so a partial result is the normal shape. The credentials message is separate again and does not block. Report all three layers: who was admitted, who was not and why, and who has not yet been told."
+      },
+      "operations": [
+        {
+          "name": "applicant.admit",
+          "method": "POST",
+          "path": "/api/v1/applicants/admit",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "applicant_id + decision, so a repeat cannot create a second student, a second roll number or a second guardian account for the same child",
+          "purpose": "Record the Principal's approval and create the student record, guardian, family, enrolment and accounts from the applicant's form, then send the credentials.",
+          "parameters": [
+            {
+              "name": "applicant_ids",
+              "source": "resolved",
+              "sourceRef": "$request.applicant_phrase",
+              "required": true,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "applicant",
+                "fromPhrase": "$request.applicant_phrase",
+                "onNoMatch": "Refuse. No applicant matches, or none flagged eligible.",
+                "onAmbiguous": "Ask, naming the candidates with temporary ID, child name, class and score. For a set, report how many and who before anything is created — a student record cannot be uncreated."
+              },
+              "notes": "One applicant or several. Only applicants already flagged eligible may be included (BR-10), and each is approved individually inside the batch."
+            },
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "class_section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No such section in this class and academic session.",
+                "onAmbiguous": "Ask, naming the candidates with their remaining capacity."
+              },
+              "notes": "The section to enrol into. Omit where the request names none: the Principal may approve and place the student later (BR-8). The class is derived from the section by the backend — do not send both (PR-3)."
+            },
+            {
+              "name": "rejection_reason",
+              "source": "request",
+              "sourceRef": "$request.rejection_reason",
+              "required": false,
+              "type": "string",
+              "notes": "Not used on this capability. Present only so the shape matches applicant.reject; never sent."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "A per-applicant result, because one failure does not abandon the rest.",
+            "fields": [
+              {
+                "name": "admitted",
+                "type": "object[]",
+                "description": "applicant_id, student_id, roll_number, guardian_id, family_code, class_name, section_name, credentials_delivery_status."
+              },
+              {
+                "name": "failed",
+                "type": "object[]",
+                "description": "applicant_id and the reason. Listed rather than silently dropped (BR-10)."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The generated student ID, which becomes the student's login username (BR-6). Never typed or chosen, never reused."
+              },
+              {
+                "name": "roll_number",
+                "type": "string",
+                "description": "Generated per the configured pattern (BR-6)."
+              },
+              {
+                "name": "family_code",
+                "type": "string",
+                "description": "The existing family where a sibling is already enrolled, otherwise a new one (BR-7)."
+              },
+              {
+                "name": "guardian_reused",
+                "type": "boolean",
+                "description": "True where the guardian and family already existed and were reused rather than duplicated (BR-7)."
+              },
+              {
+                "name": "credentials_delivery_status",
+                "type": "string",
+                "description": "Queued until the provider says otherwise. The temporary password must be changed at first sign-in (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E2",
+              "httpStatus": 403,
+              "meaning": "A School Admin attempted to approve an admission.",
+              "written": "Nothing.",
+              "notWritten": "Nothing created.",
+              "note": "Only the Principal decides (BR-2). In practice the capability is absent from a School Admin allow-list."
+            },
+            {
+              "code": "NOT_FLAGGED_ELIGIBLE",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The applicant has not been flagged eligible.",
+              "written": "Nothing.",
+              "notWritten": "Nothing created.",
+              "note": "Message: \"This applicant has not been flagged eligible yet.\" Flagging is the School Admin's act, and chaining it here would erase the separation in BR-2."
+            },
+            {
+              "code": "SECTION_AT_CAPACITY",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The chosen section is full.",
+              "written": "Nothing.",
+              "notWritten": "Nothing created.",
+              "note": "Message names the section. Choosing another is the Principal's decision, and approving without a section is also open to them (BR-8)."
+            },
+            {
+              "code": "NO_NUMBERING_PATTERN",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "No student numbering pattern is configured.",
+              "written": "Nothing.",
+              "notWritten": "Nothing created.",
+              "note": "No student ID or roll number can be generated (BR-6). This is configuration, not a decision problem."
+            },
+            {
+              "code": "CREATION_FAILED_PART_WAY",
+              "mapsTo": "E7",
+              "httpStatus": 500,
+              "meaning": "Record creation failed part way.",
+              "written": "Nothing.",
+              "notWritten": "Nothing created.",
+              "note": "Message: \"The admission could not be completed. Nothing has been created.\" The write is atomic, so there is no half-made student to clean up and no compensating call to make."
+            },
+            {
+              "code": "CREDENTIALS_SEND_FAILED",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "The credentials message failed to send.",
+              "written": "The student, guardian, family, enrolment and accounts all exist.",
+              "notWritten": "The family does not have the credentials.",
+              "treatedAsSuccess": true,
+              "note": "Not a failure of the admission. Report both halves — a family without credentials cannot sign in, and the student is already on the register."
+            },
+            {
+              "code": "ALREADY_DECIDED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The applicant has already been admitted or rejected.",
+              "written": "Nothing.",
+              "notWritten": "No second decision recorded.",
+              "note": "The message names the date. Open the student record instead."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report who a set resolves to, by name, before the plan is emitted. This creates student records, roll numbers, guardian logins and fee liability, and none of it can be uncreated. \"In sab ko admit kar do\" is a phrase with no number in it; the names are what the Principal is actually approving.",
+          "derivedFrom": [
+            "BR-10",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain an eligibility flag onto an admission. E3 refusing an unflagged applicant is BR-2 working — two people, deliberately — and flagging them here to make the admission succeed removes the only check standing before a child's record is created.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-10",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Send section_id and never class_id. The section determines its class, and the backend derives it; sending both invites them to disagree and puts a student in one class's register and another's section.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never choose a section. Where the request names none, omit it — the Principal may approve and place the student later (BR-8). Where the named one is full, E5 says so, and picking another puts a child in a class on a planner's judgement.",
+          "derivedFrom": [
+            "BR-8",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never re-emit with a different section after SECTION_AT_CAPACITY. The section was the Principal's choice, and the alternatives come back for a person to pick from.",
+          "derivedFrom": [
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report the three layers separately: who was admitted, who failed and why, and whose credentials have not gone out. A batch reported as a single success hides both the failures BR-10 insists on listing and the families who cannot sign in (E8).",
+          "derivedFrom": [
+            "BR-10",
+            "BR-9",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never re-emit after ALREADY_DECIDED, and never treat it as a reason to correct anything. A decision is never edited; a correction is a further recorded decision (BR-11), which is not this capability.",
+          "derivedFrom": [
+            "BR-11",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "Never chain anything onto an admission. The credentials, the fee liability, the register entry and the portal access all follow from it automatically; adding a message or an enrolment step duplicates a record that already exists.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-9"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is none, and this is the most consequential place in the module where that is true. Admission creates a student ID and a roll number that are never reused (BR-6), a guardian login, a family code, an enrolment and fee liability. A decision is never edited (BR-11) — a correction is a further recorded decision, and undoing an admission means deactivating a student record, which is UC-03-01's business and refused outright once a fee transaction references it. The controller must not attempt a compensating call under any circumstances."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Bilal Khan ko admit kar do — grade 4 section B mein",
+            "lang": "ur-Latn",
+            "gloss": "admit Bilal Khan — into grade 4 section B"
+          },
+          "context": "Principal, Johar Town branch, academic session 2025-26. Bilal is flagged eligible with 87 marks.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "applicant.admit",
+              "inputs": {
+                "applicant_ids": "$request.applicant_phrase → [\"Bilal Khan\"]",
+                "section_id": "$request.section_phrase → \"grade 4 section B\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "section_id alone — the class is derived from it by the backend (PR-3). The whole creation happens inside this one call."
+            }
+          ],
+          "outcome": "One student record with a generated student ID and roll number, a guardian account linked to a family code, an enrolment into 4-B, and the credentials queued to the number on the form. The student is now on the register, billable, and findable by student ID."
+        },
+        {
+          "request": {
+            "text": "Sana Malik ko admission de do, section baad mein rakh lenge",
+            "lang": "ur-Latn",
+            "gloss": "grant Sana Malik the admission, we will place the section later"
+          },
+          "context": "Principal, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "applicant.admit",
+              "inputs": {
+                "applicant_ids": "$request.applicant_phrase → [\"Sana Malik\"]",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "section_id is omitted entirely because the request names none. That is a different outcome, not a fallback the controller takes on its own (BR-8, PR-4)."
+            }
+          ],
+          "outcome": "The student record and credentials are created, and the student is admitted without a section. Placing them is a separate act afterwards."
+        },
+        {
+          "request": {
+            "text": "in teenon eligible applicants ko admit kar do grade 1 section A mein",
+            "lang": "ur-Latn",
+            "gloss": "admit these three eligible applicants into grade 1 section A"
+          },
+          "context": "Principal, Johar Town branch. Three applicants flagged eligible; section A has two places left.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "applicant.admit",
+              "inputs": {
+                "applicant_ids": "$request.applicant_phrase → [\"Ayesha Khan\", \"Hamza Ali\", \"Zoya Iqbal\"]",
+                "section_id": "$request.section_phrase → \"grade 1 section A\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The three names are reported to the Principal before the plan is emitted (PR-1). Each is approved individually inside the batch (BR-10)."
+            }
+          ],
+          "outcome": "Two admitted with student IDs, roll numbers and credentials queued. The third listed under failed with SECTION_AT_CAPACITY. The batch was not abandoned for the third, and the third was not quietly placed elsewhere — report all three by name."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-02-07-PC-3",
+      "intent": {
+        "name": "applicant.reject",
+        "summary": "Reject an applicant after the form and the test, with the reason the family will be told, and close their enquiry. One step.",
+        "routesHere": [
+          "reject this applicant — the score is well below what we need",
+          {
+            "text": "is applicant ko reject kar do",
+            "lang": "ur-Latn",
+            "gloss": "reject this applicant"
+          },
+          {
+            "text": "ye applicant reject kar do, seat nahi bachi",
+            "lang": "ur-Latn",
+            "gloss": "reject this applicant, there is no seat left"
+          },
+          "decline APP-2026-0417 and tell the family why",
+          {
+            "text": "admission nahi de sakte, mana kar do",
+            "lang": "ur-Latn",
+            "gloss": "we cannot give admission, turn them down"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is applicant ko admit kar do",
+              "lang": "ur-Latn",
+              "gloss": "admit this applicant"
+            },
+            "goesTo": "applicant.admit — UC-02-07-PC-2"
+          },
+          {
+            "request": {
+              "text": "eligible nahi hai",
+              "lang": "ur-Latn",
+              "gloss": "not eligible"
+            },
+            "goesTo": "applicant.eligibility.flag — UC-02-07-PC-1",
+            "note": "Flagging not eligible is a recommendation that keeps the applicant out of the Principal's list. Rejecting is a decision that tells the family."
+          },
+          {
+            "request": {
+              "text": "inquiry reject kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject the inquiry"
+            },
+            "goesTo": "inquiry.reject — UC-02-03-PC-2",
+            "note": "That rejection is before the admission form. This one is after the form and the test, with the score in front of the decider."
+          },
+          {
+            "request": {
+              "text": "reject ki hui application dobara dekho",
+              "lang": "ur-Latn",
+              "gloss": "look at a rejected application again"
+            },
+            "goesTo": "Not offered.",
+            "note": "A decision is never edited (BR-11), and the enquiry it closed cannot be re-opened (UC-02-11 E8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "applicant.reject",
+            "inputs": {
+              "applicant_id": "$request.applicant_phrase",
+              "rejection_reason": "$request.rejection_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The reason is mandatory because the family is told it (BR-4), and it is carried onto the closure of their enquiry so a second reason is never invented for it."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the applicant has already been decided, and the acting role, are enforced by the API and arrive as errors. A failed message does not fail the rejection.",
+        "atomicity": "One write, atomic in itself: the decision, the applicant's status, the closure of the enquiry and the audit entry together or not at all. No student record is created. The rejection message is separate and does not block — so the ordinary partial outcome is a rejection that stands with a family who has not been told. The enquiry closes carrying the rejection reason and cannot afterwards be re-opened (UC-02-11 E8)."
+      },
+      "operations": [
+        {
+          "name": "applicant.reject",
+          "method": "POST",
+          "path": "/api/v1/applicants/{applicant_id}/reject",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "applicant_id + decision, since an applicant carries one decision",
+          "purpose": "Record the Principal's rejection with its reason, tell the family, and close the enquiry.",
+          "parameters": [
+            {
+              "name": "applicant_id",
+              "source": "resolved",
+              "sourceRef": "$request.applicant_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "applicant",
+                "fromPhrase": "$request.applicant_phrase",
+                "onNoMatch": "Refuse. No applicant matches in this branch at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with temporary ID, child name, target class and test score. Never pick the likeliest — this decision creates a person's record."
+              },
+              "notes": "The applicant, resolved from how the actor named them — the temporary ID, or the child's name. Everything from the form to the decision hangs off this identifier."
+            },
+            {
+              "name": "rejection_reason",
+              "source": "request",
+              "sourceRef": "$request.rejection_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Mandatory — the family is told why, so an unexplained rejection is not permitted (BR-4, E4). The Principal's own words, carried across untranslated."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision, and what it closed.",
+            "fields": [
+              {
+                "name": "applicant_id",
+                "type": "string",
+                "description": "The applicant rejected."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Not admitted."
+              },
+              {
+                "name": "enquiry_status",
+                "type": "string",
+                "description": "Closed, carrying the rejection reason (UC-02-11 BR-9)."
+              },
+              {
+                "name": "delivery_status",
+                "type": "string",
+                "description": "Queued until the provider says otherwise."
+              },
+              {
+                "name": "temporary_id_retired",
+                "type": "boolean",
+                "description": "The temporary ID is retired with the decision."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "Reject was chosen with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not rejected.",
+              "note": "Message: \"Give a reason. The family is told why.\" Ask for it; never compose one."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E2",
+              "httpStatus": 403,
+              "meaning": "A School Admin attempted to decide.",
+              "written": "Nothing.",
+              "notWritten": "Not rejected.",
+              "note": "Only the Principal decides (BR-2)."
+            },
+            {
+              "code": "ALREADY_DECIDED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The applicant has already been decided.",
+              "written": "Nothing.",
+              "notWritten": "No second decision recorded."
+            },
+            {
+              "code": "SEND_FAILED",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "The rejection message failed to send.",
+              "written": "The rejection and the closure are written.",
+              "notWritten": "The family has not been told.",
+              "treatedAsSuccess": true,
+              "note": "Report both halves."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the rejection reason. It is sent to a family in the school's name and carried onto the closure of their enquiry, where it is read in the loss report afterwards. E4 refuses the rejection without one precisely so a person writes it.",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never re-emit after ALREADY_DECIDED, and never treat it as a correction. A decision is never edited (BR-11); the answer is what was decided and when.",
+          "derivedFrom": [
+            "BR-11",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never plan a rejection for a set. Each is a decision on a child and a message to a family, and neither can be recalled. Where several are to be rejected they are several plans, each reported.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never soften or rewrite the reason. It is carried onto the closure and read later, and the words the Principal chose are the record.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the decision and the send separately. The rejection stands even where the message failed (E8), and a family who has not been told is a fact worth stating.",
+          "derivedFrom": [
+            "E8"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-reject, and the enquiry it closes cannot be re-opened (UC-02-11 E8). A decision is never edited (BR-11); where the school changes its mind, that is a fresh inquiry and a fresh applicant, not a reversal. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is applicant ko reject kar do — grade 4 mein koi seat nahi bachi",
+            "lang": "ur-Latn",
+            "gloss": "reject this applicant — there is no seat left in grade 4"
+          },
+          "context": "Principal, Johar Town branch. The applicant is flagged eligible with a good score.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "applicant.reject",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase",
+                "rejection_reason": "There is no seat left in grade 4.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Being eligible does not make an admission automatic. The reason is the Principal's own and goes to the family as given."
+            }
+          ],
+          "outcome": "The applicant is Not admitted, the family is sent the reason, and their enquiry closes carrying it. The temporary ID is retired and no student record was created."
+        },
+        {
+          "request": "reject APP-2026-0417 — the score is well below what we take at this level",
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "applicant.reject",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase → \"APP-2026-0417\"",
+                "rejection_reason": "The admission test score is below the level required for this class.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Rejected with the reason sent. The enquiry closes carrying it, so the loss report shows a rejection rather than a second reason invented afterwards."
+        },
+        {
+          "request": {
+            "text": "is applicant ko mana kar do",
+            "lang": "ur-Latn",
+            "gloss": "turn this applicant down"
+          },
+          "context": "Principal, Johar Town branch, with no reason given in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "applicant.reject",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase",
+                "rejection_reason": "$request.rejection_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: rejection_reason is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the family should be told. This is the ordinary case — E4 exists so the reason comes from a person."
+        }
+      ]
+    }
+  ]
+}

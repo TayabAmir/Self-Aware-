@@ -1,0 +1,1030 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-27-01",
+    "name": "Create the classes an academic session runs and set how each is structured",
+    "module": "Class & Session Structure",
+    "file": "../UseCases/UC-27-01.json",
+    "featureRef": "27.1 Class creation"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-27-01-PC-1",
+      "intent": {
+        "name": "class.create",
+        "summary": "Create a class for the open academic session, set whether it is Fixed or Subject Wise, and attach the subjects it carries. One step.",
+        "routesHere": [
+          "create Grade 4 for this session",
+          {
+            "text": "Grade 4 bana do",
+            "lang": "ur-Latn",
+            "gloss": "create Grade 4"
+          },
+          {
+            "text": "nayi class add karo — Grade 9, subject wise, Physics Chemistry Biology ke saath",
+            "lang": "ur-Latn",
+            "gloss": "add a new class — Grade 9, subject wise, with Physics Chemistry Biology"
+          },
+          "set up a Fixed class called Prep with the standard subjects",
+          {
+            "text": "Grade 6 bana do, order 6, sab subjects ke saath",
+            "lang": "ur-Latn",
+            "gloss": "create Grade 6, order 6, with all the subjects"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "Grade 4 mein section B bana do",
+              "lang": "ur-Latn",
+              "gloss": "create section B under Grade 4"
+            },
+            "goesTo": "section.create — UC-27-02-PC-1",
+            "note": "A class is a structure and holds nobody; students are placed into sections (BR-10, UC-27-02 BR-1)."
+          },
+          {
+            "request": {
+              "text": "Grade 4 mein Chemistry add kar do",
+              "lang": "ur-Latn",
+              "gloss": "add Chemistry to Grade 4"
+            },
+            "goesTo": "class.update — UC-27-01-PC-2",
+            "note": "Attaching a subject to a class that exists is a change to it, not a creation."
+          },
+          {
+            "request": {
+              "text": "naya subject bana do",
+              "lang": "ur-Latn",
+              "gloss": "create a new subject"
+            },
+            "goesTo": "The subject list, maintained elsewhere.",
+            "note": "Maintaining the subject list itself is out of scope here; a class attaches subjects that already exist."
+          },
+          {
+            "request": {
+              "text": "agle session ki classes bana do",
+              "lang": "ur-Latn",
+              "gloss": "create next session's classes"
+            },
+            "goesTo": "class.create, in that session",
+            "note": "A class belongs to one academic session and is never carried between them by editing its session (BR-2). Next session's classes are created afresh, in a session the controller holds — see PR-5."
+          },
+          {
+            "request": {
+              "text": "students ko is class mein daal do",
+              "lang": "ur-Latn",
+              "gloss": "put students into this class"
+            },
+            "goesTo": "student.place — UC-27-03-PC-1",
+            "note": "Creating a class creates no sections and no students (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "class.create",
+            "inputs": {
+              "class_name": "$request.class_name",
+              "class_order": "$request.class_order",
+              "class_type": "$request.class_type",
+              "subject_ids": "$request.subjects_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. The class is created for the academic session the controller holds — the session is never taken from the request (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. Name uniqueness, the subject requirement, the acting role and whether a session is open at all are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the class, its attached subjects and the audit entry together or not at all. It creates no sections and no students (BR-10) — it is a structure that other things key off. Once created, the class becomes readable by attendance, timetable, assignment and examination in the same request (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "class.create",
+          "method": "POST",
+          "path": "/api/v1/classes",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "class_name + session_id + branch_id, which is the same triple BR-3 uses to decide a class already exists",
+          "purpose": "Create a class for the open academic session with its type and the subjects it carries.",
+          "parameters": [
+            {
+              "name": "class_name",
+              "source": "request",
+              "sourceRef": "$request.class_name",
+              "required": true,
+              "type": "string",
+              "notes": "2 to 60 characters, unique within the academic session and branch (BR-3). Passed exactly as the school says it — Grade 4, Class IV, Prep are different names and the school's own is the one that appears on every register."
+            },
+            {
+              "name": "class_order",
+              "source": "request",
+              "sourceRef": "$request.class_order",
+              "required": true,
+              "type": "number",
+              "notes": "Where the class sits in the school's sequence, so lists and promotion read in the right order. Only where the request states it; never inferred from the name, because Prep, Nursery and Grade 1 do not sort themselves."
+            },
+            {
+              "name": "class_type",
+              "source": "request",
+              "sourceRef": "$request.class_type",
+              "required": true,
+              "type": "enum: Fixed | Subject Wise",
+              "notes": "Fixed means every student takes the same subjects; Subject Wise means students take a selection, which changes how fees, timetables and results are calculated (BR-4). It cannot be changed once students are placed (BR-6), so it is never guessed."
+            },
+            {
+              "name": "subject_ids",
+              "source": "resolved",
+              "sourceRef": "$request.subjects_phrase",
+              "required": true,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "subject",
+                "fromPhrase": "$request.subjects_phrase",
+                "onNoMatch": "Refuse. A subject named here does not exist. Creating it is a separate act on the subject list.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "At least one is required — a class with no subjects cannot be timetabled, taught or examined (BR-5, E2)."
+            },
+            {
+              "name": "compulsory_subject_ids",
+              "source": "request",
+              "sourceRef": "$request.compulsory_subject_ids",
+              "required": false,
+              "type": "string[]",
+              "notes": "Only meaningful for a Subject Wise class, where an optional subject is one a student may choose not to take. Omitted for a Fixed class, where every student takes everything."
+            },
+            {
+              "name": "age_range",
+              "source": "request",
+              "sourceRef": "$request.age_range",
+              "required": false,
+              "type": "string",
+              "notes": "The ages the class normally takes, used to check an inquiry at the point it is submitted (UC-02-01 BR-3). Only where the request states it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The class as created.",
+            "fields": [
+              {
+                "name": "class_id",
+                "type": "string",
+                "description": "The class."
+              },
+              {
+                "name": "class_name",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "class_order",
+                "type": "number",
+                "description": "Its place in the sequence."
+              },
+              {
+                "name": "class_type",
+                "type": "string",
+                "description": "Fixed or Subject Wise."
+              },
+              {
+                "name": "subjects",
+                "type": "object[]",
+                "description": "Those attached, with whether each is compulsory."
+              },
+              {
+                "name": "session_id",
+                "type": "string",
+                "description": "The academic session it belongs to, and cannot leave (BR-2)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Active."
+              },
+              {
+                "name": "published_to",
+                "type": "string[]",
+                "description": "The modules that can now read it — attendance, timetable, assignment, examination (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NAME_ALREADY_EXISTS",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "A class of that name already exists in this session and branch.",
+              "written": "Nothing.",
+              "notWritten": "No class created.",
+              "note": "Message names the session. Two classes called Grade 4 in one session make every list ambiguous (BR-3)."
+            },
+            {
+              "code": "NO_SUBJECT_ATTACHED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No subject was attached.",
+              "written": "Nothing.",
+              "notWritten": "No class created.",
+              "note": "Message: \"Attach at least one subject. A class with no subjects cannot be timetabled, taught or examined.\""
+            },
+            {
+              "code": "NO_OPEN_SESSION",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "No academic session is open.",
+              "written": "Nothing.",
+              "notWritten": "No class created.",
+              "note": "A class belongs to a session, so there is nothing to create it in."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "A Coordinator attempted to create a class.",
+              "written": "Nothing.",
+              "notWritten": "No class created.",
+              "note": "Only a School Admin creates classes; Coordinators create the sections under them. In practice the capability is absent from a Coordinator's allow-list."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never guess the class type. Fixed and Subject Wise change how fees, timetables and results are calculated (BR-4), and the type cannot be changed once a single student is placed (BR-6) — so a wrong guess is locked in for a whole session.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-6",
+            "AC-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never infer class_order from the name. Prep, Nursery, KG and Grade 1 do not sort themselves, and the order is what lists and promotion read.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Pass the class name exactly as the school says it. It appears on every register, invoice and result sheet, and the school's own wording — Grade 4, Class IV, Prep — is the one they will look for.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-8",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never create a class to get past a refusal somewhere else. A section that cannot be created, an import row naming a class that does not exist, or a placement with nowhere to go are all statements about the structure — and creating the missing class silently invents part of the school's shape.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "session_id and branch_id come from $session. A class for next year is created in next year's session, which the actor opens first; a plan never takes the session from the request (BR-2).",
+          "derivedFrom": [
+            "BR-2",
+            "academic-session-scope",
+            "branch-scope"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never plan a class creation for a set. Each carries a type, an order and a subject list that someone decided; a batch decides none of them.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no delete. A class no longer run is deactivated through class.deactivate, and even that is refused while it holds an active section or a placed student (BR-9). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 4 bana do, order 4, fixed class, sab standard subjects ke saath",
+            "lang": "ur-Latn",
+            "gloss": "create Grade 4, order 4, a fixed class, with all the standard subjects"
+          },
+          "context": "School Admin, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "class.create",
+              "inputs": {
+                "class_name": "Grade 4",
+                "class_order": 4,
+                "class_type": "Fixed",
+                "subject_ids": "$request.subjects_phrase → English, Urdu, Mathematics, Science, Islamiat",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The type is Fixed because the request says so, not because Grade 4 usually is (PR-1)."
+            }
+          ],
+          "outcome": "Grade 4 exists for 2025-26 and sections can be created under it (AC-1). No sections and no students exist yet — it is a structure (BR-10)."
+        },
+        {
+          "request": {
+            "text": "Grade 9 bana do — subject wise, Physics Chemistry Biology optional, baaqi compulsory",
+            "lang": "ur-Latn",
+            "gloss": "create Grade 9 — subject wise, Physics Chemistry Biology optional, the rest compulsory"
+          },
+          "context": "School Admin, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "class.create",
+              "inputs": {
+                "class_name": "Grade 9",
+                "class_order": 9,
+                "class_type": "Subject Wise",
+                "subject_ids": "$request.subjects_phrase → English, Urdu, Mathematics, Physics, Chemistry, Biology",
+                "compulsory_subject_ids": "$request.compulsory_subject_ids → English, Urdu, Mathematics",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "compulsory_subject_ids is sent because the class is Subject Wise and the request distinguishes them. On a Fixed class it would be omitted entirely."
+            }
+          ],
+          "outcome": "Grade 9 exists as Subject Wise with three compulsory subjects and three optional. That distinction now drives how its fees, timetables and results are calculated (BR-4)."
+        },
+        {
+          "request": {
+            "text": "Grade 4 bana do",
+            "lang": "ur-Latn",
+            "gloss": "create Grade 4"
+          },
+          "context": "School Admin, Johar Town branch, where Grade 4 already exists for 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "class.create",
+              "inputs": {
+                "class_name": "Grade 4",
+                "class_order": "$request.class_order",
+                "class_type": "$request.class_type",
+                "subject_ids": "$request.subjects_phrase",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The plan is emitted unchanged; it does not check for the name beforehand. The API returns NAME_ALREADY_EXISTS (E1)."
+            }
+          ],
+          "outcome": "Nothing is created. Report that Grade 4 already exists for 2025-26 — which usually means the actor wants a section under it, or is looking at the wrong session."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-27-01-PC-2",
+      "intent": {
+        "name": "class.update",
+        "summary": "Change a class — its name, its order, its age range, or the subjects it carries. One step, and the type is not among them once students are placed.",
+        "routesHere": [
+          "rename Grade 4 to Grade IV",
+          {
+            "text": "Grade 4 ka naam Grade IV kar do",
+            "lang": "ur-Latn",
+            "gloss": "change Grade 4's name to Grade IV"
+          },
+          {
+            "text": "Grade 9 mein Chemistry add kar do",
+            "lang": "ur-Latn",
+            "gloss": "add Chemistry to Grade 9"
+          },
+          {
+            "text": "Prep ka order theek kar do, wo Nursery ke baad aata hai",
+            "lang": "ur-Latn",
+            "gloss": "fix Prep's order, it comes after Nursery"
+          },
+          "take Art off Grade 7, we're not running it this year",
+          {
+            "text": "Grade 5 ki age range 9 se 11 kar do",
+            "lang": "ur-Latn",
+            "gloss": "set Grade 5's age range to 9 to 11"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "nayi class bana do",
+              "lang": "ur-Latn",
+              "gloss": "create a new class"
+            },
+            "goesTo": "class.create — UC-27-01-PC-1"
+          },
+          {
+            "request": {
+              "text": "ye class ab nahi chal rahi",
+              "lang": "ur-Latn",
+              "gloss": "this class is no longer running"
+            },
+            "goesTo": "class.deactivate — UC-27-01-PC-3"
+          },
+          {
+            "request": {
+              "text": "section ki capacity badha do",
+              "lang": "ur-Latn",
+              "gloss": "raise the section's capacity"
+            },
+            "goesTo": "section.update — UC-27-02-PC-2",
+            "note": "Capacity belongs to a section, not to a class."
+          },
+          {
+            "request": {
+              "text": "class ko fixed se subject wise kar do",
+              "lang": "ur-Latn",
+              "gloss": "change the class from fixed to subject wise"
+            },
+            "goesTo": "class.update, and it may be refused",
+            "note": "Permitted only while no student is placed in any of its sections (BR-6, E3). Once one is, the type is settled for the session."
+          },
+          {
+            "request": {
+              "text": "is class ko agle session mein le jao",
+              "lang": "ur-Latn",
+              "gloss": "move this class to the next session"
+            },
+            "goesTo": "Not offered.",
+            "note": "A class belongs to one academic session and is never carried between them by editing its session (BR-2). Next session's classes are created afresh."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "class.update",
+            "inputs": {
+              "class_id": "$request.class_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, carrying only what the request changes. Subjects are added and removed by explicit lists rather than by replacing the set, so a rename never quietly drops a subject."
+          }
+        ],
+        "onFailure": "Stop and report. The type change, subject removal and the acting role are enforced by the API and arrive as errors; the plan does not test for them beforehand.",
+        "atomicity": "One write, atomic in itself. The change is reflected everywhere the class is used, in the same request — a register printed after a name correction shows the corrected name (BR-8, AC-8). So a small edit here reaches attendance, timetable, assignment and examination immediately."
+      },
+      "operations": [
+        {
+          "name": "class.update",
+          "method": "PATCH",
+          "path": "/api/v1/classes/{class_id}",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "class_id + the changed field set and their new values",
+          "purpose": "Change a class's definition or the subjects it carries, and reflect the change everywhere the class is used.",
+          "parameters": [
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No active class of that name in this academic session and branch.",
+                "onAmbiguous": "Ask, naming the candidates with their class order and type."
+              },
+              "notes": "The class, resolved from how the actor named it — Grade 4, Class IV, the words the school uses. Scoped to the open academic session, because a class belongs to one and is never carried between them (BR-2)."
+            },
+            {
+              "name": "class_name",
+              "source": "request",
+              "sourceRef": "$request.class_name",
+              "required": false,
+              "type": "string",
+              "notes": "2 to 60 characters, still unique within the session and branch (BR-3). Only where the request renames it."
+            },
+            {
+              "name": "class_order",
+              "source": "request",
+              "sourceRef": "$request.class_order",
+              "required": false,
+              "type": "number",
+              "notes": "Only where the request states the new order."
+            },
+            {
+              "name": "class_type",
+              "source": "request",
+              "sourceRef": "$request.class_type",
+              "required": false,
+              "type": "enum: Fixed | Subject Wise",
+              "notes": "Only where the request changes it, and refused once students are placed in any of its sections (BR-6, E3). Never sent to 'correct' a type nobody questioned."
+            },
+            {
+              "name": "age_range",
+              "source": "request",
+              "sourceRef": "$request.age_range",
+              "required": false,
+              "type": "string",
+              "notes": "Only where the request states it."
+            },
+            {
+              "name": "add_subject_ids",
+              "source": "resolved",
+              "sourceRef": "$request.add_subjects_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "subject",
+                "fromPhrase": "$request.add_subjects_phrase",
+                "onNoMatch": "Refuse. No such subject exists.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Subjects to attach. A subject may be added mid-session (A3)."
+            },
+            {
+              "name": "remove_subject_ids",
+              "source": "resolved",
+              "sourceRef": "$request.remove_subjects_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "subject",
+                "fromPhrase": "$request.remove_subjects_phrase",
+                "onNoMatch": "Refuse. That subject is not attached to this class.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Subjects to detach. Refused where marks, a timetable slot or an assignment already exist against one in this session, because removing it would orphan work already done (BR-7, E4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What changed on the class.",
+            "fields": [
+              {
+                "name": "class_id",
+                "type": "string",
+                "description": "The class changed."
+              },
+              {
+                "name": "changed_fields",
+                "type": "object[]",
+                "description": "field, previous_value, new_value."
+              },
+              {
+                "name": "subjects",
+                "type": "object[]",
+                "description": "The subjects the class now carries."
+              },
+              {
+                "name": "placed_student_count",
+                "type": "integer",
+                "description": "How many students are placed across its sections. Above zero, the type is settled for the session (BR-6)."
+              },
+              {
+                "name": "propagated",
+                "type": "boolean",
+                "description": "The change is now visible on registers, timetables and result sheets (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "TYPE_CHANGE_REFUSED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The type was changed after students are placed.",
+              "written": "Nothing.",
+              "notWritten": "Not changed.",
+              "note": "Message names the placed students. Changing the type would alter how their fees and results are calculated part way through a session (BR-6)."
+            },
+            {
+              "code": "SUBJECT_IN_USE",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "A subject was removed that already carries marks, a timetable slot or an assignment.",
+              "written": "Nothing.",
+              "notWritten": "Not changed.",
+              "note": "The message names the subject. Removing it would orphan work already done (BR-7)."
+            },
+            {
+              "code": "NAME_ALREADY_EXISTS",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The new name is already used by another class in this session.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            },
+            {
+              "code": "NO_SUBJECT_ATTACHED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The removal would leave the class with no subjects.",
+              "written": "Nothing.",
+              "notWritten": "Not changed.",
+              "note": "A class carries at least one subject (BR-5)."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "The acting user is not a School Admin.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Send only what the request changes. Every field sent is a recorded change that propagates to attendance, timetable and examination in the same request (BR-8); resupplying an unchanged name records an edit nobody made and reprints registers for nothing.",
+          "derivedFrom": [
+            "BR-8",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never send class_type unless the request changes it. It is refused once students are placed (E3), so including it in an unrelated edit turns a rename into a refusal and neither happens.",
+          "derivedFrom": [
+            "BR-6",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Add and remove subjects by explicit list, never by replacing the set. A replacement built from what the actor mentioned drops every subject they did not name, and E4 would only catch the ones already carrying work.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-7",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never treat SUBJECT_IN_USE as an obstacle. Marks, a timetable slot or an assignment already exist against that subject this session, and removing it would orphan them — the answer is that the subject stays until the session ends.",
+          "derivedFrom": [
+            "BR-7",
+            "E4",
+            "AC-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never rename a class to resolve a duplicate. E1 means two classes share a name in one session, and which one should change is the school's decision, not a tidy-up.",
+          "derivedFrom": [
+            "BR-3",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session, and the class is resolved within the open academic session. A class in a past session is not edited from this one (BR-2).",
+          "derivedFrom": [
+            "BR-2",
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no undo. A wrong change is changed again, and both stay in the audit log with their previous values. The propagation to registers, timetables and result sheets has already happened either way (BR-8). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 9 mein Chemistry add kar do, is saal chala rahe hain",
+            "lang": "ur-Latn",
+            "gloss": "add Chemistry to Grade 9, we are running it this year"
+          },
+          "context": "School Admin, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "class.update",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Grade 9\"",
+                "add_subject_ids": "$request.add_subjects_phrase → Chemistry",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "An explicit add. The existing subjects are not resupplied, so none of them can be dropped by accident (PR-3)."
+            }
+          ],
+          "outcome": "Chemistry is attached to Grade 9 mid-session (A3) and becomes available to its sections, its timetable and its examinations. Nothing else on the class changed."
+        },
+        {
+          "request": {
+            "text": "Grade 7 se Art hata do, is saal nahi chal rahi",
+            "lang": "ur-Latn",
+            "gloss": "take Art off Grade 7, we are not running it this year"
+          },
+          "context": "School Admin, Johar Town branch, where Art already carries marks for this session.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "class.update",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Grade 7\"",
+                "remove_subject_ids": "$request.remove_subjects_phrase → Art",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged; it does not check for marks beforehand. The API returns SUBJECT_IN_USE (E4)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that Art already carries marks this session and cannot be removed — the work would be orphaned (BR-7). It can come off when next session's classes are created."
+        },
+        {
+          "request": {
+            "text": "Grade 4 ko subject wise kar do",
+            "lang": "ur-Latn",
+            "gloss": "make Grade 4 subject wise"
+          },
+          "context": "School Admin, Johar Town branch, where 54 students are placed across Grade 4's sections.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "class.update",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Grade 4\"",
+                "class_type": "Subject Wise",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns TYPE_CHANGE_REFUSED (E3) and names the placed students."
+            }
+          ],
+          "outcome": "Nothing changes. Report that 54 students are already placed, so the type is settled for this session — changing it would alter how their fees and results are calculated part way through (BR-6). Next session's Grade 4 can be created Subject Wise."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-27-01-PC-3",
+      "intent": {
+        "name": "class.deactivate",
+        "summary": "Deactivate a class the school no longer runs, once nothing is still attached to it. One step.",
+        "routesHere": [
+          "deactivate Grade 11, we're not running it this year",
+          {
+            "text": "ye class ab nahi chal rahi, band kar do",
+            "lang": "ur-Latn",
+            "gloss": "this class is no longer running, close it"
+          },
+          {
+            "text": "Grade 11 ko inactive kar do",
+            "lang": "ur-Latn",
+            "gloss": "make Grade 11 inactive"
+          },
+          "retire this class for the session"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "class delete kar do",
+              "lang": "ur-Latn",
+              "gloss": "delete the class"
+            },
+            "goesTo": "Not offered.",
+            "note": "A class is deactivated, never deleted (BR-9). Its history stays readable."
+          },
+          {
+            "request": {
+              "text": "section band kar do",
+              "lang": "ur-Latn",
+              "gloss": "close a section"
+            },
+            "goesTo": "section.deactivate — UC-27-02-PC-4",
+            "note": "A class cannot be deactivated while an active section remains (BR-9, E5), so the sections go first."
+          },
+          {
+            "request": {
+              "text": "students ko kahin aur shift kar do",
+              "lang": "ur-Latn",
+              "gloss": "move the students somewhere else"
+            },
+            "goesTo": "student.move — UC-27-03-PC-2",
+            "note": "Deactivation is refused while a placed student remains. Moving them is a separate act with its own reason."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "class.deactivate",
+            "inputs": {
+              "class_id": "$request.class_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Whether anything is still attached is the API's to enforce (BR-9, E5) — the plan does not count sections or students beforehand."
+          }
+        ],
+        "onFailure": "Stop and report. Active sections and placed students both refuse the deactivation, and the message names them.",
+        "atomicity": "One write: the class moves to Inactive with its audit entry, together or not at all. Nothing is deleted — the class, its subjects and everything recorded against it stay readable (BR-9). No section and no student is touched, because the deactivation is refused outright while either remains."
+      },
+      "operations": [
+        {
+          "name": "class.deactivate",
+          "method": "POST",
+          "path": "/api/v1/classes/{class_id}/deactivate",
+          "kind": "deactivate",
+          "idempotent": true,
+          "idempotencyKey": "class_id, since a class has one deactivation and a repeat changes nothing",
+          "purpose": "Mark a class inactive so it is no longer offered, keeping it and everything recorded against it readable.",
+          "parameters": [
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No active class of that name in this academic session and branch.",
+                "onAmbiguous": "Ask, naming the candidates with their class order and type."
+              },
+              "notes": "The class, resolved from how the actor named it — Grade 4, Class IV, the words the school uses. Scoped to the open academic session, because a class belongs to one and is never carried between them (BR-2)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The class as deactivated, or what is still holding it.",
+            "fields": [
+              {
+                "name": "class_id",
+                "type": "string",
+                "description": "The class."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Inactive."
+              },
+              {
+                "name": "active_section_count",
+                "type": "integer",
+                "description": "Zero on success. Above zero it is why the deactivation was refused."
+              },
+              {
+                "name": "placed_student_count",
+                "type": "integer",
+                "description": "Zero on success."
+              },
+              {
+                "name": "deactivated_by",
+                "type": "string",
+                "description": "The acting School Admin."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "STILL_IN_USE",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "An active section or a placed student remains.",
+              "written": "Nothing.",
+              "notWritten": "Not deactivated.",
+              "note": "The message names the counts — \"2 active sections and 54 students\" (AC-6). Each has to be dealt with as its own act; there is no cascade."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "The acting user is not a School Admin.",
+              "written": "Nothing.",
+              "notWritten": "Not deactivated."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never plan the clearing-up. STILL_IN_USE naming two sections and 54 students is the system saying a person has to decide where those children go (BR-9); moving them, or deactivating sections, are separate acts with their own reasons and their own consequences.",
+          "derivedFrom": [
+            "BR-9",
+            "E5",
+            "AC-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never deactivate a class to correct a mistake in creating it. A class created in error still cannot be deleted, and a class deactivated in error is one the school can no longer use this session.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the counts when the deactivation is refused. They are the answer — the actor almost certainly did not know 54 students were still placed.",
+          "derivedFrom": [
+            "E5",
+            "AC-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "The lifecycle holds Active and Inactive and no capability reactivates a class — the use case describes deactivation only. Where a class is deactivated in error, nothing here restores it. See OPEN-QUESTIONS."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 11 band kar do, is saal nahi chala rahe",
+            "lang": "ur-Latn",
+            "gloss": "close Grade 11, we are not running it this year"
+          },
+          "context": "School Admin, Johar Town branch, where Grade 11 has no sections and no students.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "class.deactivate",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Grade 11\"",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Grade 11 is Inactive and no longer offered. Everything recorded against it stays readable (BR-9)."
+        },
+        {
+          "request": {
+            "text": "Grade 4 ko band kar do",
+            "lang": "ur-Latn",
+            "gloss": "close Grade 4"
+          },
+          "context": "School Admin, Johar Town branch, where Grade 4 holds two active sections and 54 placed students.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "class.deactivate",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Grade 4\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged; the plan does not count anything beforehand. The API returns STILL_IN_USE (E5)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that 2 active sections and 54 students are still attached, and that each has to be dealt with first — do not offer to move them (PR-1)."
+        },
+        {
+          "request": "retire Prep for this session",
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "class.deactivate",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Prep\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "In practice the capability is absent from a Coordinator's allow-list, so this plan is never built."
+            }
+          ],
+          "outcome": "Nothing changes. Report that only a School Admin may deactivate a class, and that Coordinators work at the section level."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,622 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-05-06",
+    "name": "Mark staff attendance by card scan, with a code-verified route when the card is not to hand",
+    "module": "Attendance",
+    "file": "../UseCases/UC-05-06.json",
+    "featureRef": "5.6 Barcode, ID-card or QR attendance scanning"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-05-06-PC-1",
+      "intent": {
+        "name": "staff.attendance.manualmark.start",
+        "summary": "Start a manual staff attendance mark where the card is not to hand, which sends a one-time code to the number on that staff record. One step, and nobody is marked yet.",
+        "routesHere": [
+          "start a manual mark for Miss Nadia, she's forgotten her card",
+          {
+            "text": "Miss Nadia card bhool aayi hain, code bhej do",
+            "lang": "ur-Latn",
+            "gloss": "Miss Nadia has forgotten her card, send the code"
+          },
+          {
+            "text": "card nahi hai, manual hazri shuru karo",
+            "lang": "ur-Latn",
+            "gloss": "there is no card, start a manual attendance"
+          },
+          {
+            "text": "code dobara bhejo, unko mila nahi",
+            "lang": "ur-Latn",
+            "gloss": "send the code again, they did not get it"
+          },
+          "reader is down — begin a code-verified mark for this teacher"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "code aa gaya hai, hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "the code has come, mark the attendance"
+            },
+            "goesTo": "staff.attendance.manualmark.verify — UC-05-06-PC-2",
+            "note": "The mark is made only when the matching code is entered (BR-7)."
+          },
+          {
+            "request": {
+              "text": "bina code ke hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark the attendance without a code"
+            },
+            "goesTo": "Not offered.",
+            "note": "A manual mark cannot be made without a matching code. This is the rule that stops anybody being marked present in their absence, and there is no override (BR-7, E7)."
+          },
+          {
+            "request": {
+              "text": "haath se hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark attendance by hand"
+            },
+            "goesTo": "staff.attendance.mark — UC-05-03-PC-1",
+            "note": "The School Admin's ordinary hand-marking route is a different act, made against the staff record rather than verified by code."
+          },
+          {
+            "request": {
+              "text": "bache ki hazri card se lagao",
+              "lang": "ur-Latn",
+              "gloss": "mark a student's attendance by card"
+            },
+            "goesTo": "Not offered.",
+            "note": "This route is for staff only. Student attendance is never marked by scanning, whatever the card can do (BR-1)."
+          },
+          {
+            "request": {
+              "text": "card gum ho gaya hai, naya banao",
+              "lang": "ur-Latn",
+              "gloss": "the card is lost, issue a new one"
+            },
+            "goesTo": "Not offered here.",
+            "note": "The use case reads staff cards but does not create or deactivate them, though BR-13 and A2 describe both. See OPEN-QUESTIONS."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.attendance.manualmark.start",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "date": "$request.date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The code goes to the number held on that staff record and the admin does not choose where it goes (BR-5) — no attendance exists until the code comes back."
+          }
+        ],
+        "onFailure": "Stop and report. A staff record with no contact number, a closed day, an existing scan for the day and an unreachable provider are all enforced by the API and arrive as errors.",
+        "atomicity": "One write: the verification with its code sent, and the audit entry. **No attendance record is created** — a manual mark cannot be made without a matching code, and there is no override (BR-7). Every code sent and every resend is logged, so repeated resends against one person can be seen rather than inferred (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "staff.attendance.manualmark.start",
+          "method": "POST",
+          "path": "/api/v1/staff-attendance/manual-marks",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff_id + date, since a day carries one pending verification — a repeat resends rather than starting a second",
+          "purpose": "Begin a code-verified manual mark and send the one-time code to the number on the staff record.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No active staff member matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with department and role."
+              },
+              "notes": "The person being marked manually. The code goes to the number on their record and nowhere else (BR-5)."
+            },
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": true,
+              "type": "date",
+              "notes": "The day being marked. A working day (E3)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The verification as started.",
+            "fields": [
+              {
+                "name": "verification_id",
+                "type": "string",
+                "description": "The pending verification."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Code sent. No attendance exists yet (BR-7)."
+              },
+              {
+                "name": "code_sent_to",
+                "type": "string",
+                "description": "The number on the staff record, masked. Taken from the record and never from the request (BR-5)."
+              },
+              {
+                "name": "valid_until",
+                "type": "datetime",
+                "description": "The code is valid for a configured period and can be used once (BR-6)."
+              },
+              {
+                "name": "resend_count",
+                "type": "integer",
+                "description": "How many times it has been sent, which makes a pattern visible (BR-10)."
+              },
+              {
+                "name": "existing_scan",
+                "type": "object",
+                "description": "Where the staff member already scanned in, with the time (E8). No manual mark is needed."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_CONTACT_NUMBER",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The staff record carries no contact number.",
+              "written": "Nothing.",
+              "notWritten": "No code sent.",
+              "note": "The code has nowhere to go. Adding a number is a change to the staff record, not a step to chain here."
+            },
+            {
+              "code": "CLOSED_DAY",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The school is closed on that date.",
+              "written": "Nothing.",
+              "notWritten": "No code sent.",
+              "note": "No attendance is recorded on a closed day, whether scanned or marked manually (BR-12)."
+            },
+            {
+              "code": "SCAN_EXISTS",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "A scan already exists for the day.",
+              "written": "Nothing.",
+              "notWritten": "No code sent.",
+              "note": "The message names the scan time. The staff member is already marked."
+            },
+            {
+              "code": "CODE_SEND_FAILED",
+              "mapsTo": "E9",
+              "httpStatus": 503,
+              "meaning": "The code could not be sent because the provider is unreachable.",
+              "written": "Nothing.",
+              "notWritten": "No code sent.",
+              "note": "Message: \"The code could not be sent. Try again, or mark by hand.\" Marking by hand is UC-05-03 and a different act."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose where the code goes. It is sent to the number held on that staff record and the admin does not choose the destination (BR-5) — a code sent anywhere else defeats the whole design.",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never mark anybody without the code coming back. There is no override (BR-7), and this is the rule that stops somebody being marked present in their absence — a request to skip it is a request to defeat the control.",
+          "derivedFrom": [
+            "BR-7",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never start a manual mark for a student. This route is for staff only, whatever the card can do (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the resend count. Every code and every resend is logged so repeated resends against one person can be seen rather than inferred (BR-10) — a third resend for the same person is worth mentioning.",
+          "derivedFrom": [
+            "BR-9",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never treat CODE_SEND_FAILED as a reason to mark by hand instead. Hand-marking is UC-05-03 with a different source on the record, and the two are distinguishable for good (BR-8).",
+          "derivedFrom": [
+            "BR-8",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An unverified code simply expires or is abandoned — both terminal, and neither creates attendance. There is nothing to undo, because nothing was written beyond the log of the code being sent."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Miss Nadia card bhool aayi hain, code bhej do",
+            "lang": "ur-Latn",
+            "gloss": "Miss Nadia has forgotten her card, send the code"
+          },
+          "context": "School Admin, Johar Town branch. Today is a working day.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.manualmark.start",
+              "inputs": {
+                "staff_id": "$request.staff_phrase → \"Miss Nadia\"",
+                "date": "2026-09-08",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The code goes to the number on her record; nothing in the request chooses it (PR-1)."
+            }
+          ],
+          "outcome": "A code is sent to the number on file, valid for the configured period. No attendance exists yet — she has to supply the code before anything is marked (PR-2)."
+        },
+        {
+          "request": {
+            "text": "code phir bhejo, teesri martaba",
+            "lang": "ur-Latn",
+            "gloss": "send the code again, third time"
+          },
+          "context": "School Admin, Johar Town branch, on a pending verification.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.manualmark.start",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "date": "2026-09-08",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The same call resends rather than starting a second verification."
+            }
+          ],
+          "outcome": "Resent, and resend_count comes back as 3. Report that (PR-4) — repeated resends against one person are logged precisely so a pattern can be seen rather than inferred."
+        },
+        {
+          "request": {
+            "text": "code ke bagair hi hazri laga do, mujhe pata hai wo aayi hain",
+            "lang": "ur-Latn",
+            "gloss": "just mark the attendance without the code, I know she is here"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.manualmark.start",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "date": "2026-09-08",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan starts the verification and stops there. There is no capability that marks without a code (PR-2)."
+            }
+          ],
+          "outcome": "The code is sent. Report that there is no override — a manual mark needs the code back from the staff member themselves, and that is the rule that stops anybody being marked present in their absence."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-06-PC-2",
+      "intent": {
+        "name": "staff.attendance.manualmark.verify",
+        "summary": "Enter the code the staff member supplies and mark their attendance. One step, and the record shows it was verified by code rather than scanned.",
+        "routesHere": [
+          "the code is 418203 — mark her in",
+          {
+            "text": "code 418203 hai, hazri laga do",
+            "lang": "ur-Latn",
+            "gloss": "the code is 418203, mark the attendance"
+          },
+          {
+            "text": "unhone code bata diya hai",
+            "lang": "ur-Latn",
+            "gloss": "they have given the code"
+          },
+          {
+            "text": "code daal ke hazri mukammal karo",
+            "lang": "ur-Latn",
+            "gloss": "enter the code and complete the attendance"
+          },
+          "verify and record the manual mark"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "code bhejo",
+              "lang": "ur-Latn",
+              "gloss": "send the code"
+            },
+            "goesTo": "staff.attendance.manualmark.start — UC-05-06-PC-1"
+          },
+          {
+            "request": {
+              "text": "code expire ho gaya hai",
+              "lang": "ur-Latn",
+              "gloss": "the code has expired"
+            },
+            "goesTo": "staff.attendance.manualmark.start, afresh",
+            "note": "A code from yesterday cannot mark today (BR-6). Starting again sends a new one."
+          },
+          {
+            "request": {
+              "text": "hazri theek karni hai",
+              "lang": "ur-Latn",
+              "gloss": "the attendance needs correcting"
+            },
+            "goesTo": "staff.attendance.correction.raise — UC-05-03-PC-3",
+            "note": "The record produced here is the same staff attendance record as a manual entry, and is corrected the same way (BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.attendance.manualmark.verify",
+            "inputs": {
+              "verification_id": "$request.verification_phrase",
+              "code": "$request.code",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The code must match, and it can be used once (BR-6) — the staff member is the only person who can supply it (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. A code that does not match, and a mark attempted with no code, are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the staff attendance record, its source marked as verified by code, and the audit entry together or not at all. It is the same staff attendance record as a manual entry, carrying the same codes and feeding the same payroll calculation (BR-11) — but the record shows it was marked manually and verified by code rather than scanned, and the two are distinguishable for good, so a pattern of manual marks can be seen (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "staff.attendance.manualmark.verify",
+          "method": "POST",
+          "path": "/api/v1/staff-attendance/manual-marks/{verification_id}/verify",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "verification_id, since a code can be used once (BR-6) and a repeat must not write a second record",
+          "purpose": "Verify the one-time code and write the staff attendance record.",
+          "parameters": [
+            {
+              "name": "verification_id",
+              "source": "resolved",
+              "sourceRef": "$request.verification_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "manual_mark_verification",
+                "fromPhrase": "$request.verification_phrase",
+                "onNoMatch": "Refuse. No pending verification matches — the code may have expired, or none was started.",
+                "onAmbiguous": "Ask, naming the candidates with staff member, date and when the code was sent."
+              },
+              "notes": "The pending verification, resolved from the staff member and date."
+            },
+            {
+              "name": "code",
+              "source": "request",
+              "sourceRef": "$request.code",
+              "required": true,
+              "type": "string",
+              "notes": "6 digits, as the staff member supplied them. Passed exactly as given — never re-derived, and never taken from anywhere but the person it was sent to (BR-9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The attendance as recorded.",
+            "fields": [
+              {
+                "name": "record_id",
+                "type": "string",
+                "description": "The staff attendance record — the same kind a hand entry produces (BR-11)."
+              },
+              {
+                "name": "source",
+                "type": "string",
+                "description": "Manual, verified by code. Distinguishable from a scan for good (BR-8)."
+              },
+              {
+                "name": "marked_at",
+                "type": "datetime",
+                "description": "When the manual mark was confirmed."
+              },
+              {
+                "name": "verified_by",
+                "type": "string",
+                "description": "The School Admin who entered the matching code."
+              },
+              {
+                "name": "code",
+                "type": "string",
+                "description": "Spent. It can be used once (BR-6)."
+              },
+              {
+                "name": "manual_marks_this_month",
+                "type": "integer",
+                "description": "How many of this staff member's days were manual rather than scanned, so a pattern is visible (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CODE_MISMATCH",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The code entered does not match.",
+              "written": "Nothing.",
+              "notWritten": "No attendance recorded.",
+              "note": "Message: \"That code does not match. Ask for the code sent to them.\" Never retry with a guess."
+            },
+            {
+              "code": "NO_CODE",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A manual mark was attempted with no code.",
+              "written": "Nothing.",
+              "notWritten": "No attendance recorded.",
+              "note": "Message: \"A manual mark needs a verified code.\" There is no override (BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply or guess the code. It is sent to the staff member and only they can supply it (BR-9) — a code produced any other way marks somebody present without their knowledge.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-9",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never retry a mismatched code. E5 means the digits are wrong, and trying variations is exactly the behaviour the one-time code exists to stop.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the manual-mark count for the month. Scans and code-verified marks are distinguishable for good so a pattern can be seen (BR-8), and a staff member marked manually every day is worth noticing.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never describe the result as a scan. The record shows how the attendance arose, and it matters when it is questioned (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain a correction onto the mark. The record produced here is corrected under the Principal's approval like any other (BR-11, UC-05-03 BR-7).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "The record produced here is the same staff attendance record as any other and is corrected under the Principal's approval, never overwritten (BR-11, UC-05-03 BR-7). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Miss Nadia ne code bata diya — 418203",
+            "lang": "ur-Latn",
+            "gloss": "Miss Nadia has given the code — 418203"
+          },
+          "context": "School Admin, Johar Town branch, on a pending verification sent twelve minutes ago.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.manualmark.verify",
+              "inputs": {
+                "verification_id": "$request.verification_phrase",
+                "code": "418203",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The digits are exactly as she supplied them (PR-1)."
+            }
+          ],
+          "outcome": "The attendance is recorded with source \"Manual, verified by code\". It feeds payroll exactly as a scan would (BR-11), but the record says how it arose. Report the month's manual-mark count (PR-3)."
+        },
+        {
+          "request": {
+            "text": "code 418000 tha shayad, laga ke dekho",
+            "lang": "ur-Latn",
+            "gloss": "the code was maybe 418000, try it"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.manualmark.verify",
+              "inputs": {
+                "verification_id": "$request.verification_phrase",
+                "code": "418000",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Passed as given. The API returns CODE_MISMATCH (E5)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the code does not match and ask the staff member for the one that was sent — never try variations (PR-2), which is the behaviour a one-time code exists to stop."
+        },
+        {
+          "request": {
+            "text": "code kal ka hai, chalega?",
+            "lang": "ur-Latn",
+            "gloss": "the code is from yesterday, will it work?"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.manualmark.verify",
+              "inputs": {
+                "verification_id": "$request.verification_phrase → expired",
+                "code": "$request.code",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Resolution refuses: the verification has expired, so there is no pending one to verify against."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that a code from yesterday cannot mark today (BR-6) and that a fresh one has to be sent — which is starting the manual mark again."
+        }
+      ]
+    }
+  ]
+}

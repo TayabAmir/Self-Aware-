@@ -1,0 +1,992 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-25-04",
+  "featureRef": "25.4 Multi-factor authentication",
+  "name": "Require a second verification step at sign-in, so a stolen password alone is not enough",
+  "module": "Security",
+  "alsoAffectsModules": [],
+  "priority": "MVP",
+  "priorityReason": "A password reaching the wrong person is the commonest breach, and nothing else stands behind it.",
+  "goal": {
+    "actor": "a Super Admin and every user",
+    "capability": "to require a second step at sign-in on the roles and people that need it",
+    "outcome": "a stolen password alone does not get anybody in"
+  },
+  "primaryActor": "Super Admin",
+  "secondaryActors": [
+    {
+      "actor": "Every user with a login",
+      "involvement": "Enrols their second factor, and may turn it on or off for themselves where it has not been enforced on them."
+    }
+  ],
+  "externalActors": [
+    {
+      "actor": "Authenticator application or SMS provider",
+      "involvement": "Carries the second factor."
+    }
+  ],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "A user signs in to an account where a second factor applies (BR-4).",
+        "source": "UC-01-01"
+      },
+      {
+        "type": "inbound",
+        "description": "A user has lost their second factor and asks the Super Admin to recover it (BR-6).",
+        "source": "UC-25-04"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "The user holds a generated account and has set their own password.",
+      "establishedBy": {
+        "id": "UC-25-05",
+        "name": "Password management",
+        "link": "UC-25-05.json"
+      }
+    },
+    {
+      "condition": "An authenticated session exists for enrolment.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "Enforcing on a role or an individual requires the Super Admin (BR-1)."
+    }
+  ],
+  "postConditions": [
+    "Where the Super Admin enforced it on a role or a named individual, those users cannot turn it off.",
+    "Where it was not enforced, the user could enable or disable it themselves from their own profile.",
+    "The user enrolled their second factor.",
+    "At sign-in they entered their password and then the second factor.",
+    "Access was granted only where both succeeded, so a stolen password alone was not enough.",
+    "A lost factor was recovered by the Super Admin, and by nobody else.",
+    "Every enforcement, enrolment, and recovery is on the audit trail."
+  ],
+  "screens": [
+    {
+      "name": "Multi-factor enforcement",
+      "route": "/settings/mfa",
+      "sidebar": "Settings",
+      "columns": [
+        "Role or individual",
+        "Enforced",
+        "Enrolled",
+        "Enforced by",
+        "Enforced on"
+      ],
+      "defaultSort": "Role, then name",
+      "filters": [
+        "Enforced",
+        "Enrolled",
+        "Not enrolled"
+      ],
+      "actions": [
+        "Enforce on a role",
+        "Enforce on an individual",
+        "Remove enforcement",
+        "Recover a factor",
+        "Export"
+      ],
+      "visibleTo": [
+        "Super Admin"
+      ]
+    },
+    {
+      "name": "My security",
+      "route": "/account/security",
+      "sidebar": "Account",
+      "columns": [
+        "Setting",
+        "State"
+      ],
+      "actions": [
+        "Enable multi-factor",
+        "Disable multi-factor",
+        "Enrol a factor",
+        "Re-enrol"
+      ],
+      "visibleTo": [
+        "Every actor with a login"
+      ]
+    },
+    {
+      "name": "Enrol your second factor",
+      "route": "/account/security/enrol",
+      "sidebar": "Account",
+      "actions": [
+        "Choose the method",
+        "Enrol",
+        "Confirm with a code"
+      ],
+      "visibleTo": [
+        "Every actor with a login"
+      ]
+    },
+    {
+      "name": "Second factor",
+      "route": "/login/factor",
+      "sidebar": "None",
+      "actions": [
+        "Enter the code",
+        "Sign in"
+      ],
+      "visibleTo": [
+        "Every actor with a login"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Enforced on",
+      "type": "enum",
+      "required": "conditional",
+      "validation": "Whether the enforcement is on a role or on a named individual (BR-1).",
+      "example": "Role",
+      "enumValues": [
+        "Role",
+        "Individual"
+      ],
+      "requiredWhen": "Enforcement is being set"
+    },
+    {
+      "name": "Role or individual",
+      "type": "lookup",
+      "required": "conditional",
+      "example": "Accounts",
+      "requiredWhen": "Enforcement is being set",
+      "lookupSource": "Roles and users"
+    },
+    {
+      "name": "Enforced",
+      "type": "boolean",
+      "required": "generated",
+      "validation": "Where enforced, the user cannot turn it off (BR-1).",
+      "default": false,
+      "example": true
+    },
+    {
+      "name": "Method",
+      "type": "enum",
+      "required": "conditional",
+      "validation": "How the second factor is delivered.",
+      "example": "Authenticator application",
+      "enumValues": [
+        "Authenticator application",
+        "SMS to the recorded number"
+      ],
+      "requiredWhen": "A factor is being enrolled"
+    },
+    {
+      "name": "Enrolled",
+      "type": "boolean",
+      "required": "generated",
+      "validation": "Whether the user has enrolled a factor (BR-3).",
+      "default": false,
+      "example": true
+    },
+    {
+      "name": "Enrolled on",
+      "type": "generated",
+      "required": "no",
+      "example": "14-11-2026 09:20"
+    },
+    {
+      "name": "User setting",
+      "type": "boolean",
+      "required": "conditional",
+      "validation": "Whether the user has turned it on for themselves. Only available where it is not enforced (BR-2).",
+      "default": false,
+      "example": true,
+      "requiredWhen": "Multi-factor is not enforced on the user"
+    },
+    {
+      "name": "Recovery reason",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 500 characters. Required for the Super Admin to recover a lost factor (BR-6).",
+      "example": "Handset lost and replaced. Identity confirmed at the office on 4 December.",
+      "requiredWhen": "A factor is being recovered"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Multi-factor enforcement",
+      "operations": [
+        "create",
+        "read",
+        "deactivate"
+      ],
+      "notes": "Set by the Super Admin on a role or a named individual (BR-1)."
+    },
+    {
+      "entity": "Enrolled factor",
+      "operations": [
+        "create",
+        "read",
+        "deactivate"
+      ],
+      "notes": "One per user, enrolled by them. Reset only by the Super Admin (BR-3, BR-6)."
+    },
+    {
+      "entity": "User account",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Read for the user and their own setting (BR-2)."
+    },
+    {
+      "entity": "Sign-in attempt",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "Records whether both steps succeeded, since neither alone grants access (BR-5)."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Every enforcement, enrolment and recovery (BR-7)."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Super Admin",
+      "actions": [
+        "view",
+        "create",
+        "edit",
+        "deactivate"
+      ],
+      "rowScope": "All users.",
+      "notes": "Enforces multi-factor on chosen roles or on named individuals, and recovers a lost factor (BR-1, BR-6)."
+    },
+    {
+      "actor": "Every actor with a login",
+      "actions": [
+        "view",
+        "create",
+        "edit"
+      ],
+      "rowScope": "Own account only.",
+      "notes": "Enrols their second factor, and may turn it on or off for themselves where it has not been enforced on them (BR-2)."
+    },
+    {
+      "actor": "School Admin, Principal / Director",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No authority over anybody else's second factor. Recovery is the Super Admin's alone."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "The Super Admin can enforce multi-factor authentication on a role or on a named individual. Where it is enforced, that user cannot turn it off."
+    },
+    {
+      "id": "BR-2",
+      "rule": "Where the Super Admin has not enforced it, the user may enable or disable it themselves from their own profile."
+    },
+    {
+      "id": "BR-3",
+      "rule": "The user enrols their own second factor. Nobody enrols one on their behalf."
+    },
+    {
+      "id": "BR-4",
+      "rule": "At sign-in they enter their password, then the second factor."
+    },
+    {
+      "id": "BR-5",
+      "rule": "Access is granted only when both succeed. A password alone grants nothing where a second factor applies, which is the whole point."
+    },
+    {
+      "id": "BR-6",
+      "rule": "Recovery is handled by the Super Admin if the factor is lost. Nobody else can reset another person's factor, and the Super Admin records why."
+    },
+    {
+      "id": "BR-7",
+      "rule": "Every enforcement, enrolment and recovery is written to the audit trail."
+    },
+    {
+      "id": "BR-8",
+      "rule": "A user on whom it is enforced but who has not yet enrolled is held at enrolment on their next sign-in, and reaches nothing else until they have."
+    },
+    {
+      "id": "BR-9",
+      "rule": "Removing enforcement does not remove an enrolled factor. The user keeps it unless they disable it themselves."
+    },
+    {
+      "id": "BR-10",
+      "rule": "A failed second factor does not reveal whether the password was correct, since together they are one step."
+    },
+    {
+      "id": "BR-11",
+      "rule": "A recovery resets the factor rather than bypassing it. The user enrols again."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Enrolled factor",
+      "states": [
+        "Not enrolled",
+        "Enrolment required",
+        "Enrolled",
+        "Reset"
+      ],
+      "initial": "Not enrolled",
+      "terminal": [],
+      "transitions": [
+        {
+          "from": "Not enrolled",
+          "to": "Enrolment required",
+          "triggeredBy": "Super Admin",
+          "condition": "Multi-factor is enforced on the user's role or on them (BR-1, BR-8)."
+        },
+        {
+          "from": "Not enrolled",
+          "to": "Enrolled",
+          "triggeredBy": "The user",
+          "condition": "They enable it themselves and enrol (BR-2, BR-3)."
+        },
+        {
+          "from": "Enrolment required",
+          "to": "Enrolled",
+          "triggeredBy": "The user",
+          "condition": "They enrol at their next sign-in (BR-8)."
+        },
+        {
+          "from": "Enrolled",
+          "to": "Reset",
+          "triggeredBy": "Super Admin",
+          "condition": "The factor is lost and the Super Admin recovers it, with a reason (BR-6, BR-11)."
+        },
+        {
+          "from": "Reset",
+          "to": "Enrolled",
+          "triggeredBy": "The user",
+          "condition": "They enrol again (BR-11)."
+        },
+        {
+          "from": "Enrolled",
+          "to": "Not enrolled",
+          "triggeredBy": "The user",
+          "condition": "They disable it, which is possible only where it is not enforced (BR-1, BR-2)."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Super Admin",
+      "navigation": "Login → Settings → Multi-factor enforcement → Enforce on a role",
+      "userAction": "Enforces multi-factor authentication on a role or on a named individual.",
+      "function": "enforceMultiFactor(target, targetId)",
+      "systemResponse": "Records the enforcement. Those users cannot turn it off.",
+      "rules": [
+        "BR-1"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "The user",
+      "navigation": "Login → Account → My security → Enable multi-factor",
+      "userAction": "Turns it on for themselves, where the Super Admin has not enforced it.",
+      "function": "setOwnMultiFactor(userId, True)",
+      "systemResponse": "Offers the setting only where it is not enforced.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "The user",
+      "navigation": "Account → Enrol your second factor",
+      "userAction": "Enrols their second factor and confirms it with a code.",
+      "function": "enrolFactor(userId, method)",
+      "systemResponse": "Enrols it against their own account. Nobody enrols on their behalf.",
+      "rules": [
+        "BR-3"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "The user",
+      "navigation": "Sign in",
+      "userAction": "Enters their username and password.",
+      "function": "signIn(username, password)",
+      "systemResponse": "Takes them to the second factor rather than into the system.",
+      "rules": [
+        "BR-4"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "The user",
+      "navigation": "Second factor",
+      "userAction": "Enters the second factor.",
+      "function": "verifyFactor(userId, code)",
+      "systemResponse": "Grants access only where both the password and the factor succeeded.",
+      "rules": [
+        "BR-5",
+        "BR-10"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "Super Admin",
+      "navigation": "Settings → Multi-factor enforcement → Recover a factor",
+      "userAction": "Recovers a lost factor, with a reason.",
+      "function": "recoverFactor(userId, reason)",
+      "systemResponse": "Resets the factor rather than bypassing it. The user enrols again.",
+      "rules": [
+        "BR-6",
+        "BR-11"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "logMultiFactorEvent(userId, event)",
+      "systemResponse": "Writes every enforcement, enrolment and recovery to the audit trail.",
+      "rules": [
+        "BR-7"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 3,
+      "condition": "The user is enforced but has not enrolled",
+      "actor": "The user",
+      "navigation": "Sign in → Enrol your second factor",
+      "behaviour": "They are held at enrolment on their next sign-in and reach nothing else until they have enrolled (BR-8).",
+      "function": "enrolFactor(userId, method)",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 2,
+      "condition": "Multi-factor is enforced on the user",
+      "actor": "The user",
+      "navigation": "Account → My security",
+      "behaviour": "The disable control is not offered. Where it is enforced, the user cannot turn it off (BR-1).",
+      "function": "setOwnMultiFactor(userId, False)"
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 5,
+      "condition": "The second factor fails",
+      "actor": "System",
+      "navigation": "Second factor",
+      "behaviour": "Access is refused, and the message does not reveal whether the password was correct, since together they are one step (BR-5, BR-10).",
+      "function": "verifyFactor(userId, code)",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 6,
+      "condition": "The user has lost their factor",
+      "actor": "Super Admin",
+      "navigation": "Settings → Multi-factor enforcement → Recover a factor",
+      "behaviour": "The Super Admin resets it with a reason and the user enrols again. Nobody else can reset another person's factor (BR-6, BR-11).",
+      "function": "recoverFactor(userId, reason)",
+      "resumesAtStep": 3
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 1,
+      "condition": "Enforcement is removed from a role",
+      "actor": "Super Admin",
+      "navigation": "Settings → Multi-factor enforcement → Remove enforcement",
+      "behaviour": "The users keep their enrolled factors unless they disable them themselves (BR-9).",
+      "function": "removeMultiFactorEnforcement(target, targetId)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 3,
+      "condition": "The user enrols by SMS rather than an authenticator",
+      "actor": "The user",
+      "navigation": "Enrol your second factor → Method → SMS",
+      "behaviour": "The factor is sent to the number recorded against their record (BR-3).",
+      "function": "enrolFactor(userId, 'SMS to the recorded number')",
+      "resumesAtStep": 4
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 2,
+      "condition": "The user attempts to disable an enforced factor",
+      "systemResponse": "It is refused (BR-1).",
+      "messageShown": "Multi-factor authentication is required for your role and cannot be turned off.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E2",
+      "atStep": 3,
+      "condition": "The confirming code does not match at enrolment",
+      "systemResponse": "The factor is not enrolled (BR-3).",
+      "messageShown": "That code is not correct. Try again.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E3",
+      "atStep": 5,
+      "condition": "The second factor is wrong",
+      "systemResponse": "Access is refused (BR-5).",
+      "messageShown": "Sign-in failed.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 5,
+      "condition": "The message reveals that the password was correct",
+      "systemResponse": "It does not. The two are one step (BR-10).",
+      "messageShown": "Sign-in failed.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 4,
+      "condition": "The user has a password but no enrolled factor and is enforced",
+      "systemResponse": "They are held at enrolment (BR-8).",
+      "messageShown": "Enrol your second factor before continuing.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 6,
+      "condition": "A School Admin attempts to recover somebody's factor",
+      "systemResponse": "It is refused (BR-6).",
+      "messageShown": "Only the Super Admin can recover a second factor.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 6,
+      "condition": "A recovery is recorded with no reason",
+      "systemResponse": "It is not recorded (BR-6).",
+      "messageShown": "Give a reason for recovering this factor.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E8",
+      "atStep": 6,
+      "condition": "A recovery bypasses the factor rather than resetting it",
+      "systemResponse": "There is no such route. The user enrols again (BR-11).",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E9",
+      "atStep": 3,
+      "condition": "The SMS method is chosen and no number is recorded",
+      "systemResponse": "It cannot be enrolled.",
+      "messageShown": "No contact number is recorded against your record.",
+      "messageStyle": "field"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Multi-factor enforced",
+      "recipient": "The users it now applies to",
+      "channels": [
+        "email",
+        "inApp"
+      ],
+      "template": "MFA_ENFORCED",
+      "contents": [
+        "That it is now required",
+        "That it cannot be turned off",
+        "How to enrol"
+      ],
+      "retry": "None.",
+      "blocking": true
+    },
+    {
+      "event": "Factor enrolled",
+      "recipient": "The user",
+      "channels": [
+        "email"
+      ],
+      "template": "MFA_ENROLLED",
+      "contents": [
+        "Method",
+        "When",
+        "What to do if it was not them"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Factor recovered",
+      "recipient": "The user",
+      "channels": [
+        "email"
+      ],
+      "template": "MFA_RECOVERED",
+      "contents": [
+        "When",
+        "By whom",
+        "That they must enrol again"
+      ],
+      "retry": "None.",
+      "blocking": true
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "Sign-in requires the second step where it applies.",
+      "affects": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "effect": "The account the factor is enrolled against is the generated one.",
+      "affects": {
+        "id": "UC-25-05",
+        "name": "Password management",
+        "link": "UC-25-05.json"
+      }
+    },
+    {
+      "effect": "Enforcement is expressed against a role.",
+      "affects": {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json"
+      }
+    },
+    {
+      "effect": "Every enforcement, enrolment and recovery is written to the audit trail.",
+      "affects": {
+        "id": "UC-25-06",
+        "name": "Audit trail and activity log",
+        "link": "UC-25-06.json"
+      }
+    }
+  ],
+  "integrations": [
+    {
+      "system": "Authenticator application or SMS provider",
+      "direction": "outbound",
+      "sends": "The enrolment secret, or the code where the method is SMS",
+      "expects": "The code the user enters back",
+      "timeout": "15 seconds to accept",
+      "retry": "Resend on request; every resend is logged",
+      "onFailure": "Sign-in is refused rather than permitted on the password alone."
+    }
+  ],
+  "reports": [
+    {
+      "name": "Multi-factor coverage",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "User",
+        "Role",
+        "Branch",
+        "Enforced",
+        "Enrolled",
+        "Method",
+        "Enrolled on"
+      ],
+      "grouping": "By role",
+      "totals": "Users enforced, enrolled, and enforced but not yet enrolled"
+    },
+    {
+      "name": "Recoveries",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "When",
+        "User",
+        "Recovered by",
+        "Reason",
+        "Re-enrolled on"
+      ],
+      "grouping": "By user",
+      "totals": "Recoveries in the period"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "A role with multi-factor enforced",
+      "when": "a user holding it opens their security settings",
+      "then": "no disable control is offered"
+    },
+    {
+      "id": "AC-2",
+      "given": "A user on whom it is not enforced",
+      "when": "they open their security settings",
+      "then": "they can enable or disable it themselves"
+    },
+    {
+      "id": "AC-3",
+      "given": "A user enforced but not enrolled",
+      "when": "they sign in",
+      "then": "they are held at enrolment and reach nothing else"
+    },
+    {
+      "id": "AC-4",
+      "given": "An enrolled user",
+      "when": "they sign in with the correct password",
+      "then": "they are taken to the second factor rather than into the system"
+    },
+    {
+      "id": "AC-5",
+      "given": "The same user",
+      "when": "they enter a wrong second factor",
+      "then": "access is refused"
+    },
+    {
+      "id": "AC-6",
+      "given": "A wrong password with a correct factor, and a correct password with a wrong factor",
+      "when": "the two messages are compared",
+      "then": "they are the same, so neither reveals which step failed"
+    },
+    {
+      "id": "AC-7",
+      "given": "A user who has lost their factor",
+      "when": "the Super Admin recovers it",
+      "then": "the factor is reset and the user must enrol again"
+    },
+    {
+      "id": "AC-8",
+      "given": "A recovery recorded with no reason",
+      "when": "it is saved",
+      "then": "it is refused"
+    },
+    {
+      "id": "AC-9",
+      "given": "A School Admin",
+      "when": "they attempt to recover somebody's factor",
+      "then": "it is refused"
+    },
+    {
+      "id": "AC-10",
+      "given": "Enforcement removed from a role",
+      "when": "the users' factors are checked",
+      "then": "they keep them unless they disable them themselves"
+    },
+    {
+      "id": "AC-11",
+      "given": "Any enforcement, enrolment or recovery",
+      "when": "the audit trail is opened",
+      "then": "it is there"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Where the second step is taken."
+      },
+      {
+        "id": "UC-25-05",
+        "name": "Password management",
+        "link": "UC-25-05.json",
+        "why": "Supplies the account and the first step."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Supplies the roles enforcement is set against."
+      },
+      {
+        "id": "UC-25-06",
+        "name": "Audit trail and activity log",
+        "link": "UC-25-06.json",
+        "why": "Records every event."
+      },
+      {
+        "id": "UC-14-04",
+        "name": "Message templates and sending",
+        "link": "UC-14-04.json",
+        "why": "Delivers an SMS factor."
+      }
+    ],
+    "masterData": [
+      "Roles",
+      "Contact numbers for the SMS method"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "The password itself and its recovery",
+      "handledBy": {
+        "id": "UC-25-05",
+        "name": "Password management",
+        "link": "UC-25-05.json"
+      }
+    },
+    {
+      "item": "Authenticating the sign-in",
+      "handledBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "item": "What a user may reach once in",
+      "handledBy": {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json"
+      }
+    },
+    {
+      "item": "Reading the audit trail",
+      "handledBy": {
+        "id": "UC-25-06",
+        "name": "Audit trail and activity log",
+        "link": "UC-25-06.json"
+      }
+    },
+    {
+      "item": "Data encryption, which is not for now"
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Both steps or nothing",
+        "requirement": "Where a second factor applies, no route grants access on the password alone."
+      },
+      {
+        "aspect": "Enforcement cannot be turned off by its subject",
+        "requirement": "A user on whom it is enforced has no control anywhere that disables it."
+      },
+      {
+        "aspect": "Failures reveal nothing",
+        "requirement": "A failed sign-in returns the same message whichever step failed."
+      },
+      {
+        "aspect": "Recovery resets, never bypasses",
+        "requirement": "The Super Admin's recovery resets the factor and requires the user to enrol again. There is no route that lets somebody in without one."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Enforcements, enrolments and recoveries are retained 7 years."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "Which roles does the school intend to enforce it on? Accounts and the Super Admin are the obvious ones and neither is stated.",
+      "assumption": "Configurable. The school's choice is not stated.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    },
+    {
+      "question": "Is a second factor sensible for guardians and students, or only for staff?",
+      "assumption": "Available to all as modelled. Enforcing it on families would be a support burden.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    },
+    {
+      "question": "Who recovers the Super Admin's own factor, given only the Super Admin recovers factors?",
+      "assumption": "Not specified, and it is the case that locks the school out.",
+      "confirmWith": "Super Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Are recovery codes offered as a fallback, so a lost handset does not require the Super Admin?",
+      "assumption": "Not modelled.",
+      "confirmWith": "Super Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Is a factor remembered on a trusted device, or required at every sign-in?",
+      "assumption": "Every sign-in as modelled.",
+      "confirmWith": "Super Admin",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

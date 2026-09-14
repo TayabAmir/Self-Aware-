@@ -1,0 +1,1090 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-02-12",
+  "featureRef": "2.12 Messaging an enquiring family",
+  "name": "Message an enquiring family and log it against the enquiry",
+  "module": "Inquiry / Admission",
+  "alsoAffectsModules": [
+    "Messaging (SMS, WhatsApp, Email)"
+  ],
+  "priority": "MVP",
+  "priorityReason": "Follow-up is mostly messaging, and a message sent from a personal phone is a follow-up nobody can see.",
+  "goal": {
+    "actor": "Staff or Accounts",
+    "capability": "to message an enquiring family and have it recorded against their enquiry",
+    "outcome": "anyone opening that enquiry later sees everything the family has already been told"
+  },
+  "primaryActor": "Staff",
+  "secondaryActors": [
+    {
+      "actor": "Accounts",
+      "involvement": "Sends the same messages alongside Staff."
+    },
+    {
+      "actor": "Prospective family",
+      "involvement": "Receives it on the contact number or email captured at enquiry."
+    },
+    {
+      "actor": "School Admin",
+      "involvement": "Authorises bulk sends to the whole enquiry list and reviews the message log."
+    }
+  ],
+  "externalActors": [
+    {
+      "actor": "WhatsApp Business provider",
+      "involvement": "Delivers WhatsApp messages, returns delivery status, and relays replies."
+    },
+    {
+      "actor": "Email provider",
+      "involvement": "Delivers email and returns delivery and bounce events."
+    }
+  ],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "inbound",
+        "description": "A reply arrives from a family and is recorded against the enquiry, moving the follow-up date.",
+        "source": "Messaging module inbound webhook"
+      },
+      {
+        "type": "event",
+        "description": "An admission-form invite is sent, which is logged against the enquiry through this path.",
+        "source": "UC-02-03"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An authenticated session exists.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "The enquiry exists and holds a contact number or an email address.",
+      "establishedBy": {
+        "id": "UC-02-10",
+        "name": "Inquiry and lead tracking",
+        "link": "UC-02-10.json"
+      }
+    },
+    {
+      "condition": "A channel is configured with balance or quota for the send."
+    },
+    {
+      "condition": "For a template send, at least one saved template exists for the chosen channel."
+    }
+  ],
+  "postConditions": [
+    "The send is on the enquiry's contact history with its date, channel, template and delivery status, so the next person to open it sees what the family already knows.",
+    "The enquiry's attempt count and follow-up date reflect the contact, so the message log and the follow-up record never disagree.",
+    "Where this was the first message sent to an enquiry, it is saved as a template and offered thereafter.",
+    "Any reply is attached to the same enquiry and the follow-up date is moved, rather than arriving as an orphan message.",
+    "A bulk send has a per-recipient result, so a family whose message failed is identifiable rather than assumed to have been told.",
+    "Nothing is reported as delivered that the provider did not confirm."
+  ],
+  "screens": [
+    {
+      "name": "Message enquiry",
+      "route": "/admissions/inquiries/{id}/message",
+      "sidebar": "Inquiry / Admission",
+      "actions": [
+        "Choose channel",
+        "Select template",
+        "Write message",
+        "Preview",
+        "Send"
+      ],
+      "visibleTo": [
+        "Staff",
+        "Accounts",
+        "School Admin"
+      ]
+    },
+    {
+      "name": "Bulk message enquiries",
+      "route": "/admissions/inquiries/message",
+      "sidebar": "Inquiry / Admission",
+      "columns": [
+        "Selected",
+        "Reference",
+        "Child",
+        "Guardian",
+        "Contact",
+        "Target class",
+        "Status"
+      ],
+      "filters": [
+        "Status",
+        "Target class",
+        "Source",
+        "Follow-up window"
+      ],
+      "actions": [
+        "Select all matching",
+        "Choose channel",
+        "Select template or write message",
+        "Preview",
+        "Send"
+      ],
+      "visibleTo": [
+        "Staff",
+        "Accounts",
+        "School Admin"
+      ]
+    },
+    {
+      "name": "Inquiry contact history",
+      "route": "/admissions/inquiries/{id}#history",
+      "sidebar": "Inquiry / Admission",
+      "columns": [
+        "Date",
+        "Direction",
+        "Channel",
+        "Template",
+        "Sent by",
+        "Delivery status"
+      ],
+      "defaultSort": "Date, newest first",
+      "actions": [
+        "Resend",
+        "Open message"
+      ],
+      "visibleTo": [
+        "Staff",
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Recipients",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "One enquiry, or several selected from the list. Enquiries with no contact for the chosen channel are excluded (BR-3).",
+      "example": "Zoya Ahmed",
+      "lookupSource": "Enquiries in this branch"
+    },
+    {
+      "name": "Channel",
+      "type": "enum",
+      "required": "yes",
+      "validation": "Only channels the enquiry holds a contact for are offered (BR-3).",
+      "example": "WhatsApp",
+      "enumValues": [
+        "WhatsApp",
+        "Email"
+      ]
+    },
+    {
+      "name": "Template",
+      "type": "lookup",
+      "required": "conditional",
+      "validation": "A saved template such as an admission reminder, fee structure or test date. Required for a bulk send (BR-5).",
+      "example": "Admission reminder",
+      "requiredWhen": "More than one recipient is selected",
+      "lookupSource": "Saved templates for the chosen channel"
+    },
+    {
+      "name": "Message body",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 1000 characters. Used where staff write their own message rather than selecting a template.",
+      "example": "Assalam o alaikum, the admission test is on 12 September at 9am.",
+      "requiredWhen": "No template is selected"
+    },
+    {
+      "name": "Save as template",
+      "type": "boolean",
+      "required": "no",
+      "validation": "The first message sent to an enquiry is saved as a template automatically and offered thereafter (BR-4).",
+      "default": true,
+      "example": true
+    },
+    {
+      "name": "Template name",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 100 characters.",
+      "example": "Test date reminder",
+      "requiredWhen": "A message is being saved as a template"
+    },
+    {
+      "name": "Merge fields",
+      "type": "generated",
+      "required": "no",
+      "validation": "Child name, guardian name and target class are filled from the enquiry (BR-6).",
+      "example": "3 fields"
+    },
+    {
+      "name": "Attachment",
+      "type": "file",
+      "required": "no",
+      "validation": "One file. Typically the fee structure or the prospectus.",
+      "example": "fee-structure-2026.pdf"
+    },
+    {
+      "name": "Preview",
+      "type": "generated",
+      "required": "no",
+      "validation": "The message as the family will receive it, with the merge fields resolved.",
+      "example": "resolved text"
+    },
+    {
+      "name": "Delivery status",
+      "type": "generated",
+      "required": "no",
+      "validation": "Per recipient, as the provider reports it (BR-9).",
+      "default": "Queued",
+      "example": "Delivered",
+      "enumValues": [
+        "Queued",
+        "Sent",
+        "Delivered",
+        "Read",
+        "Failed",
+        "Bounced"
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Inquiry",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Read for the contact and merge values; updated with the attempt count and follow-up date."
+    },
+    {
+      "entity": "Inquiry contact log",
+      "operations": [
+        "create"
+      ],
+      "notes": "One row per send and one per reply. Append only."
+    },
+    {
+      "entity": "Message",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "Held by the Messaging module with per-channel delivery status."
+    },
+    {
+      "entity": "Message template",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "The first message to an enquiry is saved as one; existing templates are read and resolved."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Who sent what to whom, since this reaches people outside the school."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Staff",
+      "actions": [
+        "view",
+        "create"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Single sends, and bulk sends up to the configured threshold."
+    },
+    {
+      "actor": "Accounts",
+      "actions": [
+        "view",
+        "create"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Same limits as Staff."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "create",
+        "approve"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Authorises any bulk send above the threshold, and reviews the message log."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches.",
+      "notes": "The log only. Cannot send."
+    },
+    {
+      "actor": "Coordinator, Teacher, Student, Parent / Guardian",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "Every send is logged against the enquiry with its date, channel, template and delivery status. A message sent from a personal phone is invisible, which is the problem this rule exists to solve."
+    },
+    {
+      "id": "BR-2",
+      "rule": "The message goes to the contact recorded on the enquiry, and to no other address. Sending elsewhere means correcting the enquiry first, which is recorded as a correction."
+    },
+    {
+      "id": "BR-3",
+      "rule": "A channel is offered only where the enquiry holds the contact for it. WhatsApp needs a number, email needs an address."
+    },
+    {
+      "id": "BR-4",
+      "rule": "The first message sent to an enquiry is saved as a template and offered thereafter, so the school builds its own library out of what it actually sends rather than what someone imagined in advance."
+    },
+    {
+      "id": "BR-5",
+      "rule": "A bulk send must use a template. Free-composed text to many recipients cannot be reviewed before it goes or reused afterwards."
+    },
+    {
+      "id": "BR-6",
+      "rule": "Templates are resolved against the enquiry's own values — child name, guardian name and target class. An unresolved merge field blocks the send rather than going out as a placeholder."
+    },
+    {
+      "id": "BR-7",
+      "rule": "A send counts as a contact attempt, so the attempt count and the message log never disagree."
+    },
+    {
+      "id": "BR-8",
+      "rule": "A bulk send above the configured threshold requires School Admin authorisation before it goes."
+    },
+    {
+      "id": "BR-9",
+      "rule": "Delivery status is never reported optimistically. An enquiry shows Queued until the provider says otherwise, so the school never believes a family was told when it was not."
+    },
+    {
+      "id": "BR-10",
+      "rule": "An inbound reply is attached to the enquiry, sets the status to Contacted and moves the follow-up date to today."
+    },
+    {
+      "id": "BR-11",
+      "rule": "A bulk send reports a per-recipient result. Valid recipients are sent and failures are listed with their reason; one bad number does not stop the batch."
+    },
+    {
+      "id": "BR-12",
+      "rule": "The message content lives with the Messaging module. The enquiry holds the template name and a reference to the message, not a second copy of the text."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Message",
+      "states": [
+        "Queued",
+        "Sent",
+        "Delivered",
+        "Read",
+        "Failed",
+        "Bounced"
+      ],
+      "initial": "Queued",
+      "terminal": [
+        "Delivered",
+        "Read",
+        "Failed",
+        "Bounced"
+      ],
+      "transitions": [
+        {
+          "from": "Queued",
+          "to": "Sent",
+          "triggeredBy": "System",
+          "condition": "The provider accepts it."
+        },
+        {
+          "from": "Sent",
+          "to": "Delivered",
+          "triggeredBy": "System",
+          "condition": "The provider confirms delivery."
+        },
+        {
+          "from": "Delivered",
+          "to": "Read",
+          "triggeredBy": "System",
+          "condition": "A read receipt is returned, where the channel supports it."
+        },
+        {
+          "from": "Queued",
+          "to": "Failed",
+          "triggeredBy": "System",
+          "condition": "The provider rejects it, or there is no balance."
+        },
+        {
+          "from": "Sent",
+          "to": "Bounced",
+          "triggeredBy": "System",
+          "condition": "An email bounces, or the number is not reachable on WhatsApp."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Staff / Accounts",
+      "navigation": "Login → Inquiry / Admission → Pending Inquiries → Inquiry detail → Message",
+      "userAction": "Opens the enquiry and selects Message, or selects several enquiries from the list for a bulk send.",
+      "function": "openMessageComposer(inquiryIds)",
+      "systemResponse": "Shows the recipients and excludes any that hold no contact for a channel.",
+      "rules": [
+        "BR-3"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "Staff / Accounts",
+      "navigation": "Message enquiry → Channel",
+      "userAction": "Chooses WhatsApp or email.",
+      "function": "selectChannel(channel)",
+      "systemResponse": "Offers only the channels the enquiry holds a contact for.",
+      "rules": [
+        "BR-3"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "Staff / Accounts",
+      "navigation": "Message enquiry → Template or message body",
+      "userAction": "Selects a saved template, or writes their own message.",
+      "function": "selectTemplate(templateId) or composeMessage(body)",
+      "systemResponse": "Requires a template where more than one recipient is selected.",
+      "rules": [
+        "BR-5"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "System",
+      "navigation": "Message enquiry → Preview",
+      "userAction": "—",
+      "function": "resolveTemplate(templateId, inquiryId)",
+      "systemResponse": "Fills the template with the enquiry's child name, guardian name and target class, and shows the preview.",
+      "rules": [
+        "BR-6"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "Staff / Accounts",
+      "navigation": "Message enquiry → Preview → Send",
+      "userAction": "Reviews the preview and confirms the send.",
+      "function": "sendInquiryMessage(inquiryIds, channel, templateId, body, attachment)",
+      "systemResponse": "Checks the recipient count against the authorisation threshold, then queues the message to the contact recorded on each enquiry.",
+      "rules": [
+        "BR-2",
+        "BR-8"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "logInquiryMessage(inquiryId, channel, templateId, messageId)",
+      "systemResponse": "Logs the send against each enquiry with its date, channel and template, and saves the message as a template where it was the first sent to that enquiry.",
+      "rules": [
+        "BR-1",
+        "BR-4",
+        "BR-12"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "incrementContactAttempt(inquiryId)",
+      "systemResponse": "Counts the send as a contact attempt and moves the follow-up date.",
+      "rules": [
+        "BR-7"
+      ]
+    },
+    {
+      "step": 8,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "updateDeliveryStatus(messageId, status)",
+      "systemResponse": "Updates the delivery status against each log entry as the provider reports it.",
+      "rules": [
+        "BR-9"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 5,
+      "condition": "The recipient count is above the authorisation threshold",
+      "actor": "School Admin",
+      "navigation": "Bulk message enquiries → Send → Awaiting authorisation",
+      "behaviour": "Nothing is sent. The send holds for School Admin authorisation and the recipient list is frozen so it cannot grow while awaiting approval (BR-8).",
+      "function": "requestBulkSendApproval(inquiryIds, templateId)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 8,
+      "condition": "The family replies",
+      "actor": "System",
+      "navigation": "Provider webhook → Inquiry contact history",
+      "behaviour": "The reply is attached to the same enquiry, the status moves to Contacted and the follow-up date becomes today (BR-10).",
+      "function": "recordInboundReply(inquiryId, messageId, body)"
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 6,
+      "condition": "Some recipients in a bulk send fail",
+      "actor": "System",
+      "navigation": "Bulk message enquiries → Send result",
+      "behaviour": "Valid recipients are sent and failures are listed per recipient with the reason. One bad number does not stop the batch (BR-11).",
+      "function": "sendInquiryMessage(inquiryIds, channel, templateId, body, attachment)",
+      "resumesAtStep": 7
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 3,
+      "condition": "This is the first message sent to this enquiry",
+      "actor": "Staff / Accounts",
+      "navigation": "Message enquiry → Message body → Save as template",
+      "behaviour": "The message is saved as a template and offered on later sends, so the library is built from what the school actually sends (BR-4).",
+      "function": "saveMessageAsTemplate(body, templateName, channel)",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 3,
+      "condition": "An attachment is included",
+      "actor": "Staff / Accounts",
+      "navigation": "Message enquiry → Attachment",
+      "behaviour": "The file is validated and sent with the message. Email carries it as an attachment, WhatsApp as a document.",
+      "function": "attachFile(file)",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 1,
+      "condition": "The send is an admission-form invite",
+      "actor": "System",
+      "navigation": "Inquiry decision → Approve → Inquiry contact history",
+      "behaviour": "The invite is sent through this path, so it appears in the enquiry's contact history alongside every other message.",
+      "function": "logInquiryMessage(inquiryId, 'WhatsApp', 'ADMISSION_FORM_INVITE', messageId)",
+      "resumesAtStep": 8
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 2,
+      "condition": "The enquiry holds no contact for any channel",
+      "systemResponse": "No send is possible.",
+      "messageShown": "This enquiry has no contact number or email. Add one before messaging.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E2",
+      "atStep": 4,
+      "condition": "A merge field cannot be resolved",
+      "systemResponse": "The send is blocked rather than going out with a placeholder (BR-6).",
+      "messageShown": "The template needs a target class, which this enquiry does not have. Add it or choose another template.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E3",
+      "atStep": 3,
+      "condition": "A bulk send is attempted with free text",
+      "systemResponse": "The send is refused.",
+      "messageShown": "Select a template. Your own message can only be sent to one family at a time.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 5,
+      "condition": "A Staff user attempts a send above the authorisation threshold",
+      "systemResponse": "Nothing is sent; the request goes for approval.",
+      "messageShown": "This send needs School Admin approval. It has been sent for authorisation.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 5,
+      "condition": "There is no balance for the channel",
+      "systemResponse": "Nothing is queued.",
+      "messageShown": "There is no balance for this channel. Top up before sending.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 6,
+      "condition": "The provider is unreachable",
+      "systemResponse": "The message stays Queued and is retried. It is not silently dropped and it is not reported as sent.",
+      "messageShown": "Messages are queued and will send when the provider is reachable.",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E7",
+      "atStep": 3,
+      "condition": "A template is selected for the wrong channel",
+      "systemResponse": "The send is refused.",
+      "messageShown": "That template is for email. Choose a WhatsApp template or change the channel.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E8",
+      "atStep": 5,
+      "condition": "A message is attempted to an enquiry closed as not interested",
+      "systemResponse": "The send is refused, so a family who said no is not messaged by accident.",
+      "messageShown": "This enquiry was closed on 22-08-2026. Re-open it first if you need to contact the family.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Bulk send awaiting authorisation",
+      "recipient": "School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "BULK_SEND_APPROVAL_PENDING",
+      "contents": [
+        "Recipient count",
+        "Template name",
+        "Requested by"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Bulk send completed",
+      "recipient": "The sending user",
+      "channels": [
+        "inApp"
+      ],
+      "template": "BULK_SEND_COMPLETE",
+      "contents": [
+        "Sent count",
+        "Failed count",
+        "Template name"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Reply received",
+      "recipient": "Enquiry owner",
+      "channels": [
+        "inApp"
+      ],
+      "template": "INQUIRY_REPLY_RECEIVED",
+      "contents": [
+        "Child name",
+        "Channel",
+        "Reply preview"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Channel balance exhausted",
+      "recipient": "School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "MESSAGING_BALANCE_EMPTY",
+      "contents": [
+        "Channel",
+        "Remaining balance"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "The attempt count and follow-up date on the enquiry move, matching the contact log.",
+      "affects": {
+        "id": "UC-02-10",
+        "name": "Inquiry and lead tracking",
+        "link": "UC-02-10.json"
+      }
+    },
+    {
+      "effect": "The send appears in the school-wide sent-message log.",
+      "affects": {
+        "id": "UC-14-04",
+        "name": "Message templates and sending",
+        "link": "UC-14-04.json"
+      }
+    },
+    {
+      "effect": "Messaging balance for the channel is consumed.",
+      "affects": {
+        "id": "UC-14-03",
+        "name": "WhatsApp messaging",
+        "link": "UC-14-03.json"
+      }
+    },
+    {
+      "effect": "The admission-form invite is logged through this path and appears in the enquiry's history.",
+      "affects": {
+        "id": "UC-02-03",
+        "name": "Inquiry approval and admission-form invite",
+        "link": "UC-02-03.json"
+      }
+    }
+  ],
+  "integrations": [
+    {
+      "system": "WhatsApp Business provider",
+      "direction": "bidirectional",
+      "sends": "A template or free-text message with an optional document, to the number recorded on the enquiry",
+      "expects": "Message id, delivery status callbacks and inbound replies",
+      "timeout": "15 seconds to accept",
+      "retry": "3 attempts with backoff, then marked Failed",
+      "onFailure": "The message stays Queued and the enquiry shows Queued rather than Sent. Nothing is reported as delivered that was not."
+    },
+    {
+      "system": "Email provider",
+      "direction": "bidirectional",
+      "sends": "The resolved message with an optional attachment, to the address recorded on the enquiry",
+      "expects": "Accepted, delivered and bounced events",
+      "timeout": "15 seconds to accept",
+      "retry": "3 attempts with backoff",
+      "onFailure": "Marked Failed against that recipient only; the rest of the batch is unaffected."
+    }
+  ],
+  "reports": [
+    {
+      "name": "Inquiry contact history",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Date",
+        "Direction",
+        "Channel",
+        "Template",
+        "Sent by",
+        "Delivery status"
+      ],
+      "grouping": "None",
+      "totals": "Attempts, and count delivered"
+    },
+    {
+      "name": "Admission messaging log",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Date",
+        "Recipients",
+        "Channel",
+        "Template",
+        "Sent by",
+        "Delivered",
+        "Failed"
+      ],
+      "grouping": "By template",
+      "totals": "Sent, delivered and failed per template"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "An enquiry holding a mobile number but no email address",
+      "when": "the channel list opens",
+      "then": "WhatsApp is offered and email is not"
+    },
+    {
+      "id": "AC-2",
+      "given": "A template containing the child's name and target class",
+      "when": "it is previewed against an enquiry holding both",
+      "then": "the preview shows the real values and no placeholder text remains"
+    },
+    {
+      "id": "AC-3",
+      "given": "A template needing a target class and an enquiry without one",
+      "when": "the send is attempted",
+      "then": "it is blocked, the missing field is named, and no message goes out with a placeholder"
+    },
+    {
+      "id": "AC-4",
+      "given": "The first message ever sent to an enquiry",
+      "when": "the send completes",
+      "then": "it is saved as a template and is offered on the next send"
+    },
+    {
+      "id": "AC-5",
+      "given": "A Staff user selecting more enquiries than the authorisation threshold",
+      "when": "they send",
+      "then": "nothing is sent, the recipient list is frozen, and School Admin receives the authorisation request"
+    },
+    {
+      "id": "AC-6",
+      "given": "A bulk send of 30 where 2 numbers are unreachable",
+      "when": "the send runs",
+      "then": "28 are sent, the 2 are listed with their reason, and the batch is not abandoned"
+    },
+    {
+      "id": "AC-7",
+      "given": "A message sent to an enquiry",
+      "when": "the enquiry is opened afterwards",
+      "then": "the send appears in the contact history with its channel, date, sender and delivery status, and the attempt count has increased by one"
+    },
+    {
+      "id": "AC-8",
+      "given": "A family who replies to a message",
+      "when": "the reply arrives",
+      "then": "it is attached to the same enquiry, the status is Contacted, and the follow-up date is today"
+    },
+    {
+      "id": "AC-9",
+      "given": "A message the provider has accepted but not confirmed as delivered",
+      "when": "the enquiry is opened",
+      "then": "the status reads Queued or Sent, never Delivered"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-02-10",
+        "name": "Inquiry and lead tracking",
+        "link": "UC-02-10.json",
+        "why": "Supplies the enquiry, its contact and its merge values."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Decides who may send and who authorises a bulk send."
+      },
+      {
+        "id": "UC-14-04",
+        "name": "Message templates and sending",
+        "link": "UC-14-04.json",
+        "why": "Owns the templates, the send and the delivery status."
+      },
+      {
+        "id": "UC-14-03",
+        "name": "WhatsApp messaging",
+        "link": "UC-14-03.json",
+        "why": "Delivers WhatsApp messages and holds the balance."
+      },
+      {
+        "id": "UC-02-11",
+        "name": "Marking a lead as declined, and re-opening it",
+        "link": "UC-02-11.json",
+        "why": "Supplies the closed status that blocks a send.",
+        "optional": true
+      }
+    ],
+    "masterData": [
+      "Saved templates per channel",
+      "Messaging provider credentials and balance",
+      "Bulk send authorisation threshold"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Creating and editing templates outside this flow",
+      "handledBy": {
+        "id": "UC-14-04",
+        "name": "Message templates and sending",
+        "link": "UC-14-04.json"
+      }
+    },
+    {
+      "item": "Messaging enrolled students and parents",
+      "handledBy": {
+        "id": "UC-14-07",
+        "name": "Parent and student messaging",
+        "link": "UC-14-07.json"
+      }
+    },
+    {
+      "item": "Fee reminders",
+      "handledBy": {
+        "id": "UC-14-01",
+        "name": "Fee reminder messaging",
+        "link": "UC-14-01.json"
+      }
+    },
+    {
+      "item": "Recording a telephone call, which is a contact but not a message",
+      "handledBy": {
+        "id": "UC-02-10",
+        "name": "Inquiry and lead tracking",
+        "link": "UC-02-10.json"
+      }
+    },
+    {
+      "item": "Generating the admission-form invite link",
+      "handledBy": {
+        "id": "UC-02-03",
+        "name": "Inquiry approval and admission-form invite",
+        "link": "UC-02-03.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Bulk throughput",
+        "requirement": "A send to 500 enquiries is queued within 10 seconds and delivered within the provider's rate limits, reporting progress while it runs."
+      },
+      {
+        "aspect": "Delivery accuracy",
+        "requirement": "An enquiry shows Queued until the provider confirms otherwise. A send is never reported as delivered on the strength of having been attempted."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Message metadata on the enquiry is retained 12 months; the content lives with the Messaging module under its own policy."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "What is the recipient threshold above which a bulk send needs School Admin authorisation?",
+      "assumption": "50. Not confirmed.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "Should SMS be offered alongside WhatsApp and email?",
+      "assumption": "No — the feature names WhatsApp and email only.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "Is every first message saved as a template, or only where staff choose to?",
+      "assumption": "Every one, per the feature. That may fill the library with one-off messages.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Who owns a reply that arrives outside office hours?",
+      "assumption": "The enquiry owner, notified the next working morning.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "May a closed enquiry be messaged at all, for example to tell the family the decision?",
+      "assumption": "Not without re-opening it. This may be too strict.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "bulk-actions",
+      "area": "Bulk actions",
+      "rule": "Any bulk operation reports a per-row result, commits valid rows and lists rejected rows with the reason. A bulk action never fails as a whole because of one bad row."
+    },
+    {
+      "name": "attachments",
+      "area": "Attachments",
+      "rule": "Uploaded files are limited to 10 MB and to PDF, JPG, PNG, DOCX and XLSX unless a use case states otherwise. File type is validated by content, not by extension."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

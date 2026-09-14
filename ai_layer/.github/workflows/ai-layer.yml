@@ -1,0 +1,78 @@
+# Continuous integration for the AI layer POC.
+#
+# Three jobs, all on a hosted Ubuntu runner (Docker is available there):
+#
+#   backend       unit and integration tests (Testcontainers)
+#   ai-layer      lint, types, unit and integration tests; no embeddings, no models
+#   measure       the regression run: the embeddings service starts, and every eval runs from the
+#                 recorded model answers in ai-layer/eval/recordings/ (no model is called, so no
+#                 Claude credential is needed). It fails when recall@30, plan accuracy, refusal
+#                 correctness or the validator catch rate falls below eval/measure/baseline.json,
+#                 so a description made worse shows up here as a recall drop.
+#
+# A change to a prompt or the glossary changes the recordings' prompt hash, and `measure` fails until
+# someone re-records locally with `make measure` (on a Claude subscription) and commits the result.
+#
+# Written for GitHub Actions with ai_layer/ as the repository root, and checked locally with the same
+# make targets. The project was not a git repository when this was written, so the workflow itself
+# has not run on GitHub yet. If ai_layer/ ends up inside a larger repository, move this file to that
+# repository's .github/workflows/ and set `defaults.run.working-directory: ai_layer`.
+
+name: ai-layer
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - run: make env
+      - run: make backend-verify
+
+  ai-layer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: make env
+      - run: make ai-install
+      - run: make ai-lint
+      - name: Unit and integration tests (no embeddings service, no model calls)
+        run: cd ai-layer && uv run pytest -m "not embeddings and not model"
+
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: make env
+      - run: make ai-install
+      - name: Cache the BGE-M3 weights and the eval embeddings
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bge-m3
+            ai-layer/eval/.cache
+          key: bge-m3-5617a9f61b028005a4858fdac845db406aefb181-${{ hashFiles('ai-layer/eval/**/*.jsonl') }}
+          restore-keys: bge-m3-5617a9f61b028005a4858fdac845db406aefb181-
+      - name: Start the embeddings service (the same pinned image and model as docker compose)
+        run: |
+          docker run -d --name embeddings -p 127.0.0.1:8083:80 -v ~/.cache/bge-m3:/data \
+            ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.3 \
+            --model-id=BAAI/bge-m3 --revision=5617a9f61b028005a4858fdac845db406aefb181 \
+            --port=80 --max-batch-tokens=2048
+          for i in $(seq 1 600); do curl -fsS -m 2 http://127.0.0.1:8083/health && exit 0; sleep 2; done
+          docker logs embeddings; exit 1
+      - name: Build checks (description similarity)
+        run: make ai-build-checks
+      - name: Regression run from the recorded model answers
+        run: make measure-ci

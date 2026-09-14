@@ -1,0 +1,580 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-25-06",
+    "name": "Record every action taken in the system — what was done, when, and by whom — in a trail nobody can edit",
+    "module": "Security",
+    "file": "../UseCases/UC-25-06.json",
+    "featureRef": "25.6 Audit trail and activity log"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-25-06-PC-1",
+      "intent": {
+        "name": "audit.access.grant",
+        "summary": "Let a named School Admin or Principal read the audit trail. Nobody holds it by default.",
+        "routesHere": [
+          "give the Principal permission to read the audit trail",
+          {
+            "text": "Principal ko audit trail dekhne ki ijazat de dein",
+            "lang": "ur-Latn",
+            "gloss": "give the Principal permission to see the audit trail"
+          },
+          {
+            "text": "School Admin ko investigation ke liye access de dein",
+            "lang": "ur-Latn",
+            "gloss": "give the School Admin access for the investigation"
+          },
+          "grant audit access to the Johar Town School Admin"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "main khud apne liye access le leta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I will grant myself the access"
+            },
+            "goesTo": "Refused.",
+            "note": "Only the Super Admin can grant access to the audit trail. A School Admin granting it to themselves is the control granting itself (BR-4, E8)."
+          },
+          {
+            "request": {
+              "text": "audit ki ek entry theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "correct an entry in the audit trail"
+            },
+            "goesTo": "Not offered.",
+            "note": "The trail is read-only and cannot be edited by anybody, the Super Admin included. **A trail its administrator can edit is not a trail** (BR-2, E3, E4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "audit.access.grant",
+            "inputs": {
+              "user_id": "$request.user_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The permission is granted to a named person and to nobody else (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. A grant by anybody other than the Super Admin is refused outright (E8).",
+        "atomicity": "One write. **The reader is branch-scoped**: a School Admin or Principal granted this sees only their own branch's entries, because branches are sealed, and only the Super Admin reads across them (BR-12, E2)."
+      },
+      "operations": [
+        {
+          "name": "audit.access.grant",
+          "method": "POST",
+          "path": "/api/v1/audit/access",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "user_id, since a person holds one audit access grant",
+          "purpose": "Grant a named School Admin or Principal permission to read the audit trail.",
+          "parameters": [
+            {
+              "name": "user_id",
+              "source": "resolved",
+              "sourceRef": "$request.user_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.user_phrase",
+                "onNoMatch": "Refuse. No School Admin or Principal matches. The permission is only for those two roles (BR-4).",
+                "onAmbiguous": "Ask, naming the candidates with their roles and the branch each is assigned to — the branch decides what they will be able to see (BR-12)."
+              },
+              "notes": "The named School Admin or Principal. Nobody holds this by default (BR-4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who can now read the trail, and how much of it.",
+            "fields": [
+              {
+                "name": "grant_id",
+                "type": "string",
+                "description": "The grant."
+              },
+              {
+                "name": "granted_to",
+                "type": "string",
+                "description": "The named person and their role (BR-4)."
+              },
+              {
+                "name": "sees",
+                "type": "string",
+                "description": "Their own branch's entries only. Branches are sealed and only the Super Admin reads across them (BR-12, E2)."
+              },
+              {
+                "name": "includes_entries_about_themselves",
+                "type": "boolean",
+                "description": "True. Whether a granted reader should see entries about their own actions is an open question this use case raises and does not answer — it means somebody can watch their own trail (OQ-3)."
+              },
+              {
+                "name": "reading_is_recorded",
+                "type": "boolean",
+                "description": "True. Reading the trail is itself written to the trail, so somebody looking through it is as traceable as somebody acting (BR-11)."
+              },
+              {
+                "name": "holders_now",
+                "type": "integer",
+                "description": "How many people can read the trail in total. It is a permission in its own right and the number should be small (BR-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_SUPER_ADMIN",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "Somebody other than the Super Admin attempted the grant.",
+              "written": "Nothing.",
+              "notWritten": "No access is granted.",
+              "note": "Only the Super Admin can grant access to the audit trail (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say what they will actually see. A granted reader sees their own branch's entries and nothing of any other, because branches are sealed — only the Super Admin reads across them (BR-12, E2).",
+          "derivedFrom": [
+            "BR-12",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that they will see entries about themselves. Somebody granted this can watch their own trail, and whether they should be able to is raised in the specification and left open (OQ-3).",
+          "derivedFrom": [
+            "OQ-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that reading is recorded. Every look at the trail is written to the trail, so the person granted this is as traceable as anybody acting — which is worth saying to them, not just about them (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say how many people hold it. It is a permission in its own right precisely because the trail is what everything else is checked against, and nobody holds it by default (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "The use case describes granting audit access and describes no revoking of it — no flow, no screen action and no rule covers taking it back. A grant made in error has no documented way back (BR-4)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Johar Town ke School Admin ko audit trail dekhne ki ijazat de dein",
+            "lang": "ur-Latn",
+            "gloss": "give the Johar Town School Admin permission to see the audit trail"
+          },
+          "context": "Super Admin, nobody currently holding audit access.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "audit.access.grant",
+              "inputs": {
+                "user_id": "$request.user_phrase → the Johar Town School Admin",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One named person (PR-4)."
+            }
+          ],
+          "outcome": "Granted. They see Johar Town's entries and nothing of any other campus. Two things to tell them and one to note: every time they open the trail, that is itself written to it; they will see entries about their own actions, which the specification raises as a question and does not settle; and this is the only person besides the Super Admin who can read it at all — the use case describes granting this and describes no way to take it back."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-25-06-PC-2",
+      "intent": {
+        "name": "audit.trail.read",
+        "summary": "Search the trail: what was done, when, by whom, on what. Reading it is itself recorded.",
+        "routesHere": [
+          "who changed the marks lock on Grade 9 Physics?",
+          {
+            "text": "Grade 9 Physics ke marks kis ne aur kab badle thay?",
+            "lang": "ur-Latn",
+            "gloss": "who changed the Grade 9 Physics marks and when?"
+          },
+          {
+            "text": "is student ke record par kis kis ne kaam kiya hai?",
+            "lang": "ur-Latn",
+            "gloss": "who has worked on this student's record?"
+          },
+          {
+            "text": "Imran ne pichle hafte kya kya kiya?",
+            "lang": "ur-Latn",
+            "gloss": "what did Imran do last week?"
+          },
+          "show me every override recorded this term"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye entry theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "correct this entry"
+            },
+            "goesTo": "Not offered.",
+            "note": "The trail is read-only and cannot be edited by anybody, the Super Admin included. A trail its administrator can edit is not a trail (BR-2, E3, E4)."
+          },
+          {
+            "request": {
+              "text": "ye entry mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete this entry"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is no such control. An entry leaves only when it passes its retention period, and **the removal is itself recorded** (BR-2, E4, E9)."
+          },
+          {
+            "request": {
+              "text": "doosri branch ki entries dikha dein",
+              "lang": "ur-Latn",
+              "gloss": "show me the other branch's entries"
+            },
+            "goesTo": "Refused unless the actor is the Super Admin.",
+            "note": "A branch-scoped reader sees only their own branch's entries, since branches are sealed (BR-12, E2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "audit.trail.read",
+            "inputs": {
+              "user_phrase": "$request.user_phrase",
+              "from_date": "$request.from_date",
+              "to_date": "$request.to_date",
+              "module": "$request.module",
+              "action": "$request.action",
+              "record_phrase": "$request.record_phrase",
+              "overrides_only": "$request.overrides_only",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read, and it is written to the trail as it runs (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. A search matching more entries than can be shown is paged and narrower filters are suggested, rather than the answer being truncated silently (E7).",
+        "atomicity": "A read that **writes**. Reading the trail is itself written to the trail, so the person searching is as traceable as the people they are searching (BR-11). Nothing in the trail can be edited or deleted by anybody (BR-2)."
+      },
+      "operations": [
+        {
+          "name": "audit.trail.read",
+          "method": "GET",
+          "path": "/api/v1/audit",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Search the audit trail by user, date, module, action or record.",
+          "parameters": [
+            {
+              "name": "user_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.user_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.user_phrase",
+                "onNoMatch": "Refuse. No user matches.",
+                "onAmbiguous": "Ask, naming the candidates with their roles."
+              },
+              "notes": "Where the question is about one person's actions."
+            },
+            {
+              "name": "from_date",
+              "source": "request",
+              "sourceRef": "$request.from_date",
+              "required": false,
+              "type": "date",
+              "notes": "The start of the period. **How far back the trail reaches is not specified anywhere** — the retention policy the rule refers to is defined nowhere (BR-7, OQ-1)."
+            },
+            {
+              "name": "to_date",
+              "source": "request",
+              "sourceRef": "$request.to_date",
+              "required": false,
+              "type": "date",
+              "notes": "The end of it."
+            },
+            {
+              "name": "module",
+              "source": "request",
+              "sourceRef": "$request.module",
+              "required": false,
+              "type": "string",
+              "notes": "Which part of the system (BR-3)."
+            },
+            {
+              "name": "action",
+              "source": "request",
+              "sourceRef": "$request.action",
+              "required": false,
+              "type": "enum: Created|Changed|Deleted|Approved|Rejected|Signed in|Signed out|Overrode|Refused",
+              "notes": "What kind of action. **Nothing is exempt** — creating, changing, deleting, approving, signing in, and every override recorded elsewhere in the system (BR-1)."
+            },
+            {
+              "name": "record_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.record_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "audit_record",
+                "fromPhrase": "$request.record_phrase",
+                "onNoMatch": "Refuse. No record matches, or it is outside the actor's branch (BR-12).",
+                "onAmbiguous": "Ask, naming the records that match with their type."
+              },
+              "notes": "Where the question is about one record — a student, a result, an invoice."
+            },
+            {
+              "name": "overrides_only",
+              "source": "request",
+              "sourceRef": "$request.overrides_only",
+              "required": false,
+              "type": "boolean",
+              "notes": "Only the overrides recorded elsewhere in the system. These are the entries an investigation usually starts from (BR-1, BR-9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was done, when, by whom, and to what.",
+            "fields": [
+              {
+                "name": "entries",
+                "type": "object[]",
+                "description": "When, user, **the role they held at the time**, the branch they were acting in, module, action, record, before and after, and any reason given (BR-1, BR-8, BR-9, BR-10)."
+              },
+              {
+                "name": "role_at_the_time",
+                "type": "string",
+                "description": "The role the user held when they acted, which may since have changed. Reading their current role instead would explain nothing (BR-8)."
+              },
+              {
+                "name": "before_and_after",
+                "type": "object[]",
+                "description": "What the value was and what it became. A change entry explains the change rather than merely noting one (BR-10)."
+              },
+              {
+                "name": "reasons",
+                "type": "object[]",
+                "description": "The reason given where the action required one. An approval or an override with no reason recorded is an action nobody can question (BR-9)."
+              },
+              {
+                "name": "overrides",
+                "type": "object[]",
+                "description": "Overrides recorded elsewhere in the system, gathered here (BR-1)."
+              },
+              {
+                "name": "scope",
+                "type": "string",
+                "description": "The actor's own branch, or every branch for the Super Admin (BR-12, E2)."
+              },
+              {
+                "name": "total_matching",
+                "type": "integer",
+                "description": "How many entries match. Where it is more than can be shown, the search is paged and narrower filters are suggested rather than truncated silently (E7)."
+              },
+              {
+                "name": "earliest_available",
+                "type": "date",
+                "description": "How far back the trail reaches. **The retention policy is defined nowhere**, so this is the practical limit on any investigation (BR-7, OQ-1)."
+              },
+              {
+                "name": "reads_not_recorded",
+                "type": "string",
+                "description": "Reading the trail is recorded; reading an ordinary record generally is not — whether a salary or a safeguarding note should be, is unanswered (BR-11, OQ-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user does not hold the audit permission.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned.",
+              "note": "Reading the trail is a permission in its own right and nobody holds it by default (BR-4)."
+            },
+            {
+              "code": "OTHER_BRANCH",
+              "mapsTo": "E2",
+              "httpStatus": 403,
+              "meaning": "A branch-scoped reader searched another branch's entries.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned.",
+              "note": "Branches are sealed and only the Super Admin reads across them (BR-12)."
+            },
+            {
+              "code": "TOO_MANY",
+              "mapsTo": "E7",
+              "httpStatus": 200,
+              "meaning": "More entries match than can be shown.",
+              "written": "The search is paged.",
+              "notWritten": "Nothing is truncated silently.",
+              "treatedAsSuccess": true,
+              "note": "Narrower filters are suggested — a date range or a module (BR-3)."
+            }
+          ],
+          "writesOnRead": "An audit entry naming the actor, the search and the time. **Reading the trail is itself written to the trail**, so somebody looking through it is as traceable as somebody acting (BR-11). A search whose result is never shown has still recorded the looking."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that the search itself is recorded. Reading the trail is written to the trail, and the person asking is entitled to know that before they ask rather than to discover it in it (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Give the role the user held **at the time**, not the one they hold now. Somebody who approved a result as a coordinator and is now a teacher is explained by the first and confused by the second (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Give before and after, not just that something changed. A change entry exists to explain the change, and \"marks lock changed\" answers nothing (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Give the reason where the action carried one. An approval or an override with no reason recorded is an action nobody can question, and the reason is the whole of what an investigation reads (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never claim how far back the trail goes. The retention policy the rule refers to is defined nowhere, and it is the practical limit on every investigation (BR-7, OQ-1).",
+          "derivedFrom": [
+            "BR-7",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Say what the trail does not record. Reading the trail is recorded; reading an ordinary record — a salary, a safeguarding note — generally is not, so an investigation into who **looked** at something will usually find nothing (BR-11, OQ-5).",
+          "derivedFrom": [
+            "BR-11",
+            "OQ-5"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never narrow a search to make it fit. Where too many entries match, page it and say so — a silently truncated trail is worse than a slow one (E7).",
+          "derivedFrom": [
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing in the trail and cannot be taken out of it — the entry recording the search is written like any other and is as uneditable as the rest (BR-2, BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 9 Physics ke marks ka lock kis ne aur kab badla tha?",
+            "lang": "ur-Latn",
+            "gloss": "who changed the marks lock on Grade 9 Physics and when?"
+          },
+          "context": "Super Admin, investigating a discrepancy.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "audit.trail.read",
+              "inputs": {
+                "user_phrase": "omitted",
+                "from_date": "the term start",
+                "to_date": "today",
+                "module": "Examination & Result",
+                "action": "Changed",
+                "record_phrase": "$request.record_phrase → Grade 9 Physics, First Term",
+                "overrides_only": "false",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The search is written to the trail as it runs (PR-1)."
+            }
+          ],
+          "outcome": "Give each entry with the name, the time, **the role they held then** — one of them was a coordinator at the time and is a teacher now — and the before and after: open → locked, then locked → open four days later, with the reason given on the second. Say that this search is itself now in the trail."
+        },
+        {
+          "request": {
+            "text": "is salary ka record kis kis ne dekha hai?",
+            "lang": "ur-Latn",
+            "gloss": "who has looked at this salary record?"
+          },
+          "context": "Principal with audit access.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "audit.trail.read",
+              "inputs": {
+                "user_phrase": "omitted",
+                "from_date": "asked",
+                "to_date": "asked",
+                "module": "HR & Payroll",
+                "action": "omitted",
+                "record_phrase": "$request.record_phrase → the salary record",
+                "overrides_only": "false",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The search runs and will find changes, not viewings (PR-6)."
+            }
+          ],
+          "outcome": "This will show who **changed** the record and not who looked at it. Reading the trail is recorded; reading an ordinary record generally is not, and whether a salary or a safeguarding note should be an exception is raised in the specification and left open. So an answer of \"nobody\" here means nobody changed it, not that nobody saw it."
+        }
+      ]
+    }
+  ]
+}

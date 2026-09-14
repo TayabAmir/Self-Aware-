@@ -1,0 +1,2328 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-13-01",
+    "name": "Produce and issue student, staff and bearer pickup cards, confirming the right person before the card is built",
+    "module": "ID cards and certificates",
+    "file": "../UseCases/UC-13-01.json",
+    "featureRef": "13.1 ID card issuance and printing"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-13-01-PC-1",
+      "intent": {
+        "name": "card.issue",
+        "summary": "Produce a card for a confirmed person, filled from their record. One step, and a pickup card carries the child's photograph rather than the holder's.",
+        "routesHere": [
+          "issue a student card for this child",
+          {
+            "text": "is bache ka student card bana do",
+            "lang": "ur-Latn",
+            "gloss": "make a student card for this child"
+          },
+          {
+            "text": "naye ustad ka staff card banao",
+            "lang": "ur-Latn",
+            "gloss": "make a staff card for the new teacher"
+          },
+          {
+            "text": "is bache ke liye pickup card jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "issue a pickup card for this child"
+          },
+          "print a staff card for the new caretaker"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "card gum ho gaya hai, naya bana do",
+              "lang": "ur-Latn",
+              "gloss": "the card is lost, make a new one"
+            },
+            "goesTo": "pickup.card.void then card.replace — UC-13-01-PC-4 and PC-2",
+            "note": "A card reported lost is voided immediately, before any replacement is produced (BR-11)."
+          },
+          {
+            "request": {
+              "text": "walidain ne pickup card manga hai",
+              "lang": "ur-Latn",
+              "gloss": "the guardian has asked for a pickup card"
+            },
+            "goesTo": "pickup.card.request — UC-13-01-PC-3",
+            "note": "The guardian requests the cards and the school issues them, against the limit the School Admin has set (BR-10)."
+          },
+          {
+            "request": {
+              "text": "card kis ke paas hai wo bhi likh do",
+              "lang": "ur-Latn",
+              "gloss": "record who is holding the card"
+            },
+            "goesTo": "Not offered.",
+            "note": "A pickup card is a bearer card. The school holds no record of who the guardian has given it to — there is no such field anywhere (BR-8, E11)."
+          },
+          {
+            "request": {
+              "text": "card ka data khud likh do",
+              "lang": "ur-Latn",
+              "gloss": "type the card details in"
+            },
+            "goesTo": "Not offered.",
+            "note": "On confirmation the card fields are filled from the record — name, photograph, class or role, identifier and expiry. They are not typed by hand (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "card.issue",
+            "inputs": {
+              "person_id": "$request.person_phrase",
+              "card_type": "$request.card_type",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The fields are filled from the record on confirmation and are not typed (BR-4). For a pickup card they are the **child's** own photograph and details, since the guard confirms the card against the child being released rather than against the person holding it (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. A record with no photograph cannot produce a card, and a child already at the card limit gets no further one.",
+        "atomicity": "One write: the card, its number and the record of the issue together or not at all. The first card is free, for a student and an employee alike (BR-5). Printing happens only from the preview, singly or as a batch — there is no route that prints from anywhere else (BR-7, E6), so printing is a screen act rather than something a plan performs. **For a pickup card, nothing is recorded about who will hold it** (BR-8, E11)."
+      },
+      "operations": [
+        {
+          "name": "card.issue",
+          "method": "POST",
+          "path": "/api/v1/cards",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "person_id + card_type, since a student or staff card is one per person; a pickup card is bounded by the limit instead",
+          "purpose": "Produce a card for a confirmed person, filled from their record.",
+          "parameters": [
+            {
+              "name": "person_id",
+              "source": "resolved",
+              "sourceRef": "$request.person_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "person",
+                "fromPhrase": "$request.person_phrase",
+                "onNoMatch": "Refuse. No record matches, or the person is outside the actor's scope. Withdrawn students are excluded by default, since a card must not be issued to a child who has left (BR-3, E1, E3).",
+                "onAmbiguous": "Ask, showing each candidate with their photograph, name, father's name, class and section or role, and identifier. A single mistyped digit resolves to a real record and produces a valid card carrying another child's photograph, and this confirmation is the only thing standing between the two (BR-1, BR-2)."
+              },
+              "notes": "The person the card is for. A typed identifier is never silently accepted — the matched person is shown with their photograph, name, father's name, class and section or role, and identifier, and the user confirms before any field is populated (BR-2)."
+            },
+            {
+              "name": "card_type",
+              "source": "request",
+              "sourceRef": "$request.card_type",
+              "required": true,
+              "type": "enum: Student | Staff | Pickup",
+              "notes": "What kind of card is being produced (BR-6). All three follow the same flow; what varies is the type and its source record. A pickup card names a child and is filled from the student record (BR-9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The card as produced.",
+            "fields": [
+              {
+                "name": "card_id",
+                "type": "string",
+                "description": "The card."
+              },
+              {
+                "name": "card_number",
+                "type": "string",
+                "description": "Unique. On a pickup card it is the only thing that identifies which key was used (BR-5, BR-14)."
+              },
+              {
+                "name": "person",
+                "type": "object",
+                "description": "The confirmed person — photograph, name, father's name, class and section or role, and identifier, as shown before confirmation (BR-2)."
+              },
+              {
+                "name": "fields_filled",
+                "type": "object",
+                "description": "Name, photograph, class or role, identifier and expiry, all from the record (BR-4)."
+              },
+              {
+                "name": "expiry",
+                "type": "date",
+                "description": "Filled from the record, not typed."
+              },
+              {
+                "name": "cards_in_circulation",
+                "type": "integer",
+                "description": "For a pickup card, how many that child now has. Every one is another key to that child (BR-10)."
+              },
+              {
+                "name": "card_limit",
+                "type": "integer",
+                "description": "How many the School Admin permits (BR-10)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Previewed until it is printed from the preview and handed over (BR-7)."
+              },
+              {
+                "name": "charge",
+                "type": "money",
+                "description": "Zero. The first card is free for a student and an employee alike (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_MATCH",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The typed identifier matches no record.",
+              "written": "Nothing.",
+              "notWritten": "No card is started."
+            },
+            {
+              "code": "NO_PHOTOGRAPH",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The record carries no photograph.",
+              "written": "Nothing.",
+              "notWritten": "The card cannot be built.",
+              "note": "A card without one identifies nobody."
+            },
+            {
+              "code": "AT_CARD_LIMIT",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The child is already at the pickup card limit.",
+              "written": "Nothing.",
+              "notWritten": "No further card is issued.",
+              "note": "Every card in circulation is another key to that child. Void one before issuing another (BR-10)."
+            },
+            {
+              "code": "WITHDRAWN_STUDENT",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The person is a withdrawn student.",
+              "written": "Nothing.",
+              "notWritten": "No card issued.",
+              "note": "A card must not be issued to a child who has left (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never accept a typed identifier without the person being confirmed. A single mistyped digit resolves to a real record and produces a valid card carrying another child's photograph, and this confirmation is the only thing standing between the two (BR-2, E4).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never fill a card field by hand. On confirmation they come from the record — name, photograph, class or role, identifier and expiry (BR-4) — and a value a planner supplied is a card that says something the record does not.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name the person back in full before the card is produced. Photograph, name, father's name, class and section or role, and identifier: names repeat constantly, and this is the last check before a card exists (BR-1, BR-2).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never record or ask who will hold a pickup card. It is a bearer card and the school holds no such record anywhere — there is no field for it (BR-8, E11). A plan that captured a holder's name would be inventing a record the design deliberately does not keep.",
+          "derivedFrom": [
+            "BR-8",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that a pickup card carries the child's photograph, not the holder's. The guard is confirming that the card matches the child being released (BR-9), which is what makes a bearer card checkable at all.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report the cards now in circulation for that child against the limit. Every one is another key, and a family holding six has six ways to lose one (BR-10).",
+          "derivedFrom": [
+            "BR-10",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never issue to a withdrawn student. They are excluded from the picker by default, and a card issued to a child who has left is a card that still opens a gate (BR-3, E3).",
+          "derivedFrom": [
+            "BR-3",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "Say that printing happens from the preview. There is no route that prints from anywhere else (BR-7, E6), so the plan produces the card and a person prints it while looking at the photograph.",
+          "derivedFrom": [
+            "BR-7",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-9",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A card is never deleted. One issued in error is voided, and a replacement generates a new number (BR-5). A voided card is never reactivated (BR-15)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is bache ka student card bana do",
+            "lang": "ur-Latn",
+            "gloss": "make a student card for this child"
+          },
+          "context": "Staff, Johar Town branch, the identifier typed.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "card.issue",
+              "inputs": {
+                "person_id": "$request.person_phrase → confirmed against the shown record",
+                "card_type": "Student",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The person is confirmed with their photograph and details before anything is filled (PR-1, PR-3)."
+            }
+          ],
+          "outcome": "Produced and waiting at the preview. Report the name, father's name, class and section shown on it (PR-3), and that printing happens from the preview — the photograph on the screen is the last check before a card exists (PR-8)."
+        },
+        {
+          "request": {
+            "text": "is bache ka pickup card bana do — chacha lene aayenge",
+            "lang": "ur-Latn",
+            "gloss": "make a pickup card for this child — the uncle will collect"
+          },
+          "context": "Staff, Johar Town branch, the child below the limit.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "card.issue",
+              "inputs": {
+                "person_id": "$request.person_phrase → the child",
+                "card_type": "Pickup",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The card names the child and carries the child's photograph. Nothing about the uncle is recorded (PR-4, PR-5)."
+            }
+          ],
+          "outcome": "Produced. Report that the card carries the child's own photograph rather than the uncle's, because the guard confirms the card against the child being released (PR-5) — and that the school records nothing about who the guardian gives it to. Report how many cards that child now has against the limit (PR-6)."
+        },
+        {
+          "request": {
+            "text": "chacha ka pickup card bana do, un ki tasveer laga do",
+            "lang": "ur-Latn",
+            "gloss": "make the uncle a pickup card with his photograph on it"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "card.issue",
+              "inputs": {
+                "person_id": "$request.person_phrase → the child, not the uncle",
+                "card_type": "Pickup",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The card is filled from the child's record (PR-5). No holder is named or photographed (PR-4)."
+            }
+          ],
+          "outcome": "Produced against the child. Report that a pickup card is a bearer card carrying the child's photograph — whoever presents it may collect that child, and the school holds no record of who it was given to. If the concern is that a particular person should not be able to collect, the only control is voiding the cards and reissuing, which is a different act."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-01-PC-2",
+      "intent": {
+        "name": "card.replace",
+        "summary": "Issue a replacement card, which generates a new number and voids the old one. One step, and a voided card is never restored.",
+        "routesHere": [
+          "issue a replacement — the card was damaged",
+          {
+            "text": "card kharab ho gaya hai, naya jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "the card is damaged, issue a new one"
+          },
+          {
+            "text": "card ki muddat khatam ho gayi, naya banao",
+            "lang": "ur-Latn",
+            "gloss": "the card has expired, make a new one"
+          },
+          {
+            "text": "gum shuda card mil gaya hai, wahi dobara chalu kar do",
+            "lang": "ur-Latn",
+            "gloss": "the lost card has been found, reactivate it"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "card gum hone ki itla do",
+              "lang": "ur-Latn",
+              "gloss": "report the card lost"
+            },
+            "goesTo": "pickup.card.void — UC-13-01-PC-4",
+            "note": "A card reported lost is voided immediately, before any replacement is produced (BR-11)."
+          },
+          {
+            "request": {
+              "text": "purana card dobara chalu kar do",
+              "lang": "ur-Latn",
+              "gloss": "bring the old card back into use"
+            },
+            "goesTo": "Not offered.",
+            "note": "A voided card is never reactivated. A family who finds a card they reported lost is issued a replacement instead, because the school cannot know whose hands it passed through in the meantime (BR-15, E10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "card.replace",
+            "inputs": {
+              "card_id": "$request.card_phrase",
+              "replacement_reason": "$request.replacement_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The replacement generates a new number and voids the old (BR-5), so the previous card stops working the moment this one exists."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the new card, its new number, and the old card voided together or not at all. A replacement for a lost card is charged and the guardian pays it for a student card (BR-5) — whether a card replaced because it expired is charged is not decided, and neither is whether a replacement pickup card is. The old card is never restored, whatever happens to it afterwards (BR-15)."
+      },
+      "operations": [
+        {
+          "name": "card.replace",
+          "method": "POST",
+          "path": "/api/v1/cards/{card_id}/replace",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "card_id, since a card is replaced once",
+          "purpose": "Issue a replacement card, voiding the old one.",
+          "parameters": [
+            {
+              "name": "card_id",
+              "source": "resolved",
+              "sourceRef": "$request.card_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "card",
+                "fromPhrase": "$request.card_phrase",
+                "onNoMatch": "Refuse. No issued card matches.",
+                "onAmbiguous": "Ask, naming the cards with their number, type, the person or child they name, and their status."
+              },
+              "notes": "The issued card, resolved from the person or child it names and its number."
+            },
+            {
+              "name": "replacement_reason",
+              "source": "request",
+              "sourceRef": "$request.replacement_reason",
+              "required": true,
+              "type": "enum: Lost | Damaged | Expired | Details changed",
+              "notes": "Why a replacement is being issued (BR-5). It decides whether a charge is raised — a lost card is charged — so it is never inferred from the state of the old card."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The replacement.",
+            "fields": [
+              {
+                "name": "card_id",
+                "type": "string",
+                "description": "The new card."
+              },
+              {
+                "name": "card_number",
+                "type": "string",
+                "description": "A new number (BR-5)."
+              },
+              {
+                "name": "previous_card_number",
+                "type": "string",
+                "description": "The old one, now void and never reactivated (BR-15)."
+              },
+              {
+                "name": "replacement_reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "charge_raised",
+                "type": "boolean",
+                "description": "True where the card was lost. Accounts raise the invoice, and the guardian pays it for a student card (BR-5)."
+              },
+              {
+                "name": "charge_undecided",
+                "type": "boolean",
+                "description": "True where the reason is Expired or the card is a pickup card — whether either is charged is not decided."
+              },
+              {
+                "name": "cards_in_circulation",
+                "type": "integer",
+                "description": "For a pickup card, how many that child now has. The replacement does not add to the count, since the old one is voided."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Previewed until it is printed from the preview (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PHOTOGRAPH",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The record carries no photograph.",
+              "written": "Nothing.",
+              "notWritten": "The card cannot be built."
+            },
+            {
+              "code": "REACTIVATION_ATTEMPTED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "A voided card was reactivated rather than replaced.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "There is no such control. The school cannot know whose hands it passed through (BR-15)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the replacement reason. It decides whether the family is charged (BR-5), and a damaged card recorded as lost puts a bill on a household that did not lose anything.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never restore a found card. A voided card is never reactivated and a replacement is issued instead (BR-15, E10) — the school cannot know whose hands it passed through while it was lost, and with a bearer card that is the whole risk.",
+          "derivedFrom": [
+            "BR-15",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the charge, and say where it is undecided. A lost card is charged; whether an expired one is, and whether a replacement pickup card is, are both open — and the use case notes that charging for a lost pickup card may discourage the report the school most needs.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report that the previous card is void. It stops working the moment the replacement exists (BR-5), which matters most on a pickup card somebody may still be carrying.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never replace a lost card without the loss being reported first. The void comes first, then the replacement (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A replacement is not undone. The old card stays void and the new one stands (BR-5, BR-15)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "card kharab ho gaya hai, naya jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "the card is damaged, issue a new one"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "card.replace",
+              "inputs": {
+                "card_id": "$request.card_phrase",
+                "replacement_reason": "Damaged",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Damaged, because that is what was said — not Lost (PR-1)."
+            }
+          ],
+          "outcome": "Replaced with a new number and the old one voided. Report that no charge is raised, since the card was damaged rather than lost (PR-3)."
+        },
+        {
+          "request": {
+            "text": "gum shuda pickup card mil gaya hai, usi ko dobara chalu kar do",
+            "lang": "ur-Latn",
+            "gloss": "the lost pickup card has been found, bring it back into use"
+          },
+          "context": "Staff, Johar Town branch, on a voided card.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "card.replace",
+              "inputs": {
+                "card_id": "$request.card_phrase",
+                "replacement_reason": "Lost",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A replacement is planned rather than a reactivation. There is no control that restores a voided card (PR-2)."
+            }
+          ],
+          "outcome": "A replacement is issued with a new number. Report that the found card stays void and cannot be brought back — it was out of the family's hands for a period and the school cannot know whose hands it passed through, which with a bearer card is the entire risk."
+        },
+        {
+          "request": {
+            "text": "pickup card gum ho gaya, naya bana do — charge kitna lagega",
+            "lang": "ur-Latn",
+            "gloss": "the pickup card is lost, make a new one — what is the charge"
+          },
+          "context": "School Admin, Johar Town branch, on a card already voided.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "card.replace",
+              "inputs": {
+                "card_id": "$request.card_phrase",
+                "replacement_reason": "Lost",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Replaced. Report that whether a replacement pickup card is charged is not decided (PR-3) — the use case notes the tension itself: a lost student card is an administrative cost, but charging for a lost pickup card may discourage the report the school most needs to receive quickly."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-01-PC-3",
+      "intent": {
+        "name": "pickup.card.request",
+        "summary": "A guardian asks for a pickup card for their own child. One step, checked against the limit the school has set.",
+        "routesHere": [
+          "I need another pickup card for my daughter",
+          {
+            "text": "mere bache ke liye ek aur pickup card chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need another pickup card for my child"
+          },
+          {
+            "text": "driver ko bhejna hai, card chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need a card so the driver can collect"
+          },
+          {
+            "text": "dono bachon ke liye card chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need cards for both children"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "card kis ke naam par banega",
+              "lang": "ur-Latn",
+              "gloss": "whose name will the card be in"
+            },
+            "goesTo": "Nobody's.",
+            "note": "A pickup card is a bearer card. It names the child and carries the child's photograph, and whoever presents it may collect them (BR-8, BR-9)."
+          },
+          {
+            "request": {
+              "text": "card gum ho gaya hai",
+              "lang": "ur-Latn",
+              "gloss": "the card is lost"
+            },
+            "goesTo": "pickup.card.void — UC-13-01-PC-4",
+            "note": "A guardian reports a card lost from their own portal and it is voided immediately (BR-11)."
+          },
+          {
+            "request": {
+              "text": "hadd barha do",
+              "lang": "ur-Latn",
+              "gloss": "raise the limit"
+            },
+            "goesTo": "pickup.card.limit.set — UC-13-01-PC-6",
+            "note": "How many cards a child may have is the School Admin's decision (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "pickup.card.request",
+            "inputs": {
+              "guardian_id": "$session.guardian_id",
+              "student_id": "$request.child_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step per child. The guardian requests the cards and the school issues them, checked against how many that child already has (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. A child already at the limit gets no further card, and a request for a child who is not the guardian's is refused.",
+        "atomicity": "One write: the request and the audit entry together or not at all. **No card exists yet** — the school issues it, and the card is then filled from the child's record and printed from the preview (BR-4, BR-7). Every card in circulation is another key to that child, which is why the limit exists (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "pickup.card.request",
+          "method": "POST",
+          "path": "/api/v1/pickup-card-requests",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "guardian_id + student_id + date, since the same ask twice on one day is one request",
+          "purpose": "Record a guardian's request for a pickup card for their own child.",
+          "parameters": [
+            {
+              "name": "guardian_id",
+              "source": "session",
+              "sourceRef": "$session.guardian_id",
+              "required": true,
+              "type": "string",
+              "notes": "The requesting guardian's own record. A guardian may request only for their own children (E8)."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.child_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.child_phrase",
+                "onNoMatch": "Refuse. No enrolled student matches within the actor's scope. A guardian may act only for their own children (E8).",
+                "onAmbiguous": "Ask, naming the candidates with their class and section."
+              },
+              "notes": "The child the card would authorise the collection of. The card carries their photograph and details, not the holder's (BR-9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The request.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The child."
+              },
+              {
+                "name": "cards_in_circulation",
+                "type": "integer",
+                "description": "How many that child already has. Every one is another key to them (BR-10)."
+              },
+              {
+                "name": "card_limit",
+                "type": "integer",
+                "description": "How many the School Admin permits (BR-10)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Requested. No card exists yet."
+              },
+              {
+                "name": "bearer_card",
+                "type": "boolean",
+                "description": "True. Whoever presents it may collect the child, and the school records nothing about who holds it (BR-8, E11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "AT_CARD_LIMIT",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The child is already at the card limit.",
+              "written": "Nothing.",
+              "notWritten": "No further card is issued.",
+              "note": "The message names how many they have. Void one before issuing another (BR-10)."
+            },
+            {
+              "code": "NOT_OWN_CHILD",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "The child is not this guardian's.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never request for a child the guardian is not guardian of. student_id resolves within their own children, and a phrase naming another family's child is refused rather than resolved (E8).",
+          "derivedFrom": [
+            "BR-10",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never ask who the card is for. It is a bearer card: it names the child, carries the child's photograph, and the school holds no record of who the guardian gives it to (BR-8, BR-9, E11).",
+          "derivedFrom": [
+            "BR-8",
+            "BR-9",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the cards in circulation against the limit. Every one is another key to that child, and a family holding six has six ways to lose one (BR-10).",
+          "derivedFrom": [
+            "BR-10",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say plainly that whoever presents the card may collect the child. A guardian handing one to a driver is handing over a key, and the notification on issue says so for the same reason.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never request several children in one call. Each child's cards are counted against their own limit (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A request is issued or refused. A card once issued is voided rather than withdrawn, and a voided card is never reactivated (BR-11, BR-15)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mere bache ke liye ek aur pickup card chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need another pickup card for my child"
+          },
+          "context": "Parent, Johar Town branch, signed in, child has 1 of 3.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.card.request",
+              "inputs": {
+                "guardian_id": "$session.guardian_id",
+                "student_id": "$request.child_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Requested. Report that the child would then have 2 of 3 (PR-3), that no card exists until the school issues it, and that whoever holds the card may collect the child (PR-4)."
+        },
+        {
+          "request": {
+            "text": "dono bachon ke liye card chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need cards for both children"
+          },
+          "context": "Parent, Johar Town branch, two children.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.card.request",
+              "inputs": {
+                "guardian_id": "$session.guardian_id",
+                "student_id": "$request.child_phrase — the first child",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One request per child. The second is its own call, counted against that child's own limit (PR-5)."
+            }
+          ],
+          "outcome": "One request per child, each counted separately. Report each child's cards in circulation against their limit — a card names one child, so a family collecting two needs one for each."
+        },
+        {
+          "request": {
+            "text": "teesra card chahiye, driver badal gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "I need a third card, the driver has changed"
+          },
+          "context": "Parent, Johar Town branch, child already at the limit of 3.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.card.request",
+              "inputs": {
+                "guardian_id": "$session.guardian_id",
+                "student_id": "$request.child_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns AT_CARD_LIMIT (E7)."
+            }
+          ],
+          "outcome": "No card is issued. Report that the child already has three, which is the limit, and that one must be voided first — and note that if the old driver still holds a card, voiding that one is the point rather than a formality, since whoever holds it can still collect the child."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-01-PC-4",
+      "intent": {
+        "name": "pickup.card.void",
+        "summary": "Void one pickup card, at once. One step, and it is the only control a bearer card has.",
+        "routesHere": [
+          "I have lost the pickup card — void it",
+          {
+            "text": "pickup card gum ho gaya hai, foran band karo",
+            "lang": "ur-Latn",
+            "gloss": "the pickup card is lost, void it at once"
+          },
+          {
+            "text": "driver ne card wapas nahi kiya",
+            "lang": "ur-Latn",
+            "gloss": "the driver has not returned the card"
+          },
+          {
+            "text": "ye card ab nahi chalna chahiye",
+            "lang": "ur-Latn",
+            "gloss": "this card should not work any more"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is bache ke sare card band kar do",
+              "lang": "ur-Latn",
+              "gloss": "void every card for this child"
+            },
+            "goesTo": "pickup.cards.void.all — UC-13-01-PC-5",
+            "note": "Where the school needs to stop every card for a child at once, that is its own act (A7)."
+          },
+          {
+            "request": {
+              "text": "kal se band kar do",
+              "lang": "ur-Latn",
+              "gloss": "stop it from tomorrow"
+            },
+            "goesTo": "Not offered.",
+            "note": "It fails at the gate at once rather than at the end of the day. Until it is voided, whoever holds it can collect the child (BR-11)."
+          },
+          {
+            "request": {
+              "text": "naya card bana do",
+              "lang": "ur-Latn",
+              "gloss": "make a new card"
+            },
+            "goesTo": "card.replace — UC-13-01-PC-2",
+            "note": "The card is voided first, then the replacement is produced (BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "pickup.card.void",
+            "inputs": {
+              "card_id": "$request.card_phrase",
+              "void_reason": "$request.void_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it takes effect within seconds. Because the card is a bearer card, voiding a lost one is the only control the school has (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the card voided and the audit entry together or not at all. It fails at the gate at once rather than at the end of the day — until it is voided, whoever holds it can collect the child (BR-11). The guardian and the gate are both told, and the gate notification repeats until acknowledged. A voided card is never reactivated (BR-15)."
+      },
+      "operations": [
+        {
+          "name": "pickup.card.void",
+          "method": "POST",
+          "path": "/api/v1/cards/{card_id}/void",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "card_id, since a card is voided once",
+          "purpose": "Void one pickup card, effective immediately.",
+          "parameters": [
+            {
+              "name": "card_id",
+              "source": "resolved",
+              "sourceRef": "$request.card_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "card",
+                "fromPhrase": "$request.card_phrase",
+                "onNoMatch": "Refuse. No issued card matches.",
+                "onAmbiguous": "Ask, naming the cards with their number, the child they name, and when each was issued."
+              },
+              "notes": "The card being voided. On a pickup card the number is the only thing that identifies which key it is (BR-14)."
+            },
+            {
+              "name": "void_reason",
+              "source": "request",
+              "sourceRef": "$request.void_reason",
+              "required": true,
+              "type": "enum: Reported lost | Not returned | Child withdrawn | Replaced | Withdrawn by the school",
+              "notes": "Why it is being voided (BR-11). Reporting one lost is the commonest. The reason distinguishes a card the family lost from one the school stopped, which is what the voided-cards report is read for."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The void.",
+            "fields": [
+              {
+                "name": "card_id",
+                "type": "string",
+                "description": "The card."
+              },
+              {
+                "name": "card_number",
+                "type": "string",
+                "description": "The number now void — the only identifier a bearer card has (BR-14)."
+              },
+              {
+                "name": "child",
+                "type": "string",
+                "description": "The child it named."
+              },
+              {
+                "name": "void_reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Voided. It fails at the gate at once (BR-11, E9)."
+              },
+              {
+                "name": "cards_remaining",
+                "type": "integer",
+                "description": "How many cards that child still has in circulation (BR-10)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status."
+              },
+              {
+                "name": "gate_notified",
+                "type": "string",
+                "description": "Repeated until acknowledged at the gate, because a voided card that the gate has not heard about is still a working key."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_VOID",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The card is already voided or replaced.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "And it is never reactivated (BR-15)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never defer a void. It fails at the gate within seconds, not at the end of the day, and until it is voided whoever holds it can collect the child (BR-11).",
+          "derivedFrom": [
+            "BR-11",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never choose the void reason. Reported lost, not returned and withdrawn by the school are different facts, and the voided-cards report is read to tell them apart (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report how many cards that child still has. Voiding one leaves the others working, and a family who thinks they have stopped collection has not (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the gate notification separately. A voided card the gate has not acknowledged is still a working key in practice, which is why that message repeats until it is.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never treat a void as reversible. A voided card is never reactivated, and a found card is replaced rather than restored (BR-15, E10).",
+          "derivedFrom": [
+            "BR-15",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A void is never undone. A card found again is not brought back into use — a replacement is issued with its own number, because the school cannot know whose hands it passed through (BR-15)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "pickup card gum ho gaya hai, foran band karo",
+            "lang": "ur-Latn",
+            "gloss": "the pickup card is lost, void it at once"
+          },
+          "context": "Parent, Johar Town branch, from their own portal.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.card.void",
+              "inputs": {
+                "card_id": "$request.card_phrase",
+                "void_reason": "Reported lost",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is what the guardian reported (PR-2)."
+            }
+          ],
+          "outcome": "Voided, effective at the gate immediately (PR-1). Report how many cards that child still has in circulation (PR-3) — the others still work, so if the concern is that anybody could collect, those need voiding too. Report the gate acknowledgement separately (PR-4)."
+        },
+        {
+          "request": {
+            "text": "driver chala gaya hai, us ka card band kar do",
+            "lang": "ur-Latn",
+            "gloss": "the driver has left, void his card"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.card.void",
+              "inputs": {
+                "card_id": "$request.card_phrase — which card the driver held is not known",
+                "void_reason": "Not returned",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The school holds no record of who was given which card (PR governs via BR-8), so the card cannot be identified from the person."
+            }
+          ],
+          "outcome": "Ask the guardian which card number the driver held, or void every card for that child and reissue. The school does not record who holds a pickup card, so \"the driver's card\" identifies nothing — which is the consequence of the bearer design rather than a gap in the data."
+        },
+        {
+          "request": {
+            "text": "card kal se band kar do",
+            "lang": "ur-Latn",
+            "gloss": "stop the card from tomorrow"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.card.void",
+              "inputs": {
+                "card_id": "$request.card_phrase",
+                "void_reason": "$request.void_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The void acts at once. There is no capability that defers it (PR-1)."
+            }
+          ],
+          "outcome": "Report before voiding that it takes effect immediately — there is no way to schedule it. If somebody is collecting the child today on that card and should be allowed to, the void waits until afterwards; otherwise it happens now, and until it does the card is a working key."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-01-PC-5",
+      "intent": {
+        "name": "pickup.cards.void.all",
+        "summary": "Void every pickup card naming one child, at once. One step, and it is the only way to stop a person collecting.",
+        "routesHere": [
+          "void every pickup card for this child — there is a custody order",
+          {
+            "text": "is bache ke sare pickup card foran band kar do",
+            "lang": "ur-Latn",
+            "gloss": "void every pickup card for this child at once"
+          },
+          {
+            "text": "kisi ko bhi bache ko lene ki ijazat nahi",
+            "lang": "ur-Latn",
+            "gloss": "nobody is to be allowed to collect the child"
+          },
+          {
+            "text": "sare card band kar ke naye jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "void all the cards and issue fresh ones"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "sirf ek shakhs ko rok do",
+              "lang": "ur-Latn",
+              "gloss": "bar just one person"
+            },
+            "goesTo": "Not offered.",
+            "note": "A bearer card cannot bar a named person, since the school holds no record of who holds one. The only control is voiding every card for that child and reissuing to the parent the school recognises (BR-8, A7)."
+          },
+          {
+            "request": {
+              "text": "ek card band kar do",
+              "lang": "ur-Latn",
+              "gloss": "void one card"
+            },
+            "goesTo": "pickup.card.void — UC-13-01-PC-4"
+          },
+          {
+            "request": {
+              "text": "naye card bhi bana do",
+              "lang": "ur-Latn",
+              "gloss": "issue the new cards as well"
+            },
+            "goesTo": "card.issue — UC-13-01-PC-1",
+            "note": "Voiding stops the old keys; issuing fresh ones is a separate act, and each is filled from the child's record and printed from the preview."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "pickup.cards.void.all",
+            "inputs": {
+              "student_id": "$request.child_phrase",
+              "void_reason": "$request.void_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step across every card naming that child. This is the only way to stop a person collecting, since the school does not know who holds a card (BR-8, BR-11, A7)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: every pickup card naming that child voided together, with the audit entry, or not at all. All of them fail at the gate at once (BR-11). **It stops everybody, not one person** — a bearer card cannot bar a named holder, so the guardian is then issued fresh cards for whoever they choose to give them to. None of the voided cards is ever reactivated (BR-15)."
+      },
+      "operations": [
+        {
+          "name": "pickup.cards.void.all",
+          "method": "POST",
+          "path": "/api/v1/students/{student_id}/pickup-cards/void-all",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "student_id + void_reason + timestamp, since a repeat must not message the gate twice",
+          "purpose": "Void every pickup card naming one child.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.child_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.child_phrase",
+                "onNoMatch": "Refuse. No enrolled student matches within the actor's scope. A guardian may act only for their own children (E8).",
+                "onAmbiguous": "Ask, naming the candidates with their class and section."
+              },
+              "notes": "The child whose cards are all being voided."
+            },
+            {
+              "name": "void_reason",
+              "source": "request",
+              "sourceRef": "$request.void_reason",
+              "required": true,
+              "type": "enum: Reported lost | Not returned | Child withdrawn | Replaced | Withdrawn by the school",
+              "notes": "Why every card is being stopped (BR-11). Child withdrawn is the automatic case (BR-12); withdrawn by the school is the deliberate one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The void.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The child."
+              },
+              {
+                "name": "cards_voided",
+                "type": "object[]",
+                "description": "Each card number now void. On a bearer card the number is the only identifier there is (BR-14)."
+              },
+              {
+                "name": "count",
+                "type": "integer",
+                "description": "How many were in circulation."
+              },
+              {
+                "name": "void_reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "effective",
+                "type": "string",
+                "description": "At once, at the gate (BR-11)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status."
+              },
+              {
+                "name": "gate_notified",
+                "type": "string",
+                "description": "Repeated until acknowledged at the gate."
+              },
+              {
+                "name": "cards_in_circulation",
+                "type": "integer",
+                "description": "Zero. The guardian is issued fresh ones as they choose (A7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_CARDS",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The child has no pickup cards in circulation.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never present this as barring a named person. A bearer card cannot bar one, because the school holds no record of who holds a card (BR-8) — this stops every key to that child, including the ones the guardian is still using.",
+          "derivedFrom": [
+            "BR-8",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report how many cards were in circulation and that all of them are now dead. The guardian's own card goes with the rest, and they will need a fresh one to collect their own child.",
+          "derivedFrom": [
+            "BR-10",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never choose the void reason. Child withdrawn is what a withdrawal triggers automatically (BR-12); withdrawn by the school is a decision somebody took, and the voided-cards report is read to tell them apart.",
+          "derivedFrom": [
+            "BR-11",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain the reissue. Which fresh cards the guardian gets, and how many, is theirs to request against the limit (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say plainly what this does and does not achieve in a custody dispute. It stops every card and lets the school reissue to the parent it recognises — whether that is sufficient for the school's circumstances is an open question the use case raises and does not answer.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A void is never undone. Fresh cards are issued and the old numbers stay dead (BR-15)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is bache ke sare pickup card foran band kar do — adalati hukum hai",
+            "lang": "ur-Latn",
+            "gloss": "void every pickup card for this child at once — there is a court order"
+          },
+          "context": "School Admin, Johar Town branch, three cards in circulation.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.cards.void.all",
+              "inputs": {
+                "student_id": "$request.child_phrase",
+                "void_reason": "Withdrawn by the school",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "All three voided, effective at the gate immediately. Report plainly (PR-1, PR-5) that this stops **everybody** — the school cannot bar one named person, because it does not know who holds which card. The guardian the school recognises is then issued fresh cards, and whether that is sufficient in a custody dispute is a question the use case raises and does not answer."
+        },
+        {
+          "request": {
+            "text": "bache ke walid ko lene se rok do, walida ko ijazat hai",
+            "lang": "ur-Latn",
+            "gloss": "stop the father collecting, the mother is allowed"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.cards.void.all",
+              "inputs": {
+                "student_id": "$request.child_phrase",
+                "void_reason": "$request.void_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The only capability that exists stops every card, not one person (PR-1)."
+            }
+          ],
+          "outcome": "Report first what the system can actually do: void every card for the child and reissue to the mother. It cannot bar the father specifically — a pickup card names the child and carries the child's photograph, and whoever presents one may collect. If he holds a card that is not voided, he can collect; if all are voided, so can nobody until fresh ones are issued."
+        },
+        {
+          "request": {
+            "text": "sare card band kar ke foran naye bana do",
+            "lang": "ur-Latn",
+            "gloss": "void all the cards and make new ones straight away"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.cards.void.all",
+              "inputs": {
+                "student_id": "$request.child_phrase",
+                "void_reason": "$request.void_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The void only. The reissue is not chained (PR-4)."
+            }
+          ],
+          "outcome": "All cards voided. Report that the guardian requests fresh ones against the limit and the school issues them — how many they want, and to whom they give them, is the family's decision and the school records nothing about it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-01-PC-6",
+      "intent": {
+        "name": "pickup.card.limit.set",
+        "summary": "Set how many pickup cards a child may have. School Admin, one step.",
+        "routesHere": [
+          "set the pickup card limit to three",
+          {
+            "text": "pickup card ki hadd teen kar do",
+            "lang": "ur-Latn",
+            "gloss": "set the pickup card limit to three"
+          },
+          {
+            "text": "is bache ke liye hadd barha do",
+            "lang": "ur-Latn",
+            "gloss": "raise the limit for this child"
+          },
+          {
+            "text": "kitne card ho sakte hain, wo tay kar do",
+            "lang": "ur-Latn",
+            "gloss": "decide how many cards are allowed"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ek aur card jari kar do",
+              "lang": "ur-Latn",
+              "gloss": "issue one more card"
+            },
+            "goesTo": "card.issue — UC-13-01-PC-1",
+            "note": "Raising the limit permits a card; producing one is a separate act."
+          },
+          {
+            "request": {
+              "text": "koi hadd na rakho",
+              "lang": "ur-Latn",
+              "gloss": "set no limit at all"
+            },
+            "goesTo": "Not offered as a default.",
+            "note": "Every card in circulation is another key to that child, and a family holding six has six ways to lose one (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "pickup.card.limit.set",
+            "inputs": {
+              "student_id": "$request.child_phrase",
+              "card_limit": "$request.card_limit",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. How many a child may have is the School Admin's decision, because every card in circulation is another key to that child (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. A limit set below the cards already in circulation does not void any — it stops further ones.",
+        "atomicity": "One write: the limit and the audit entry together or not at all. It changes no existing card. Where the new limit is below what the child already holds, no card is voided by it — the existing ones keep working until somebody voids them deliberately (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "pickup.card.limit.set",
+          "method": "PUT",
+          "path": "/api/v1/students/{student_id}/pickup-card-limit",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "student_id, since a child carries one limit",
+          "purpose": "Set the number of pickup cards a child may have.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.child_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.child_phrase",
+                "onNoMatch": "Refuse. No enrolled student matches within the actor's scope. A guardian may act only for their own children (E8).",
+                "onAmbiguous": "Ask, naming the candidates with their class and section."
+              },
+              "notes": "The child the limit applies to."
+            },
+            {
+              "name": "card_limit",
+              "source": "request",
+              "sourceRef": "$request.card_limit",
+              "required": true,
+              "type": "number",
+              "notes": "How many pickup cards this child may have (BR-10). The School Admin's figure — every card is another key, and how many is too many is a judgement about a family rather than a default."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The limit as set.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The child."
+              },
+              {
+                "name": "card_limit",
+                "type": "integer",
+                "description": "As set (BR-10)."
+              },
+              {
+                "name": "cards_in_circulation",
+                "type": "integer",
+                "description": "How many the child already has."
+              },
+              {
+                "name": "over_limit",
+                "type": "boolean",
+                "description": "True where they already hold more than the new limit. None is voided by this — the existing cards keep working (BR-11)."
+              },
+              {
+                "name": "set_by",
+                "type": "string",
+                "description": "The School Admin."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "LIMIT_NOT_POSITIVE",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "The limit is zero or less.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "A child with no cards permitted cannot be collected by anybody the guardian sends."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the limit. Every card in circulation is another key to that child (BR-10), and how many a family may hold is a judgement about that family rather than a number to default.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report where the child already holds more than the new limit. Nothing is voided by lowering it, so the extra cards keep working until somebody voids them (BR-11).",
+          "derivedFrom": [
+            "BR-10",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never lower a limit as a way of stopping collection. Voiding is the control (BR-11); the limit only governs how many further cards are issued.",
+          "derivedFrom": [
+            "BR-10",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report that how many a child may have is not decided anywhere. The use case raises it as an open question, so whatever is set here is the school's own answer rather than a documented rule.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A limit is set again rather than withdrawn. Cards already issued are unaffected by it (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is bache ke liye pickup card ki hadd teen kar do",
+            "lang": "ur-Latn",
+            "gloss": "set this child's pickup card limit to three"
+          },
+          "context": "School Admin, Johar Town branch, child holds two.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.card.limit.set",
+              "inputs": {
+                "student_id": "$request.child_phrase",
+                "card_limit": "3",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The figure is the School Admin's (PR-1)."
+            }
+          ],
+          "outcome": "Set. Report that the child holds two of three, and that how many a child may have is not decided anywhere in the documents (PR-4) — this is the school's own answer."
+        },
+        {
+          "request": {
+            "text": "hadd kam kar ke ek kar do, bohat card ghoom rahe hain",
+            "lang": "ur-Latn",
+            "gloss": "lower the limit to one, too many cards are floating around"
+          },
+          "context": "School Admin, Johar Town branch, child holds four.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.card.limit.set",
+              "inputs": {
+                "student_id": "$request.child_phrase",
+                "card_limit": "1",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Set to one. Report plainly (PR-2) that the four existing cards are **not** voided by this and all four still open the gate — lowering the limit only stops further ones. If the concern is the cards already out, voiding them is the act that stops them (PR-3)."
+        },
+        {
+          "request": {
+            "text": "hadd tum khud munasib rakh do",
+            "lang": "ur-Latn",
+            "gloss": "set whatever limit you think is right"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.card.limit.set",
+              "inputs": {
+                "student_id": "$request.child_phrase",
+                "card_limit": "$request.card_limit — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is set. Ask for the number — each card is another key to the child and the documents do not say what a reasonable count is, so this is a judgement the school makes rather than one a default can carry."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-01-PC-7",
+      "intent": {
+        "name": "pickup.collection.verify",
+        "summary": "Verify a collection where the person has arrived with no card, by a one-time code to the guardian. One step.",
+        "routesHere": [
+          "somebody has come for this child with no card",
+          {
+            "text": "koi bina card ke bache ko lene aaya hai",
+            "lang": "ur-Latn",
+            "gloss": "somebody has come to collect the child without a card"
+          },
+          {
+            "text": "walidain ko code bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the guardian a code"
+          },
+          {
+            "text": "card nahi hai, tasdeeq kar do",
+            "lang": "ur-Latn",
+            "gloss": "there is no card, verify it"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "guard ko bol do, ye jaana pehchana hai",
+              "lang": "ur-Latn",
+              "gloss": "tell the guard, this person is known"
+            },
+            "goesTo": "Not offered.",
+            "note": "Where a person arrives with no card, the release is not left to the guard's judgement. The office verifies against the record and a one-time code goes to the guardian's registered number (BR-13)."
+          },
+          {
+            "request": {
+              "text": "naya card bana do",
+              "lang": "ur-Latn",
+              "gloss": "make a new card"
+            },
+            "goesTo": "pickup.card.request — UC-13-01-PC-3",
+            "note": "A forgotten card is not a lost one. Verification handles today; a further card is requested by the guardian against the limit."
+          },
+          {
+            "request": {
+              "text": "code un ke apne number par bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the code to their own number"
+            },
+            "goesTo": "Not offered.",
+            "note": "The code goes to the guardian's registered number. A code sent to the person collecting is that person authorising themselves (BR-13)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "pickup.collection.verify",
+            "inputs": {
+              "student_id": "$request.child_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The office verifies against the record and a one-time code is sent to the guardian's registered number, which the person supplies (BR-13)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the verification attempt and the code sent, with the audit entry. The code goes to the guardian's registered number and nowhere else (BR-13). The release is then recorded as verified **by code rather than by card**, and the two are distinguishable afterwards — the collections report counts them separately. How long the code is valid is not decided anywhere in this use case."
+      },
+      "operations": [
+        {
+          "name": "pickup.collection.verify",
+          "method": "POST",
+          "path": "/api/v1/pickup/verify-by-code",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "student_id + the current attempt, so a repeat does not send the guardian a second code",
+          "purpose": "Send a one-time code to the guardian to verify a collection made without a card.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.child_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.child_phrase",
+                "onNoMatch": "Refuse. No enrolled student matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their class and section."
+              },
+              "notes": "The child being collected."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The verification.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The child."
+              },
+              {
+                "name": "code_sent_to",
+                "type": "string",
+                "description": "The guardian's registered number. The office does not choose it (BR-13)."
+              },
+              {
+                "name": "code_status",
+                "type": "string",
+                "description": "Sent, or failed."
+              },
+              {
+                "name": "code_validity",
+                "type": "string",
+                "description": "Not decided anywhere in this use case."
+              },
+              {
+                "name": "verified",
+                "type": "boolean",
+                "description": "True once the person supplies the code. Only then may the child be released."
+              },
+              {
+                "name": "release_method",
+                "type": "string",
+                "description": "By code, not by card. The two are distinguishable afterwards (BR-13, BR-14)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_GUARDIAN_NUMBER",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "No registered number is held for the guardian.",
+              "written": "Nothing.",
+              "notWritten": "No code sent, no release.",
+              "note": "There is nowhere to send it, and the release is not left to the office's judgement (BR-13)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never release a child on the office's or the guard's recognition. Where a person arrives with no card the release is not left to anybody's judgement about a face (BR-13).",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never send the code anywhere but the guardian's registered number. A code sent to the person collecting is that person authorising themselves, which is the one thing the check exists to prevent (BR-13).",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never ask who the person at the desk is as though the system could check them. It holds no record of who may hold a card (BR-8, E11) — the guardian's confirmation by code is the whole check.",
+          "derivedFrom": [
+            "BR-8",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report that the release will read as verified by code rather than by card. The two are distinguishable afterwards and the collections report counts them separately (BR-13, BR-14).",
+          "derivedFrom": [
+            "BR-13",
+            "BR-14"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report that the code's validity period is not decided. Nothing in this use case says how long it lasts.",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Say that the collection is still recorded. Verification permits the release; the record of which child and which code is a separate and required act (BR-14, E12).",
+          "derivedFrom": [
+            "BR-14",
+            "E12"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A verification is not undone. It records that a code was sent and whether it was supplied."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "koi bina card ke bache ko lene aaya hai",
+            "lang": "ur-Latn",
+            "gloss": "somebody has come to collect the child without a card"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.collection.verify",
+              "inputs": {
+                "student_id": "$request.child_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "A code goes to the guardian's registered number. Report that the child is released only once the person supplies it, that the release will read as verified by code rather than by card (PR-4), and that the collection is then recorded separately (PR-6)."
+        },
+        {
+          "request": {
+            "text": "ye rozana aate hain, jaana pehchana chehra hai, bache ko de do",
+            "lang": "ur-Latn",
+            "gloss": "they come every day, it is a known face, hand the child over"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.collection.verify",
+              "inputs": {
+                "student_id": "$request.child_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Verification is planned rather than a release on recognition (PR-1)."
+            }
+          ],
+          "outcome": "A code goes to the guardian. Report that the release is not left to anybody's judgement about a familiar face — and that with a bearer card the school does not know who is entitled to hold one, so recognition is not evidence of anything."
+        },
+        {
+          "request": {
+            "text": "walidain se rabta nahi ho raha, code is shakhs ke number par bhej do",
+            "lang": "ur-Latn",
+            "gloss": "we cannot reach the parents, send the code to this person's number"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.collection.verify",
+              "inputs": {
+                "student_id": "$request.child_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The code goes to the registered number. There is no parameter that redirects it (PR-2)."
+            }
+          ],
+          "outcome": "The code goes to the number on the record. Report that it cannot be sent anywhere else — a code sent to the person collecting is that person authorising themselves. If the guardian cannot be reached, the child is not released on a code."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-01-PC-8",
+      "intent": {
+        "name": "pickup.collection.record",
+        "summary": "Record that a child was released — which child, which card number or code, and when. One step, and it cannot record who collected.",
+        "routesHere": [
+          "record that Ayesha was collected at 2pm on card 008841",
+          {
+            "text": "Ayesha ko do baje card 008841 par le gaye, darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "Ayesha was collected at two on card 008841, record it"
+          },
+          {
+            "text": "bache ki rawangi darj karo",
+            "lang": "ur-Latn",
+            "gloss": "record the child's release"
+          },
+          {
+            "text": "kis card par bacha diya gaya, likh do",
+            "lang": "ur-Latn",
+            "gloss": "record which card the child was released on"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "kaun le kar gaya wo bhi likh do",
+              "lang": "ur-Latn",
+              "gloss": "record who took the child as well"
+            },
+            "goesTo": "Not offered.",
+            "note": "The school cannot record who collected, since it does not know. A pickup card is a bearer card and no record exists of who holds one (BR-8, BR-14, E11)."
+          },
+          {
+            "request": {
+              "text": "card nahi tha, tasdeeq karni hai",
+              "lang": "ur-Latn",
+              "gloss": "there was no card, they need verifying"
+            },
+            "goesTo": "pickup.collection.verify — UC-13-01-PC-7",
+            "note": "Verification permits the release; this records that it happened (BR-13, BR-14)."
+          },
+          {
+            "request": {
+              "text": "baad mein darj kar denge",
+              "lang": "ur-Latn",
+              "gloss": "we will record it later"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is no route that releases a child with no record made (E12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "pickup.collection.record",
+            "inputs": {
+              "student_id": "$request.child_phrase",
+              "card_or_code": "$request.card_or_code",
+              "collected_at": "$request.collected_at",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every collection is recorded — which child, which card number or code, and at what time (BR-14)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the collection record and the audit entry together or not at all. **It records which key, not which person.** The school cannot record who collected, since it does not know — but it can record which card was used and when, which is what allows a family to be asked afterwards who they gave it to (BR-14). The guardian is messaged that their child has been collected, with the card number or that it was by code."
+      },
+      "operations": [
+        {
+          "name": "pickup.collection.record",
+          "method": "POST",
+          "path": "/api/v1/pickup/collections",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "student_id + collected_at, since one release happens at one time",
+          "purpose": "Record a child's release against a card number or a verification code.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.child_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.child_phrase",
+                "onNoMatch": "Refuse. No enrolled student matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their class and section."
+              },
+              "notes": "The child released."
+            },
+            {
+              "name": "card_or_code",
+              "source": "request",
+              "sourceRef": "$request.card_or_code",
+              "required": true,
+              "type": "string",
+              "notes": "The card number presented, or the code confirmed where the person came without a card (BR-13, BR-14). On a bearer card the number is the only identifier there is."
+            },
+            {
+              "name": "collected_at",
+              "source": "request",
+              "sourceRef": "$request.collected_at",
+              "required": true,
+              "type": "datetime",
+              "notes": "When the child was released. The actual time, not the time of recording."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The collection record.",
+            "fields": [
+              {
+                "name": "collection_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "Who was released."
+              },
+              {
+                "name": "card_or_code",
+                "type": "string",
+                "description": "Which key was used (BR-14)."
+              },
+              {
+                "name": "release_method",
+                "type": "string",
+                "description": "By card, or by code. The two are distinguishable afterwards (BR-13)."
+              },
+              {
+                "name": "collected_at",
+                "type": "datetime",
+                "description": "When."
+              },
+              {
+                "name": "recorded_by",
+                "type": "string",
+                "description": "Who made the record."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status. The guardian is told their child was collected, at what time, and on which card number or that it was by code."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CARD_VOID",
+              "mapsTo": "E9",
+              "httpStatus": 403,
+              "meaning": "The card number presented is voided.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded and the child is not released.",
+              "note": "It fails rather than being flagged and the child released anyway (BR-11)."
+            },
+            {
+              "code": "NO_HOLDER_FIELD",
+              "mapsTo": "E11",
+              "httpStatus": 400,
+              "meaning": "A holder was supplied with the collection.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "There is no such field. The card is a bearer card and the school holds no record of who presented it (BR-8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never record who collected. The school cannot know — a pickup card is a bearer card and no record exists anywhere of who holds one (BR-8, BR-14, E11). A name captured here would be a guess written into the one record an incident is investigated from.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-14",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never leave a release unrecorded. There is no route that releases a child without one (E12), and the record is what lets a family be asked afterwards who they gave the card to.",
+          "derivedFrom": [
+            "BR-14",
+            "E12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never supply the time. It is when the child actually left, not when somebody got round to typing it.",
+          "derivedFrom": [
+            "BR-14"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never record a release against a voided card. It fails rather than being flagged and the child released anyway (BR-11, E9), and writing it down would not make it authorised.",
+          "derivedFrom": [
+            "BR-11",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report whether it was by card or by code. The two are distinguishable afterwards and the collections report counts them separately (BR-13).",
+          "derivedFrom": [
+            "BR-13",
+            "BR-14"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A collection record is not withdrawn. It states which card or code released a named child at a stated time."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ko do baje card 008841 par le gaye",
+            "lang": "ur-Latn",
+            "gloss": "Ayesha was collected at two on card 008841"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.collection.record",
+              "inputs": {
+                "student_id": "$request.child_phrase → \"Ayesha\"",
+                "card_or_code": "CRD/LHR/26-27/008841",
+                "collected_at": "14:00, as stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The time is when she actually left (PR-3). No holder is recorded (PR-1)."
+            }
+          ],
+          "outcome": "Recorded, and the guardian is told their child was collected at two on that card number. Report that the record answers which key was used, not who used it — which is what lets the family be asked afterwards who they gave it to."
+        },
+        {
+          "request": {
+            "text": "Ayesha ko un ke chacha le gaye, un ka naam bhi likh do",
+            "lang": "ur-Latn",
+            "gloss": "Ayesha's uncle collected her, record his name too"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.collection.record",
+              "inputs": {
+                "student_id": "$request.child_phrase",
+                "card_or_code": "$request.card_or_code",
+                "collected_at": "$request.collected_at",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The name is left out. There is no field for a holder (PR-1)."
+            }
+          ],
+          "outcome": "Recorded against the card number and the time. Report that the school cannot record who collected — the card is a bearer card, nobody checked the uncle's identity against anything, and writing his name in would put an unverified claim into the one record an incident is investigated from. Whether that is sufficient is a question the use case raises and does not answer."
+        },
+        {
+          "request": {
+            "text": "card band tha lekin bacha de diya, ab darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "the card was voided but we released the child, record it now"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "pickup.collection.record",
+              "inputs": {
+                "student_id": "$request.child_phrase",
+                "card_or_code": "the voided card number",
+                "collected_at": "$request.collected_at",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns CARD_VOID (E9)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that a voided card fails rather than being flagged and the child released anyway — and that a child released on one has been released to somebody the school had already decided should not collect them. That is worth raising with the School Admin now rather than recording as routine."
+        }
+      ]
+    }
+  ]
+}

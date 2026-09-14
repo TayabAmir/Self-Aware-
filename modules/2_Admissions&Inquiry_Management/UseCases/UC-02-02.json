@@ -1,0 +1,847 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-02-02",
+  "featureRef": "2.2 Inquiry review by School Admin",
+  "name": "Review a submitted inquiry and forward it to the Principal",
+  "module": "Inquiry / Admission",
+  "alsoAffectsModules": [],
+  "priority": "MVP",
+  "priorityReason": "The gate between the family's work and the Principal's. Nothing reaches approval without passing it.",
+  "goal": {
+    "actor": "School Admin",
+    "capability": "to check a submitted inquiry is complete, consistent and genuine before it goes further",
+    "outcome": "the Principal only ever decides on inquiries that are worth deciding on"
+  },
+  "primaryActor": "School Admin",
+  "secondaryActors": [
+    {
+      "actor": "Staff / Accounts",
+      "involvement": "Completes or corrects the inquiry where the admin asks for more information."
+    },
+    {
+      "actor": "Prospective family",
+      "involvement": "Is contacted where something is missing."
+    },
+    {
+      "actor": "Principal / Director",
+      "involvement": "Receives the forwarded inquiry for approval."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "An inquiry is submitted through the public form and enters the Pending Inquiries List.",
+        "source": "UC-02-01"
+      },
+      {
+        "type": "scheduled",
+        "description": "An inquiry unreviewed past its target is flagged on the list and escalated (BR-8).",
+        "source": "Admission scheduler"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An authenticated session exists.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "An inquiry exists at status Pending review or Under review.",
+      "establishedBy": {
+        "id": "UC-02-01",
+        "name": "Online inquiry form submission",
+        "link": "UC-02-01.json"
+      }
+    },
+    {
+      "condition": "The acting user is School Admin for the inquiry's branch.",
+      "establishedBy": {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json"
+      }
+    }
+  ],
+  "postConditions": [
+    "The inquiry carries a recorded review: who reviewed it, when, and what they decided.",
+    "A forwarded inquiry is visible to the Principal for approval and is out of the admin's pending queue.",
+    "A returned inquiry stays pending, with the missing items named, so it is not lost between the two people.",
+    "Any duplicate or prior-record match found at review is recorded against the inquiry, so the Principal sees it before deciding.",
+    "No admission form, invite or student record exists yet. Review moves the inquiry along; it admits nobody."
+  ],
+  "screens": [
+    {
+      "name": "Pending Inquiries List",
+      "route": "/admissions/inquiries",
+      "sidebar": "Inquiry / Admission",
+      "columns": [
+        "Reference",
+        "Child",
+        "Guardian",
+        "Contact",
+        "Target class",
+        "Source",
+        "Submitted on",
+        "Days waiting",
+        "Flags",
+        "Status"
+      ],
+      "defaultSort": "Submitted on, oldest first",
+      "filters": [
+        "Status",
+        "Source",
+        "Target class",
+        "Flagged only",
+        "Overdue only"
+      ],
+      "actions": [
+        "Open",
+        "Review"
+      ],
+      "visibleTo": [
+        "School Admin",
+        "Staff",
+        "Accounts"
+      ]
+    },
+    {
+      "name": "Inquiry review",
+      "route": "/admissions/inquiries/{id}/review",
+      "sidebar": "Inquiry / Admission",
+      "columns": [
+        "Field",
+        "Value",
+        "Flag"
+      ],
+      "actions": [
+        "Forward to Principal",
+        "Return to Staff",
+        "Contact family",
+        "Correct details",
+        "Save note"
+      ],
+      "visibleTo": [
+        "School Admin"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Review outcome",
+      "type": "enum",
+      "required": "yes",
+      "validation": "What the admin decided.",
+      "example": "Forward to Principal",
+      "enumValues": [
+        "Forward to Principal",
+        "Return to Staff",
+        "Contact family"
+      ]
+    },
+    {
+      "name": "Missing items",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 500 characters. What has to be supplied before this can move on (BR-4).",
+      "example": "Date of birth does not match the target class; guardian relationship not stated",
+      "requiredWhen": "Outcome is Return to Staff or Contact family"
+    },
+    {
+      "name": "Review note",
+      "type": "text",
+      "required": "no",
+      "validation": "Maximum 500 characters. Anything the Principal should know before deciding.",
+      "example": "Sibling already in Grade 5. Family known to the school."
+    },
+    {
+      "name": "Corrected fields",
+      "type": "object",
+      "required": "no",
+      "validation": "Fields the admin corrected during review, held with their previous values (BR-5).",
+      "example": "Guardian relationship: blank → Mother"
+    },
+    {
+      "name": "Duplicate match",
+      "type": "generated",
+      "required": "no",
+      "validation": "Any existing inquiry, applicant or student matching this child (BR-3).",
+      "example": "Matches student STD-2022-0451, left 2023-24"
+    },
+    {
+      "name": "Reviewed by",
+      "type": "generated",
+      "required": "no",
+      "validation": "The acting School Admin.",
+      "example": "Sana Iqbal"
+    },
+    {
+      "name": "Reviewed on",
+      "type": "generated",
+      "required": "no",
+      "example": "04-09-2026 10:22"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Inquiry",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Read for the details; updated with the review, the outcome and any corrections."
+    },
+    {
+      "entity": "Inquiry review",
+      "operations": [
+        "create"
+      ],
+      "notes": "One row per review action, holding the outcome, the reviewer and the note. Append only."
+    },
+    {
+      "entity": "Student",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read to check the child is not already on file, and to match a re-admission's previous student ID."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "The review and every correction, with previous and new values."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "edit",
+        "approve"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "The only role that may forward an inquiry to the Principal or return it to Staff."
+    },
+    {
+      "actor": "Staff, Accounts",
+      "actions": [
+        "view",
+        "edit"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Complete or correct an inquiry returned to them. Cannot forward it."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches.",
+      "notes": "Sees forwarded inquiries; does not review at this stage."
+    },
+    {
+      "actor": "Coordinator",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Inquiries for classes in their remit."
+    },
+    {
+      "actor": "Teacher, Student, Parent / Guardian",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "Filling the form is the family's work and checking it is the school's. The two are separate acts by separate people, and the review is recorded even when nothing needed changing."
+    },
+    {
+      "id": "BR-2",
+      "rule": "An inquiry may only be forwarded once every required field is present and consistent. An incomplete inquiry reaching the Principal wastes the one decision that matters."
+    },
+    {
+      "id": "BR-3",
+      "rule": "The reviewer checks the child is not already on file — as a current student, a prior student, or another open inquiry. Any match is recorded against the inquiry so the Principal sees it before deciding."
+    },
+    {
+      "id": "BR-4",
+      "rule": "Returning to Staff, or contacting the family, requires the missing items to be named. 'Incomplete' with no detail sends the inquiry round in a circle."
+    },
+    {
+      "id": "BR-5",
+      "rule": "The admin may correct obvious errors during review. Every correction keeps its previous value in the audit trail, because the family entered something and it was changed."
+    },
+    {
+      "id": "BR-6",
+      "rule": "A returned inquiry stays pending and stays in the queue. It is never closed by being returned, because a family waiting on the school is not a closed inquiry."
+    },
+    {
+      "id": "BR-7",
+      "rule": "Where the inquiry is marked Re-admission, the reviewer confirms the previous student ID against the former student record before forwarding. An unmatched ID is resolved here, not later."
+    },
+    {
+      "id": "BR-8",
+      "rule": "An inquiry unreviewed past the configured target is flagged on the list and escalated, so a single absent reviewer does not stall admissions."
+    },
+    {
+      "id": "BR-9",
+      "rule": "Review does not decide admission. It decides only whether the Principal should be asked."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Inquiry",
+      "states": [
+        "Pending review",
+        "Under review",
+        "Returned for information",
+        "Forwarded to Principal"
+      ],
+      "initial": "Pending review",
+      "terminal": [],
+      "transitions": [
+        {
+          "from": "Pending review",
+          "to": "Under review",
+          "triggeredBy": "School Admin",
+          "condition": "The admin opens it for review."
+        },
+        {
+          "from": "Under review",
+          "to": "Returned for information",
+          "triggeredBy": "School Admin",
+          "condition": "Something is missing. The missing items are named (BR-4)."
+        },
+        {
+          "from": "Returned for information",
+          "to": "Under review",
+          "triggeredBy": "Staff / Accounts",
+          "condition": "The missing items are supplied."
+        },
+        {
+          "from": "Under review",
+          "to": "Forwarded to Principal",
+          "triggeredBy": "School Admin",
+          "condition": "The inquiry is complete and consistent (BR-2)."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "School Admin",
+      "navigation": "Login → Inquiry / Admission → Pending Inquiries List",
+      "userAction": "Opens the Pending Inquiries List and selects an inquiry.",
+      "function": "openInquiryForReview(inquiryId)",
+      "systemResponse": "Opens the inquiry, sets its status to Under review and records the reviewer.",
+      "rules": []
+    },
+    {
+      "step": 2,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "checkExistingRecords(childName, dateOfBirth, contactNumber, previousStudentId)",
+      "systemResponse": "Checks the child against current students, former students and other open inquiries, and flags any match on the review screen.",
+      "rules": [
+        "BR-3",
+        "BR-7"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Field list",
+      "userAction": "Checks each field for completeness and consistency, and corrects obvious errors.",
+      "function": "correctInquiryField(inquiryId, field, newValue)",
+      "systemResponse": "Saves each correction with its previous value.",
+      "rules": [
+        "BR-5"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Forward to Principal",
+      "userAction": "Forwards the inquiry where it is in order.",
+      "function": "forwardInquiryToPrincipal(inquiryId, reviewNote)",
+      "systemResponse": "Checks every required field is present, sets status Forwarded to Principal, records the review and notifies the Principal.",
+      "rules": [
+        "BR-1",
+        "BR-2",
+        "BR-9"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "writeInquiryReview(inquiryId, outcome, reviewer, note)",
+      "systemResponse": "Records the review, the reviewer and the date against the inquiry, and writes the audit entry.",
+      "rules": [
+        "BR-1"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 4,
+      "condition": "Something is missing and Staff can supply it",
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Return to Staff",
+      "behaviour": "The admin names the missing items and returns the inquiry. It stays pending and stays in the queue; Staff are notified and complete it, after which review resumes (BR-4, BR-6).",
+      "function": "returnInquiryToStaff(inquiryId, missingItems)",
+      "resumesAtStep": 1
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 4,
+      "condition": "Only the family can supply what is missing",
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Contact family",
+      "behaviour": "The family is messaged through the enquiry messaging path. The inquiry stays pending and the contact is logged against it.",
+      "function": "contactFamilyForInformation(inquiryId, missingItems)",
+      "resumesAtStep": 1
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 2,
+      "condition": "The child is already on file as a current student",
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Duplicate flag",
+      "behaviour": "The match is recorded on the inquiry with the existing record named. The admin resolves it before forwarding; the Principal is not asked to untangle a duplicate.",
+      "function": "flagDuplicateMatch(inquiryId, matchedRecordId)",
+      "resumesAtStep": 3
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 2,
+      "condition": "The inquiry is marked Re-admission and the previous student ID matches",
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Re-admission section",
+      "behaviour": "The former student record is linked to the inquiry, so the later steps know the school already holds this family's information (BR-7).",
+      "function": "linkFormerStudent(inquiryId, studentId)",
+      "resumesAtStep": 3
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 2,
+      "condition": "The inquiry is marked Re-admission and the previous student ID matches nothing",
+      "actor": "School Admin",
+      "navigation": "Inquiry review → Contact family",
+      "behaviour": "The admin resolves it here rather than forwarding an unverified re-admission — by correcting the ID, or by treating the inquiry as a new admission.",
+      "function": "resolveReadmissionMismatch(inquiryId, resolution)",
+      "resumesAtStep": 3
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 4,
+      "condition": "A required field is still empty",
+      "systemResponse": "The inquiry is not forwarded.",
+      "messageShown": "This inquiry cannot be forwarded until the guardian relationship is supplied.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E2",
+      "atStep": 4,
+      "condition": "Return or Contact is chosen with no missing items named",
+      "systemResponse": "The outcome is not recorded.",
+      "messageShown": "Name what is missing. The person receiving this needs to know what to supply.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E3",
+      "atStep": 4,
+      "condition": "The inquiry has already been forwarded",
+      "systemResponse": "No second forward is recorded.",
+      "messageShown": "This inquiry was forwarded to the Principal on 03-09-2026.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 4,
+      "condition": "A Staff user attempts to forward",
+      "systemResponse": "The action is refused.",
+      "messageShown": "Only a School Admin can forward an inquiry to the Principal.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 2,
+      "condition": "The duplicate check cannot run",
+      "systemResponse": "Review continues without it, and the inquiry is marked as unchecked so the Principal knows.",
+      "messageShown": "The duplicate check could not run. This inquiry is marked unverified.",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E6",
+      "atStep": 1,
+      "condition": "The inquiry has been closed as declined since it was listed",
+      "systemResponse": "It does not open for review.",
+      "messageShown": "This inquiry was closed on 01-09-2026. Re-open it before reviewing.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Inquiry forwarded",
+      "recipient": "Principal / Director",
+      "channels": [
+        "inApp",
+        "push"
+      ],
+      "template": "INQUIRY_AWAITING_APPROVAL",
+      "contents": [
+        "Reference",
+        "Child name",
+        "Target class",
+        "Reviewer",
+        "Any duplicate flag"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Inquiry returned to Staff",
+      "recipient": "Staff who recorded it, or the branch Staff queue",
+      "channels": [
+        "inApp"
+      ],
+      "template": "INQUIRY_RETURNED",
+      "contents": [
+        "Reference",
+        "Missing items",
+        "Returned by"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Unreviewed past target",
+      "recipient": "School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "INQUIRY_REVIEW_OVERDUE",
+      "contents": [
+        "Reference",
+        "Days waiting"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "A forwarded inquiry enters the Principal's approval queue.",
+      "affects": {
+        "id": "UC-02-03",
+        "name": "Inquiry approval and admission-form invite",
+        "link": "UC-02-03.json"
+      }
+    },
+    {
+      "effect": "Contacting the family is logged as a follow-up contact on the inquiry.",
+      "affects": {
+        "id": "UC-02-10",
+        "name": "Inquiry and lead tracking",
+        "link": "UC-02-10.json"
+      }
+    },
+    {
+      "effect": "A confirmed re-admission match links the inquiry to the former student record.",
+      "affects": {
+        "id": "UC-02-09",
+        "name": "Re-admission handling",
+        "link": "UC-02-09.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Inquiries awaiting review",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Reference",
+        "Child",
+        "Target class",
+        "Source",
+        "Submitted on",
+        "Days waiting",
+        "Flags",
+        "Status"
+      ],
+      "grouping": "By status",
+      "totals": "Count per status, and count past the review target"
+    },
+    {
+      "name": "Review throughput",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Reviewer",
+        "Reviewed",
+        "Forwarded",
+        "Returned",
+        "Average days to review"
+      ],
+      "grouping": "By reviewer",
+      "totals": "School-wide average days to review"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "An inquiry missing the guardian relationship",
+      "when": "the admin attempts to forward it",
+      "then": "it is not forwarded and the missing field is named"
+    },
+    {
+      "id": "AC-2",
+      "given": "An inquiry for a child already enrolled as a current student",
+      "when": "the admin opens it for review",
+      "then": "the match is shown on the review screen with the existing record named, before any decision is taken"
+    },
+    {
+      "id": "AC-3",
+      "given": "An inquiry the admin returns to Staff",
+      "when": "the return is saved",
+      "then": "the missing items are recorded, Staff are notified, and the inquiry is still in the pending queue rather than closed"
+    },
+    {
+      "id": "AC-4",
+      "given": "An inquiry marked Re-admission whose previous student ID matches no record",
+      "when": "the admin attempts to forward it",
+      "then": "it is resolved at review rather than forwarded unverified"
+    },
+    {
+      "id": "AC-5",
+      "given": "An admin correcting a blank guardian relationship to Mother",
+      "when": "the correction is saved",
+      "then": "the previous blank value is in the audit trail alongside the new one"
+    },
+    {
+      "id": "AC-6",
+      "given": "A Staff user viewing a reviewed inquiry",
+      "when": "they attempt to forward it",
+      "then": "the action is refused and School Admin is named as the role that can"
+    },
+    {
+      "id": "AC-7",
+      "given": "A forwarded inquiry",
+      "when": "the system is inspected",
+      "then": "no admission-form invite, admission form or student record exists yet"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Decides who may review, return and forward."
+      },
+      {
+        "id": "UC-02-01",
+        "name": "Online inquiry form submission",
+        "link": "UC-02-01.json",
+        "why": "Supplies the inquiry being reviewed."
+      },
+      {
+        "id": "UC-03-01",
+        "name": "Central student database and profile",
+        "link": "UC-03-01.json",
+        "why": "Read to check the child is not already on file."
+      },
+      {
+        "id": "UC-02-12",
+        "name": "Messaging an enquiring family",
+        "link": "UC-02-12.json",
+        "why": "Delivers the request for missing information.",
+        "optional": true
+      }
+    ],
+    "masterData": [
+      "Review target in working days",
+      "Classes with age ranges"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Approving or rejecting the inquiry, which is the Principal's decision",
+      "handledBy": {
+        "id": "UC-02-03",
+        "name": "Inquiry approval and admission-form invite",
+        "link": "UC-02-03.json"
+      }
+    },
+    {
+      "item": "Sending the admission-form invite",
+      "handledBy": {
+        "id": "UC-02-03",
+        "name": "Inquiry approval and admission-form invite",
+        "link": "UC-02-03.json"
+      }
+    },
+    {
+      "item": "Messaging the family",
+      "handledBy": {
+        "id": "UC-02-12",
+        "name": "Messaging an enquiring family",
+        "link": "UC-02-12.json"
+      }
+    },
+    {
+      "item": "Closing the inquiry as declined",
+      "handledBy": {
+        "id": "UC-02-11",
+        "name": "Marking a lead as declined, and re-opening it",
+        "link": "UC-02-11.json"
+      }
+    },
+    {
+      "item": "The re-admission path itself",
+      "handledBy": {
+        "id": "UC-02-09",
+        "name": "Re-admission handling",
+        "link": "UC-02-09.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Duplicate check latency",
+        "requirement": "The check against current students, former students and open inquiries returns within 2 seconds, so it does not delay the reviewer."
+      },
+      {
+        "aspect": "Correction integrity",
+        "requirement": "Every corrected field retains its previous value. A family's entry is never silently overwritten."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "What is the review target in working days before escalation?",
+      "assumption": "2 working days. Not confirmed.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "May the School Admin change the target class during review, or only the Principal at approval?",
+      "assumption": "The Principal, at approval.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Who is notified when an inquiry is returned — the individual who recorded it, or the whole Staff queue?",
+      "assumption": "The individual where there is one, otherwise the branch queue.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "Should a duplicate match block forwarding outright, or only be flagged?",
+      "assumption": "Flagged, and resolved by the admin before forwarding (BR-3).",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

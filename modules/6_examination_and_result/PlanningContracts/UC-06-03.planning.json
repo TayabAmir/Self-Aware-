@@ -1,0 +1,1429 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-06-03",
+    "name": "Turn marks into grades automatically, and control when the result becomes visible to families",
+    "module": "Examination",
+    "file": "../UseCases/UC-06-03.json",
+    "featureRef": "6.3 Gradebook and automatic grade calculation"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-06-03-PC-1",
+      "intent": {
+        "name": "grade.bands.define",
+        "summary": "Define the grade bands applied to one subject in this exam. One step, and the bands must cover nought to a hundred without overlapping.",
+        "routesHere": [
+          "set the grade bands for maths — A is 80 to 100, B is 70 to 79",
+          {
+            "text": "maths ke grade bands set kar do",
+            "lang": "ur-Latn",
+            "gloss": "set the grade bands for maths"
+          },
+          {
+            "text": "A grade 80 se 100, B 70 se 79 rakh do",
+            "lang": "ur-Latn",
+            "gloss": "make A 80 to 100 and B 70 to 79"
+          },
+          {
+            "text": "pichle imtihan wale bands isi par laga do",
+            "lang": "ur-Latn",
+            "gloss": "apply the same bands as the last exam"
+          },
+          "define the bands for my subject in the first term exam"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "grade khud badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the grade by hand"
+            },
+            "goesTo": "Not offered.",
+            "note": "A grade is never adjusted by hand. It follows from the mark by the bands, so the same marks always produce the same grade (BR-3, BR-10)."
+          },
+          {
+            "request": {
+              "text": "natija shaya kar do",
+              "lang": "ur-Latn",
+              "gloss": "release the result"
+            },
+            "goesTo": "exam.results.approve — UC-06-03-PC-2",
+            "note": "Bands turn marks into grades. Whether a family sees the result is the Coordinator's separate decision (BR-6)."
+          },
+          {
+            "request": {
+              "text": "pass mark badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the pass mark"
+            },
+            "goesTo": "Not offered.",
+            "note": "The passing marks are fixed when the exam is created (UC-06-01 BR-3). Bands are about grades, not about passing."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "grade.bands.define",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "subject_id": "$request.subject_phrase",
+              "bands": "$request.bands",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The teacher defines the bands applied to their own subject in this exam (BR-1) — bands set centrally and applied to a practical paper and a theory paper alike measure neither well."
+          }
+        ],
+        "onFailure": "Stop and report. Overlaps and gaps are enforced by the API and each error names the percentages at fault.",
+        "atomicity": "One write: the bands and the audit entry together or not at all. The bands used are recorded with the result (BR-11), so a grade awarded this term stays explainable after the bands have changed."
+      },
+      "operations": [
+        {
+          "name": "grade.bands.define",
+          "method": "PUT",
+          "path": "/api/v1/exams/{exam_id}/subjects/{subject_id}/grade-bands",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + subject_id, since a subject carries one set of bands per exam",
+          "purpose": "Define the grade bands for one subject in this exam.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not in this exam, or is not assigned to the actor.",
+                "onAmbiguous": "Ask, naming the subjects the actor may define bands for."
+              },
+              "notes": "The subject, which the acting teacher teaches (BR-1)."
+            },
+            {
+              "name": "bands",
+              "source": "request",
+              "sourceRef": "$request.bands",
+              "required": true,
+              "type": "object[]",
+              "notes": "Each band: its grade, its lower percentage, its upper percentage and what it means. Together they must cover nought to a hundred with no overlap and no gap (BR-2). Every boundary is the teacher's — a planner that filled in a customary scale has set what an A means at this school."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The bands as defined.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "subject_id",
+                "type": "string",
+                "description": "The subject."
+              },
+              {
+                "name": "bands",
+                "type": "object[]",
+                "description": "Each grade with its range and description, as recorded."
+              },
+              {
+                "name": "students_regraded",
+                "type": "integer",
+                "description": "Students whose grade changed because the bands changed. Grades are recalculated by the same bands, never adjusted by hand (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "BANDS_OVERLAP",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "Two bands overlap.",
+              "written": "Nothing.",
+              "notWritten": "No bands saved.",
+              "note": "The message names the overlapping ranges. A percentage that falls in two bands has no grade (BR-2)."
+            },
+            {
+              "code": "BANDS_GAP",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The bands leave a gap between nought and a hundred.",
+              "written": "Nothing.",
+              "notWritten": "No bands saved.",
+              "note": "The message names the uncovered range. A percentage that falls in none has no grade (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never invent a band or a boundary. What an A means at this school is the teacher's decision for their own subject (BR-1), and a customary 80-to-100 supplied by a planner grades every child in the class.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never close a gap or trim an overlap on the actor's behalf. E1 and E2 are BR-2 working — report the exact percentages at fault and let the teacher say what they meant.",
+          "derivedFrom": [
+            "BR-2",
+            "E1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never plan a grade change by hand. There is no such control (E8): a grade always follows from a mark through the bands (BR-3, BR-10).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-10",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Copy bands only where the actor named the exam to copy from. \"The same as last time\" is a lookup somebody has to confirm, not an assumption (A5).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report how many students' grades changed where bands are redefined after marks exist. The recalculation is automatic (BR-10), and a teacher adjusting a boundary by a point should see how many children it moved.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Bands are redefined rather than withdrawn, and the recalculation follows. The bands used stay recorded with each result so an earlier grade remains explainable (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "maths ke bands set kar do — A 80 se 100, B 70 se 79, C 60 se 69, D 50 se 59, F 0 se 49",
+            "lang": "ur-Latn",
+            "gloss": "set the maths bands — A 80 to 100, B 70 to 79, C 60 to 69, D 50 to 59, F 0 to 49"
+          },
+          "context": "Teacher, Johar Town branch, maths assigned to them.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "grade.bands.define",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase → \"maths\"",
+                "bands": "the five bands as stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Every boundary is the teacher's (PR-1)."
+            }
+          ],
+          "outcome": "The bands are recorded against this exam's maths results. They are kept with each result, so a grade awarded now stays explainable after the bands change (BR-11)."
+        },
+        {
+          "request": {
+            "text": "A 80 se 100 aur B 70 se 80 kar do",
+            "lang": "ur-Latn",
+            "gloss": "make A 80 to 100 and B 70 to 80"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "grade.bands.define",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase",
+                "bands": "as stated, with 80 in both A and B",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as stated. The API returns BANDS_OVERLAP (E1) — the overlap is not trimmed on the teacher's behalf (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is saved. Report that 80 falls in both bands and ask which it belongs to — a percentage in two bands has no grade."
+        },
+        {
+          "request": {
+            "text": "pichle term wale bands isi imtihan par laga do",
+            "lang": "ur-Latn",
+            "gloss": "apply last term's bands to this exam"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "grade.bands.define",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase",
+                "bands": "$request.bands — read from the exam the teacher named",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The source exam is confirmed with the teacher before the bands are copied (PR-4)."
+            }
+          ],
+          "outcome": "The bands are copied and recorded against this exam's results in their own right (A5). Report them back in full — they are being applied to a different paper, and a boundary that suited last term's may not suit this one."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-03-PC-2",
+      "intent": {
+        "name": "exam.results.approve",
+        "summary": "Approve the results and release them, which is the moment families see a grade. Coordinator only, one step.",
+        "routesHere": [
+          "approve and release the class 8 results",
+          {
+            "text": "natija manzoor kar ke shaya kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the result and release it"
+          },
+          {
+            "text": "class 8 ka natija jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "release class 8's result"
+          },
+          {
+            "text": "walidain ko natija dikha do",
+            "lang": "ur-Latn",
+            "gloss": "let the parents see the result"
+          },
+          "release the first term results for this class"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "natija manzoor nahi, wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "the results are not accepted, send them back"
+            },
+            "goesTo": "exam.results.return — UC-06-03-PC-3"
+          },
+          {
+            "request": {
+              "text": "natija pakka kar do",
+              "lang": "ur-Latn",
+              "gloss": "lock the result"
+            },
+            "goesTo": "exam.results.lock — UC-06-03-PC-4",
+            "note": "Releasing makes the result visible; locking freezes it after the correction period (BR-9)."
+          },
+          {
+            "request": {
+              "text": "natija hisab karo",
+              "lang": "ur-Latn",
+              "gloss": "calculate the result"
+            },
+            "goesTo": "Not offered.",
+            "note": "The total, the percentage and the grade are calculated on upload (BR-3). There is nothing to ask for."
+          },
+          {
+            "request": {
+              "text": "kisi ek bache ka natija jari karo",
+              "lang": "ur-Latn",
+              "gloss": "release one student's result"
+            },
+            "goesTo": "Not offered.",
+            "note": "A release covers the class. Each student and guardian then sees their own grade alone (BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.results.approve",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "class_id": "$request.class_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches every family in the class. Nothing is visible to students or guardians before this, and a grade seen before the school agreed it cannot be unseen (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. An unclassified absence blocks that student's calculation and arrives as an error naming them; a Teacher attempting the release is refused.",
+        "atomicity": "One write, atomic in itself: the approval and the release together or not at all. Each student and guardian then sees their own grade alone (BR-7). Students with incomplete results are released too — an incomplete result stays incomplete until a makeup is marked, and saying so is more honest than hiding it (BR-5, E9)."
+      },
+      "operations": [
+        {
+          "name": "exam.results.approve",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/classes/{class_id}/approve-release",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + class_id, since a class is released once and a repeat must not notify every family twice",
+          "purpose": "Approve the calculated results for a class and release them to students and guardians.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class whose results these are."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The release and what it made visible.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "class_id",
+                "type": "string",
+                "description": "The class."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Released."
+              },
+              {
+                "name": "students_released",
+                "type": "integer",
+                "description": "Results now visible to their own student and guardian (BR-7)."
+              },
+              {
+                "name": "students_incomplete",
+                "type": "integer",
+                "description": "Released as incomplete pending a makeup (BR-5, E9)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The Coordinator."
+              },
+              {
+                "name": "notification_status",
+                "type": "string",
+                "description": "Delivery status per the Messaging module policy."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ABSENCE_UNCLASSIFIED",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "An absence in a subject has not been classified as excused or unexcused.",
+              "written": "Nothing.",
+              "notWritten": "Nothing released.",
+              "note": "The message names the students. How the subject is treated is not yet decided, so their result cannot be calculated (BR-4)."
+            },
+            {
+              "code": "NOT_COORDINATOR",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "A Teacher attempted the release.",
+              "written": "Nothing.",
+              "notWritten": "Nothing released.",
+              "note": "Nothing is visible to students or guardians before the Coordinator approves (BR-6)."
+            },
+            {
+              "code": "NO_BANDS",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "A subject in the exam has no grade bands defined.",
+              "written": "Nothing.",
+              "notWritten": "Nothing released.",
+              "note": "No grade can be calculated for it (E3). The message names the subjects."
+            },
+            {
+              "code": "RESULTS_LOCKED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The results are locked.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never release before the Coordinator has said so. A grade seen before the school agreed it cannot be unseen (BR-6), and this single call puts a number in front of every family in the class.",
+          "derivedFrom": [
+            "BR-6",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never classify an absence to clear the way. E4 names students whose absence has not been decided as excused or unexcused, and that decision changes their percentage (BR-4) — it belongs to whoever knows why the child was away.",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the incomplete results plainly. An incomplete result stays incomplete until a makeup is marked, and a percentage over fewer subjects is not comparable with a full one (BR-5).",
+          "derivedFrom": [
+            "BR-5",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never plan a grade calculation. The total, the percentage and the grade are calculated on upload, so the same marks always produce the same grade (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never release a single student's result. The release covers the class, and each family then sees their own child's grade alone (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A release is not withdrawn. A result corrected afterwards is recalculated by the same bands and republished with the change visible, rather than quietly replaced (BR-12). The controller must not attempt a compensating call — families have already seen it."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "class 8 ka natija manzoor kar ke jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve and release class 8's result"
+          },
+          "context": "Coordinator, Johar Town branch, with every absence classified.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.approve",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase → \"class 8\"",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Released. Report how many results are incomplete pending a makeup (PR-3) — those families will see a percentage calculated over fewer subjects, and it says so."
+        },
+        {
+          "request": {
+            "text": "natija jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "release the result"
+          },
+          "context": "Coordinator, Johar Town branch, where two students' absences are unclassified.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.approve",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns ABSENCE_UNCLASSIFIED (E4)."
+            }
+          ],
+          "outcome": "Nothing is released. Name the two students (PR-2) and report that each absence has to be classified first — an excused one is left out of the percentage, an unexcused one counts as zero, and that is a decision about a child, not a blockage to clear."
+        },
+        {
+          "request": {
+            "text": "apni class ka natija jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "release my class's result"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.approve",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_COORDINATOR (E5)."
+            }
+          ],
+          "outcome": "Nothing is released. Report that the Coordinator approves the release — a grade seen before the school agreed it cannot be unseen."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-03-PC-3",
+      "intent": {
+        "name": "exam.results.return",
+        "summary": "Return calculated results to the teacher with the reason, before anything is public. Coordinator only, one step.",
+        "routesHere": [
+          "return these results — the science marks look wrong",
+          {
+            "text": "natija wapas bhej do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "send the result back, with the reason"
+          },
+          {
+            "text": "ye natija theek nahi lag raha, teacher ko wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "this result does not look right, return it to the teacher"
+          },
+          {
+            "text": "dobara dekhne ke liye wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "return it to be looked at again"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "natija jari kar do",
+              "lang": "ur-Latn",
+              "gloss": "release the result"
+            },
+            "goesTo": "exam.results.approve — UC-06-03-PC-2"
+          },
+          {
+            "request": {
+              "text": "number khud theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the marks yourself"
+            },
+            "goesTo": "exam.mark.correct — UC-06-02-PC-4",
+            "note": "The Coordinator may change a submitted mark directly with a reason (UC-06-02 BR-10). Returning asks the teacher to look again."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.results.return",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "class_id": "$request.class_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing has been public, so nothing has to be retracted (A3)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. It goes back to the teacher, who corrects and recalculates. No student or guardian is told anything, because nothing was ever visible to them (BR-6)."
+      },
+      "operations": [
+        {
+          "name": "exam.results.return",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/classes/{class_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + class_id, since results sit in one place at a time",
+          "purpose": "Return the calculated results to the teacher with the reason.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class whose results these are."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. What the teacher should look at again. They act on it, so it says what is wrong."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It sits with the teacher again."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The Coordinator."
+              },
+              {
+                "name": "teacher_notified",
+                "type": "string",
+                "description": "Delivery status."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The results are released, locked or not yet calculated.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Report the state they are actually in. A released result is corrected and republished, not returned (BR-12)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. The teacher acts on it, and a reason a planner wrote sends somebody back through forty marks on a guess.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never notify students or families of a return. Nothing was visible to them, and telling them would be the first they had heard of a result (BR-6).",
+          "derivedFrom": [
+            "BR-6",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never return a released result. Once families have seen it, a correction is recalculated and republished with the change visible instead (BR-12).",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. The teacher corrects, the result recalculates, and it comes back for approval."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye natija wapas bhej do — science ke number ghalat lag rahe hain",
+            "lang": "ur-Latn",
+            "gloss": "return this result — the science marks look wrong"
+          },
+          "context": "Coordinator, Johar Town branch, on results awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.return",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "reason": "The science marks look wrong across the class. Please check them against the scripts.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Coordinator's own (PR-1)."
+            }
+          ],
+          "outcome": "Returned to the teacher. Nothing was public, so nothing has to be retracted and no family is told anything (PR-2)."
+        },
+        {
+          "request": {
+            "text": "natija wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return the result"
+          },
+          "context": "Coordinator, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.return",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The reason has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the teacher should look at — a result returned with no reason sends them back through the whole class."
+        },
+        {
+          "request": {
+            "text": "jo natija jari ho chuka hai wo wapas le lo",
+            "lang": "ur-Latn",
+            "gloss": "take back the result that has already been released"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.return",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. A released result is not returned (PR-3)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that families have seen it: correcting the mark recalculates the grade by the same bands and republishes it with the change visible, which is what they are owed rather than a result that quietly disappears."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-03-PC-4",
+      "intent": {
+        "name": "exam.results.lock",
+        "summary": "Lock the released results once the correction period is over. School Admin only, one step.",
+        "routesHere": [
+          "lock the class 8 results",
+          {
+            "text": "natija pakka kar do",
+            "lang": "ur-Latn",
+            "gloss": "lock the result"
+          },
+          {
+            "text": "tasheeh ka waqt khatam, natija band kar do",
+            "lang": "ur-Latn",
+            "gloss": "the correction period is over, close the result"
+          },
+          {
+            "text": "ab natija tabdeel nahi hona chahiye",
+            "lang": "ur-Latn",
+            "gloss": "the result should not change now"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "number pakke kar do",
+              "lang": "ur-Latn",
+              "gloss": "lock the marks"
+            },
+            "goesTo": "exam.marks.lock — UC-06-02-PC-5",
+            "note": "The two locks do different things. The marks lock freezes the raw number; this one freezes what was published (BR-8)."
+          },
+          {
+            "request": {
+              "text": "pakka natija ghalat hai",
+              "lang": "ur-Latn",
+              "gloss": "the locked result is wrong"
+            },
+            "goesTo": "exam.results.reopen — UC-06-03-PC-5"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.results.lock",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "class_id": "$request.class_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. After the correction period the School Admin locks the result, and a locked result cannot be changed (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the lock and the audit entry together or not at all. It freezes what was published (BR-8). Nothing changes for a family — they already see the result; this closes the window in which it could change."
+      },
+      "operations": [
+        {
+          "name": "exam.results.lock",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/classes/{class_id}/lock-results",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + class_id, since results are locked once",
+          "purpose": "Lock the released results for a class.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class whose results these are."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The lock.",
+            "fields": [
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Locked. Terminal for the result (BR-9)."
+              },
+              {
+                "name": "locked_at",
+                "type": "datetime",
+                "description": "When."
+              },
+              {
+                "name": "locked_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "students_locked",
+                "type": "integer",
+                "description": "Results now frozen."
+              },
+              {
+                "name": "students_incomplete",
+                "type": "integer",
+                "description": "Locked while still incomplete pending a makeup (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_RELEASED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The results have not been released.",
+              "written": "Nothing.",
+              "notWritten": "Nothing locked.",
+              "note": "There is nothing published to freeze."
+            },
+            {
+              "code": "ALREADY_LOCKED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The results are already locked.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never lock as a step after releasing. Between the release and the lock sits the correction period (BR-8, BR-9), and a chained lock closes it before anybody could raise a mistake.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never confuse this with the marks lock. That freezes the raw number so the grade is computed on something stable; this freezes what was published (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the incomplete results being locked. A student still awaiting a makeup is frozen with an incomplete percentage (BR-5), and whoever is locking should know before rather than after.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "exam.results.reopen",
+        "statement": "Reopening the results, which is the School Admin's separate act and carries a reason (A6). It is never chained onto a refusal."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "class 8 ka natija pakka kar do",
+            "lang": "ur-Latn",
+            "gloss": "lock class 8's result"
+          },
+          "context": "School Admin, Johar Town branch, on released results after the correction period.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.lock",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Locked. Report how many were locked while still incomplete pending a makeup (PR-3) — those results are now frozen at a percentage calculated over fewer subjects."
+        },
+        {
+          "request": {
+            "text": "natija jari kar ke pakka bhi kar do",
+            "lang": "ur-Latn",
+            "gloss": "release the result and lock it too"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.lock",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The results are not released, and releasing them is the Coordinator's act — the lock is the School Admin's and never follows in the same plan (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is locked. Report that the Coordinator releases the result, which opens the correction period — a mark corrected in it recalculates the grade and republishes it with the change visible. Locking now would shut that before anybody could raise a mistake."
+        },
+        {
+          "request": {
+            "text": "natija band kar do",
+            "lang": "ur-Latn",
+            "gloss": "close the result"
+          },
+          "context": "School Admin, Johar Town branch, on results that were never released.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.lock",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_RELEASED (E7)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that nothing has been published for this class, so there is nothing to freeze — the Coordinator releases it first."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-03-PC-5",
+      "intent": {
+        "name": "exam.results.reopen",
+        "summary": "Reopen a locked result so a wrong one can be put right. School Admin only, one step, and it carries a reason.",
+        "routesHere": [
+          "reopen the class 8 results — a mark was wrong",
+          {
+            "text": "pakka natija dobara khol do",
+            "lang": "ur-Latn",
+            "gloss": "reopen the locked result"
+          },
+          {
+            "text": "natija mein ghalti nikli hai, khol do",
+            "lang": "ur-Latn",
+            "gloss": "a mistake was found in the result, reopen it"
+          },
+          {
+            "text": "tasheeh ke liye natija khol do",
+            "lang": "ur-Latn",
+            "gloss": "reopen the result for correction"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "seedha natija theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "just correct the result"
+            },
+            "goesTo": "exam.mark.correct — UC-06-02-PC-4",
+            "note": "A grade is never adjusted by hand. Correcting the mark recalculates the grade by the same bands (BR-10)."
+          },
+          {
+            "request": {
+              "text": "number bhi khol do",
+              "lang": "ur-Latn",
+              "gloss": "reopen the marks as well"
+            },
+            "goesTo": "exam.marks.reopen — UC-06-02-PC-6",
+            "note": "The two locks are separate and so are the two reopenings (BR-8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.results.reopen",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "class_id": "$request.class_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and only this step. The marks are reopened, the correction made and the result recalculated and republished before being locked again — each act on its own (A6)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the reopening, its reason and the audit entry together or not at all. The result becomes changeable again. What families already saw stays visible; a correction is republished with the change shown rather than quietly replacing it (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "exam.results.reopen",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/classes/{class_id}/reopen-results",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + class_id, since results are reopened once per lock",
+          "purpose": "Reopen a locked result so a correction can be made.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class whose results these are."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Why a published and frozen result is being unfrozen. It is read long afterwards by whoever asks how a grade changed."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The reopening.",
+            "fields": [
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Reopened."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "reopened_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "previously_locked_at",
+                "type": "datetime",
+                "description": "When it had been locked."
+              },
+              {
+                "name": "students_visible",
+                "type": "integer",
+                "description": "Students and guardians who have already seen the result. A change will be republished to them with the difference visible (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_LOCKED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The results are not locked.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "There is nothing to reopen."
+            },
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A reopening was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never chain a reopening onto a refused correction. The lock exists so that changing a published result is deliberate (BR-9), and a plan that reopened, corrected and relocked in one breath would make it decorative.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the reason. It is the record of why a published result was unfrozen, and a family asking how their child's grade changed is answered from it.",
+          "derivedFrom": [
+            "BR-9",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report how many families have already seen the result. A correction is republished with the change visible (BR-12), so they will see both — which is the point, and worth knowing before starting.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never relock in the same plan. The marks reopening, the correction and the recalculation all happen in between (A6).",
+          "derivedFrom": [
+            "BR-9",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "exam.results.lock",
+        "statement": "Locking the results again, after the correction has been republished. That is a separate act and never part of this plan."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "class 8 ka natija dobara khol do — ek bache ka number ghalat tha",
+            "lang": "ur-Latn",
+            "gloss": "reopen class 8's result — one student's mark was wrong"
+          },
+          "context": "School Admin, Johar Town branch, on locked results.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.reopen",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "reason": "A student's mark was found wrong after the result was locked.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reopening only (PR-1, PR-4)."
+            }
+          ],
+          "outcome": "Reopened. Report how many families have already seen the result (PR-3), and the acts that follow: the marks are reopened, the Coordinator corrects the mark with a reason, the grade recalculates by the same bands, and it is republished with the change visible."
+        },
+        {
+          "request": {
+            "text": "natija khol kar grade B se A kar do",
+            "lang": "ur-Latn",
+            "gloss": "reopen the result and change the grade from B to A"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.reopen",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reopening only. There is no capability that sets a grade (PR-1)."
+            }
+          ],
+          "outcome": "Reopened. Report that a grade is never adjusted by hand — it follows from the mark through the bands. If the mark is wrong, correcting it moves the grade; if the mark is right, the grade is right."
+        },
+        {
+          "request": {
+            "text": "natija khol do",
+            "lang": "ur-Latn",
+            "gloss": "reopen the result"
+          },
+          "context": "School Admin, Johar Town branch, on results that were released but never locked.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.results.reopen",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_LOCKED (E7)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the correction period is still open — a mark corrected now recalculates the grade and republishes it without anything having to be reopened."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1089 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-15",
+    "name": "Set an approved late fee policy and apply it automatically as invoices pass their due date",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-15.json",
+    "featureRef": "4.15 Late fee policy"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-15-PC-1",
+      "intent": {
+        "name": "fee.latefee.policy.create",
+        "summary": "Build a stepped late fee policy — what is charged, at how many days past the due date, and up to what cap. One step, and it fines nobody.",
+        "routesHere": [
+          "build a late fee policy — 200 after 7 days, 500 after 30, capped at 1,000",
+          {
+            "text": "late fee policy bana do — 7 din baad 200, 30 din baad 500",
+            "lang": "ur-Latn",
+            "gloss": "build a late fee policy — 200 after 7 days, 500 after 30"
+          },
+          {
+            "text": "der se fees dene pe jurmana lagana hai",
+            "lang": "ur-Latn",
+            "gloss": "we want to fine late fee payments"
+          },
+          {
+            "text": "nayi policy banao, cap 1000 rakhna",
+            "lang": "ur-Latn",
+            "gloss": "build a new policy, keep the cap at 1000"
+          },
+          "set up a percentage-based late fee for the coming session"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "policy approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the policy"
+            },
+            "goesTo": "fee.latefee.policy.approve — UC-04-15-PC-2",
+            "note": "Setting a penalty and agreeing to it are separate acts by separate people (BR-5)."
+          },
+          {
+            "request": {
+              "text": "is family ka jurmana maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "waive this family's fine"
+            },
+            "goesTo": "fee.latefee.waive — UC-04-15-PC-3",
+            "note": "A policy sets what is charged; waiving removes one fine that was charged."
+          },
+          {
+            "request": {
+              "text": "abhi jurmana laga do",
+              "lang": "ur-Latn",
+              "gloss": "apply the fine now"
+            },
+            "goesTo": "Not offered.",
+            "note": "A fine is applied automatically as invoices age (BR-1). Nobody types a penalty amount, because a fine that varies by who is at the desk is not a policy."
+          },
+          {
+            "request": {
+              "text": "due date badha do",
+              "lang": "ur-Latn",
+              "gloss": "extend the due date"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nothing here moves a due date."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.latefee.policy.create",
+            "inputs": {
+              "steps": "$request.steps",
+              "applies_to": "$request.applies_to",
+              "effective_from": "$request.effective_from",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, producing a Draft. No fine accrues without an approved policy that is live — a policy in draft or awaiting approval fines nobody (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. Steps out of order and a charge of zero or less are enforced by the API and arrive as errors.",
+        "atomicity": "One write: the policy and all its steps together with the audit entry, or not at all. It is a Draft, so nothing accrues against it and no invoice is touched (BR-2). It applies from its effective date and does not reach back to fine invoices whose steps were passed before it existed (BR-6)."
+      },
+      "operations": [
+        {
+          "name": "fee.latefee.policy.create",
+          "method": "POST",
+          "path": "/api/v1/late-fee-policies",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "effective_from + branch_id, since one policy version takes effect per date",
+          "purpose": "Create a draft stepped late fee policy with its charges, its ages and its cap.",
+          "parameters": [
+            {
+              "name": "steps",
+              "source": "request",
+              "sourceRef": "$request.steps",
+              "required": true,
+              "type": "object[]",
+              "notes": "The series of steps, each with a step number, the days past the due date it applies at, a charge type and its value. Each step applies at more days than the one before (BR-4, E1), and each adds its own charge on top of the previous one (BR-3). Every figure comes from the request — nobody types a penalty at the desk, but somebody does set the policy."
+            },
+            {
+              "name": "cap_per_invoice",
+              "source": "request",
+              "sourceRef": "$request.cap_per_invoice",
+              "required": false,
+              "type": "money",
+              "notes": "The most the fines on one invoice may total. Only where the request states one — without a cap a small debt grows without limit, which no school intends (BR-8), so its absence is worth reporting."
+            },
+            {
+              "name": "applies_to",
+              "source": "request",
+              "sourceRef": "$request.applies_to",
+              "required": true,
+              "type": "enum: All fee types | Selected fee types",
+              "notes": "Which fee types the policy fines."
+            },
+            {
+              "name": "fee_type_ids",
+              "source": "resolved",
+              "sourceRef": "$request.fee_types_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "fee_type",
+                "fromPhrase": "$request.fee_types_phrase",
+                "onNoMatch": "Refuse. No such fee type.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where applies_to is Selected fee types."
+            },
+            {
+              "name": "effective_from",
+              "source": "request",
+              "sourceRef": "$request.effective_from",
+              "required": true,
+              "type": "date",
+              "notes": "The date the policy applies from. It does not fine invoices whose steps were passed before it existed (BR-6)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The draft as built.",
+            "fields": [
+              {
+                "name": "policy_id",
+                "type": "string",
+                "description": "The policy."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. Nothing accrues against it (BR-2)."
+              },
+              {
+                "name": "version",
+                "type": "integer",
+                "description": "Incremented from any earlier approved policy."
+              },
+              {
+                "name": "steps",
+                "type": "object[]",
+                "description": "step_number, days_after_due_date, charge_type, amount or percentage."
+              },
+              {
+                "name": "cap_per_invoice",
+                "type": "string",
+                "description": "Absent where none was set — report that (BR-8)."
+              },
+              {
+                "name": "worked_example",
+                "type": "object",
+                "description": "What a PKR 5,000 invoice would accrue at each step, so the policy can be read before it is agreed."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "STEPS_OUT_OF_ORDER",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A step applies at the same age as, or earlier than, the one before it.",
+              "written": "Nothing.",
+              "notWritten": "No policy created.",
+              "note": "Two steps at the same age is a policy nobody can explain (BR-4)."
+            },
+            {
+              "code": "CHARGE_NOT_POSITIVE",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "A step carries a charge of zero or less.",
+              "written": "Nothing.",
+              "notWritten": "No policy created."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never invent a step, a charge or an age. This is what every late-paying family in the school will be fined, and a figure a planner supplied becomes a penalty nobody agreed.",
+          "derivedFrom": [
+            "BR-1",
+            "E2",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report when no cap is set. Without one a small debt grows without limit, which no school intends (BR-8) — its absence is a decision, and usually an oversight.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe a draft policy as active. No fine accrues without an approved policy that is live (BR-2); a draft fines nobody, and a school that thinks it has a policy running has not.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain the approval. Setting a penalty and agreeing to it are separate acts by separate people (BR-5).",
+          "derivedFrom": [
+            "BR-5",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never offer to apply the policy to past invoices. It applies from its effective date and does not reach back (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A draft is not deleted — the lifecycle runs Draft, Awaiting approval, Approved, Returned, Superseded. An unwanted draft is simply not submitted, and a policy that changes is superseded by a new version. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "late fee policy bana do — 7 din baad 200, 30 din baad 500 aur, cap 1000, 1 August se",
+            "lang": "ur-Latn",
+            "gloss": "build a late fee policy — 200 after 7 days, another 500 after 30, cap 1000, from 1 August"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.latefee.policy.create",
+              "inputs": {
+                "steps": "$request.steps → [{1, 7 days, Flat amount, 200}, {2, 30 days, Flat amount, 500}]",
+                "cap_per_invoice": 1000,
+                "applies_to": "All fee types",
+                "effective_from": "2026-08-01",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Every figure comes from the request (PR-1). Each step adds on top of the previous one (BR-3), so an invoice 30 days late carries 700."
+            }
+          ],
+          "outcome": "A Draft policy. Nothing accrues against it and no family is fined until it is approved and live (PR-3). The worked example shows what a PKR 5,000 invoice would reach at each step."
+        },
+        {
+          "request": {
+            "text": "policy bana do — 10 din baad 2%, 30 din baad 5%",
+            "lang": "ur-Latn",
+            "gloss": "build a policy — 2% after 10 days, 5% after 30"
+          },
+          "context": "Accounts, Johar Town branch, with no cap stated.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.latefee.policy.create",
+              "inputs": {
+                "steps": "$request.steps → [{1, 10 days, Percentage of outstanding, 2}, {2, 30 days, Percentage of outstanding, 5}]",
+                "applies_to": "All fee types",
+                "effective_from": "$request.effective_from",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "cap_per_invoice is omitted because the request names none — never invented (PR-1)."
+            }
+          ],
+          "outcome": "A Draft with no cap. Report that explicitly: a percentage policy with no cap means a long-unpaid debt keeps growing, which BR-8 warns about and no school intends (PR-2)."
+        },
+        {
+          "request": {
+            "text": "policy bana do — 7 din baad 200, 7 din baad 500",
+            "lang": "ur-Latn",
+            "gloss": "build a policy — 200 after 7 days, 500 after 7 days"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.latefee.policy.create",
+              "inputs": {
+                "steps": "$request.steps → two steps both at 7 days",
+                "applies_to": "All fee types",
+                "effective_from": "$request.effective_from",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as stated. The API returns STEPS_OUT_OF_ORDER (E1)."
+            }
+          ],
+          "outcome": "Nothing is created. Report that two steps at the same age is a policy nobody can explain (BR-4), and ask what the second step's age should be."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-15-PC-2",
+      "intent": {
+        "name": "fee.latefee.policy.approve",
+        "summary": "Approve a late fee policy so fines begin accruing from its effective date. School Admin only, one step.",
+        "routesHere": [
+          "approve the late fee policy",
+          {
+            "text": "late fee policy approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the late fee policy"
+          },
+          {
+            "text": "jurmane ki policy manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the penalty policy"
+          },
+          "sign off the policy Accounts built"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "policy wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the policy back"
+            },
+            "goesTo": "fee.latefee.policy.return — UC-04-15-PC-3",
+            "note": "A return needs a reason so Accounts know what to change."
+          },
+          {
+            "request": {
+              "text": "policy bana do",
+              "lang": "ur-Latn",
+              "gloss": "build a policy"
+            },
+            "goesTo": "fee.latefee.policy.create — UC-04-15-PC-1"
+          },
+          {
+            "request": {
+              "text": "ek family ka jurmana maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "waive one family's fine"
+            },
+            "goesTo": "fee.latefee.waive — UC-04-15-PC-3"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.latefee.policy.approve",
+            "inputs": {
+              "policy_id": "$request.policy_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. From the effective date fines apply automatically as invoices age (BR-1, BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the acting user built the policy themselves is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the decision, the status change and the audit entry together or not at all. Approving makes the policy live; from its effective date fines accrue automatically, each as its own line on the invoice rather than folded into the original amount (BR-7), and each posting to the late fee income account separately from fee income (BR-13). It does not reach back to invoices whose steps were passed before it existed (BR-6). Any earlier approved policy is superseded."
+      },
+      "operations": [
+        {
+          "name": "fee.latefee.policy.approve",
+          "method": "POST",
+          "path": "/api/v1/late-fee-policies/{policy_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "policy_id, since a policy carries one approval",
+          "purpose": "Approve a late fee policy, making it live from its effective date.",
+          "parameters": [
+            {
+              "name": "policy_id",
+              "source": "resolved",
+              "sourceRef": "$request.policy_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "late_fee_policy",
+                "fromPhrase": "$request.policy_phrase",
+                "onNoMatch": "Refuse. No policy matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with version, status and effective date."
+              },
+              "notes": "The late fee policy, resolved from how the actor named it — the version, or simply the current one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision, and what it made live.",
+            "fields": [
+              {
+                "name": "policy_id",
+                "type": "string",
+                "description": "The policy."
+              },
+              {
+                "name": "effective_from",
+                "type": "date",
+                "description": "When fines begin accruing from."
+              },
+              {
+                "name": "superseded_version",
+                "type": "integer",
+                "description": "The earlier policy this one closes."
+              },
+              {
+                "name": "decided_by",
+                "type": "string",
+                "description": "The School Admin, who may not be the person who built it (BR-5)."
+              },
+              {
+                "name": "invoices_in_scope",
+                "type": "integer",
+                "description": "How many outstanding invoices the policy will begin fining. Worth reporting before it goes live."
+              },
+              {
+                "name": "retroactive",
+                "type": "boolean",
+                "description": "Always false. The policy does not reach back (BR-6)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved and live from its effective date."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to approve their own policy.",
+              "written": "Nothing.",
+              "notWritten": "Not decided.",
+              "note": "Setting a penalty and agreeing to it are separate acts by separate people (BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a policy the acting user built. E3 is BR-5 working — setting a penalty and agreeing to it are separate acts.",
+          "derivedFrom": [
+            "BR-5",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report how many outstanding invoices the policy will begin fining. It goes live and starts charging families automatically (BR-1), and the number is what makes that concrete before it happens.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe the policy as reaching back. It applies from its effective date and does not fine invoices whose steps were passed before it existed (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approved policy is not withdrawn. It is superseded by a new version with its own effective date, and the earlier one is kept so a fine charged under it stays explicable. Fines already applied are not removed by superseding — they are waived one at a time, with reasons. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "late fee policy approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the late fee policy"
+          },
+          "context": "School Admin, Johar Town branch, on a two-step policy effective 01-08-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.latefee.policy.approve",
+              "inputs": {
+                "policy_id": "$request.policy_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The policy is live from 01-08-2026 and fines begin accruing automatically as invoices pass their due dates. Report how many outstanding invoices are in scope (PR-3) — families will start receiving penalty lines and notifications."
+        },
+        {
+          "request": {
+            "text": "main ne banai thi, khud approve kar leta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I built it, I'll approve it myself"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.latefee.policy.approve",
+              "inputs": {
+                "policy_id": "$request.policy_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "In practice approve is absent from an Accounts allow-list."
+            }
+          ],
+          "outcome": "Nothing is decided. Report that a School Admin has to approve it — a penalty the school charges is deliberately not one person's decision (PR-1)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-15-PC-3",
+      "intent": {
+        "name": "fee.latefee.policy.return",
+        "summary": "Send a late fee policy back to Accounts with what to change. School Admin only, one step.",
+        "routesHere": [
+          "return this policy, the second step is too high",
+          {
+            "text": "policy wapas bhej do, jurmana bohat zyada hai",
+            "lang": "ur-Latn",
+            "gloss": "send the policy back, the fine is too high"
+          },
+          {
+            "text": "ye policy theek nahi, Accounts ko wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "this policy is not right, send it back to Accounts"
+          },
+          "send it back — no cap has been set"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "policy approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the policy"
+            },
+            "goesTo": "fee.latefee.policy.approve — UC-04-15-PC-2"
+          },
+          {
+            "request": {
+              "text": "policy bana do",
+              "lang": "ur-Latn",
+              "gloss": "build a policy"
+            },
+            "goesTo": "fee.latefee.policy.create — UC-04-15-PC-1"
+          },
+          {
+            "request": {
+              "text": "ek family ka jurmana maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "waive one family's fine"
+            },
+            "goesTo": "fee.latefee.waive — UC-04-15-PC-3"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.latefee.policy.return",
+            "inputs": {
+              "policy_id": "$request.policy_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. No policy is live, so nothing is accruing anywhere."
+          }
+        ],
+        "onFailure": "Stop and report. The reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the status change, the reason and the audit entry together or not at all. No policy is live and no fine accrues."
+      },
+      "operations": [
+        {
+          "name": "fee.latefee.policy.return",
+          "method": "POST",
+          "path": "/api/v1/late-fee-policies/{policy_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "policy_id + return_reason",
+          "purpose": "Send a late fee policy back to Accounts with the reason it was not approved.",
+          "parameters": [
+            {
+              "name": "policy_id",
+              "source": "resolved",
+              "sourceRef": "$request.policy_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "late_fee_policy",
+                "fromPhrase": "$request.policy_phrase",
+                "onNoMatch": "Refuse. No policy matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with version, status and effective date."
+              },
+              "notes": "The late fee policy, resolved from how the actor named it — the version, or simply the current one."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required — Accounts have to know whether the amounts, the ages, the cap or the scope is the problem. The approver's own words."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The policy as returned.",
+            "fields": [
+              {
+                "name": "policy_id",
+                "type": "string",
+                "description": "The policy."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. Nothing is live and nothing accrues."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "As given, shown to Accounts."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The acting School Admin."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": null,
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned.",
+              "note": "UC-04-15 defines no E-id for it, though E7 covers the same shape for a waiver — see OPEN-QUESTIONS."
+            },
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "The acting user is not a School Admin.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the return reason. Accounts have to know whether the amounts, the ages, the cap or the scope is the problem, and only the approver can say which.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never adjust the policy on the approver's behalf. Changing a step or a cap is Accounts' work in their own session; returning states the objection.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that no policy is live. Where none has ever been approved, nothing is fining anybody at all (BR-2) — which the school may not realise.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not undone. Accounts change the policy and submit it again, which is a fresh decision."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "policy wapas bhej do — 30 din baad 500 bohat zyada hai",
+            "lang": "ur-Latn",
+            "gloss": "send the policy back — 500 after 30 days is too much"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.latefee.policy.return",
+              "inputs": {
+                "policy_id": "$request.policy_phrase",
+                "return_reason": "The second step of 500 after 30 days is higher than intended. Reduce it.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned to Accounts with the objection. No policy is live, so nothing is accruing anywhere."
+        },
+        {
+          "request": "send it back — no cap has been set, this could grow without limit",
+          "context": "School Admin, Johar Town branch, on a percentage policy.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.latefee.policy.return",
+              "inputs": {
+                "policy_id": "$request.policy_phrase",
+                "return_reason": "No cap per invoice is set, so a long-unpaid debt would grow without limit.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned. This is exactly what BR-8 warns about, and catching it before approval is the point of the second pair of eyes."
+        },
+        {
+          "request": {
+            "text": "policy wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "send the policy back"
+          },
+          "context": "School Admin, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.latefee.policy.return",
+              "inputs": {
+                "policy_id": "$request.policy_phrase",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what should change."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-15-PC-4",
+      "intent": {
+        "name": "fee.latefee.waive",
+        "summary": "Remove a late fee already charged to a family, with the reason. One step, and both the fine and its removal stay on the record.",
+        "routesHere": [
+          "waive the late fee on this invoice, the family had a genuine reason",
+          {
+            "text": "is family ka jurmana maaf kar do",
+            "lang": "ur-Latn",
+            "gloss": "waive this family's fine"
+          },
+          {
+            "text": "late fee hata do, unka bank band tha",
+            "lang": "ur-Latn",
+            "gloss": "remove the late fee, their bank was closed"
+          },
+          {
+            "text": "jurmana galti se laga hai, wapas lo",
+            "lang": "ur-Latn",
+            "gloss": "the fine was applied by mistake, take it off"
+          },
+          "waive the 200 late fee on the September invoice"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "policy badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the policy"
+            },
+            "goesTo": "fee.latefee.policy.create — UC-04-15-PC-1",
+            "note": "A waiver removes one fine; changing what is charged in future is a new policy version."
+          },
+          {
+            "request": {
+              "text": "jurmana jama ho chuka hai, wapas karo",
+              "lang": "ur-Latn",
+              "gloss": "the fine has been paid, return it"
+            },
+            "goesTo": "fee.credit.raise — UC-04-10, or fee.refund.raise — UC-04-11",
+            "note": "A waiver is not available on a fine already paid — a refund is the route (E8)."
+          },
+          {
+            "request": {
+              "text": "poori class ka jurmana maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "waive the fines for the whole class"
+            },
+            "goesTo": "One waiver at a time.",
+            "note": "Each waiver carries its own reason (BR-10). See PR-2."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.latefee.waive",
+            "inputs": {
+              "late_fee_id": "$request.late_fee_phrase",
+              "waiver_reason": "$request.waiver_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The fine and its removal both stay on the record, so a waiver granted at a counter is visible afterwards (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing reason and a fine already paid are enforced by the API and arrive as errors.",
+        "atomicity": "One write: the waiver, the reason and the audit entry together or not at all. The fine is not deleted — it and its removal both stay on the record (BR-10). The invoice's other lines are untouched, and the family's remaining balance drops by the waived amount."
+      },
+      "operations": [
+        {
+          "name": "fee.latefee.waive",
+          "method": "POST",
+          "path": "/api/v1/late-fees/{late_fee_id}/waive",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "late_fee_id, since a fine is waived once",
+          "purpose": "Remove a late fee that has been applied, recording who removed it and why.",
+          "parameters": [
+            {
+              "name": "late_fee_id",
+              "source": "resolved",
+              "sourceRef": "$request.late_fee_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "late_fee",
+                "fromPhrase": "$request.late_fee_phrase",
+                "onNoMatch": "Refuse. No unpaid late fee matches.",
+                "onAmbiguous": "Ask, naming the candidates with student, invoice, amount and when it was applied."
+              },
+              "notes": "The fine to remove, resolved from how the actor named it — the student, the invoice, or the amount and date."
+            },
+            {
+              "name": "waiver_reason",
+              "source": "request",
+              "sourceRef": "$request.waiver_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (BR-10, E7). The actor's own words — a waiver granted at a counter is visible afterwards precisely because of this."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The fine as waived.",
+            "fields": [
+              {
+                "name": "late_fee_id",
+                "type": "string",
+                "description": "The fine."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Waived."
+              },
+              {
+                "name": "amount_waived",
+                "type": "string",
+                "description": "What came off the invoice."
+              },
+              {
+                "name": "waiver_reason",
+                "type": "string",
+                "description": "As given, kept with the record (BR-10)."
+              },
+              {
+                "name": "waived_by",
+                "type": "string",
+                "description": "The acting user."
+              },
+              {
+                "name": "invoice_balance",
+                "type": "string",
+                "description": "The family's remaining balance after it."
+              },
+              {
+                "name": "fine_retained_on_record",
+                "type": "boolean",
+                "description": "True. The fine and its removal both stay visible (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WAIVER_REASON_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A fine was waived with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not waived.",
+              "note": "Message: \"Give a reason for removing this fine.\" Ask; never compose one."
+            },
+            {
+              "code": "ALREADY_PAID",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The fine has already been paid.",
+              "written": "Nothing.",
+              "notWritten": "Not waived.",
+              "note": "Message: \"This fine has been paid. A refund is the route, not a waiver.\" The money is in — waiving it now would leave a payment sitting against nothing."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the waiver reason. A waiver granted at a counter is visible afterwards because of it (BR-10), and that visibility is the control — a fine removed with a planner's explanation is a fine removed with none.",
+          "derivedFrom": [
+            "BR-10",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never waive fines in bulk. Each carries its own reason (BR-10), and one reason covering thirty families describes none of them. Where a whole class was fined in error, that is a policy question, not thirty waivers.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never waive a fine that has been paid. E8 is the boundary — the money is in, and waiving it leaves a payment sitting against nothing. A refund is the route.",
+          "derivedFrom": [
+            "BR-10",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never describe the fine as deleted. It and its removal both stay on the record (BR-10), which is what makes a pattern of waivers readable.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A waiver is not undone. Where a fine should stand after all, the policy will not re-apply it — the step has passed. Both the fine and its waiver stay on the record. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is family ka 200 ka jurmana maaf kar do — bank hartal ki wajah se band tha",
+            "lang": "ur-Latn",
+            "gloss": "waive this family's 200 fine — the bank was shut because of a strike"
+          },
+          "context": "Accounts, Johar Town branch, on an unpaid late fee.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.latefee.waive",
+              "inputs": {
+                "late_fee_id": "$request.late_fee_phrase",
+                "waiver_reason": "The bank was closed for a strike on the due date and the family paid the next working day.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "PKR 200 comes off the invoice and the balance drops. The fine and its waiver both stay on the record (BR-10), so the pattern is readable later."
+        },
+        {
+          "request": {
+            "text": "jurmana jama ho chuka hai lekin galat tha, maaf kar do",
+            "lang": "ur-Latn",
+            "gloss": "the fine has been paid but it was wrong, waive it"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.latefee.waive",
+              "inputs": {
+                "late_fee_id": "$request.late_fee_phrase",
+                "waiver_reason": "$request.waiver_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns ALREADY_PAID (E8)."
+            }
+          ],
+          "outcome": "Nothing is waived. Report that the fine has been paid, so a credit or a refund is the route — waiving it now would leave the payment sitting against nothing (PR-3)."
+        },
+        {
+          "request": {
+            "text": "poori class ka jurmana maaf kar do, due date galat tha",
+            "lang": "ur-Latn",
+            "gloss": "waive the whole class's fines, the due date was wrong"
+          },
+          "context": "Accounts, Johar Town branch, with 22 fined invoices.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.latefee.waive",
+              "inputs": {
+                "late_fee_id": "$request.late_fee_phrase → one fine",
+                "waiver_reason": "$request.waiver_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One plan per fine, and each needs its own reason (PR-2)."
+            }
+          ],
+          "outcome": "Report the 22 fines and ask how to proceed. If the due date was genuinely wrong for the whole class, that is a billing problem worth looking at — 22 waivers records 22 counter decisions for one systemic fault."
+        }
+      ]
+    }
+  ]
+}

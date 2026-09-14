@@ -1,0 +1,1501 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-05-03",
+    "name": "Record when staff arrive and leave, and correct a wrong record under approval",
+    "module": "Attendance",
+    "file": "../UseCases/UC-05-03.json",
+    "featureRef": "5.3 Staff attendance tracking"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-05-03-PC-1",
+      "intent": {
+        "name": "staff.attendance.mark",
+        "summary": "Record a staff member's day — when they arrived and how the day is coded. One step, and payroll reads the code.",
+        "routesHere": [
+          "mark Miss Nadia present today, in at 07:50",
+          {
+            "text": "Miss Nadia ki hazri laga do, subah 7:50 pe aayi thin",
+            "lang": "ur-Latn",
+            "gloss": "mark Miss Nadia's attendance, she came at 7:50"
+          },
+          {
+            "text": "Mr Asif aaj chhutti pe hain",
+            "lang": "ur-Latn",
+            "gloss": "Mr Asif is on leave today"
+          },
+          {
+            "text": "device kaam nahi kar raha, haath se hazri laga do",
+            "lang": "ur-Latn",
+            "gloss": "the device is not working, mark attendance by hand"
+          },
+          "record this staff member as absent for yesterday"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "hazri theek karni hai",
+              "lang": "ur-Latn",
+              "gloss": "the attendance needs correcting"
+            },
+            "goesTo": "staff.attendance.correction.raise — UC-05-03-PC-3",
+            "note": "A record already made is corrected under the Principal's approval, not marked again (BR-7)."
+          },
+          {
+            "request": {
+              "text": "time out laga do",
+              "lang": "ur-Latn",
+              "gloss": "record the time out"
+            },
+            "goesTo": "staff.attendance.timeout — UC-05-03-PC-2",
+            "note": "The time in and the time out are entered at different moments (BR-2)."
+          },
+          {
+            "request": {
+              "text": "meri apni hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark my own attendance"
+            },
+            "goesTo": "Not offered to a School Admin.",
+            "note": "The School Admin's own attendance is marked by the Principal — the person who marks should not be the person who marks themselves (BR-5, E1)."
+          },
+          {
+            "request": {
+              "text": "card se hazri lagti hai",
+              "lang": "ur-Latn",
+              "gloss": "attendance is marked by card"
+            },
+            "goesTo": "staff.attendance.manualmark.start — UC-05-06",
+            "note": "Where a staff member has forgotten their card, the code-verified route applies. A scan itself is not planned."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.attendance.mark",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "date": "$request.date",
+              "code": "$request.code",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every day is coded, because payroll reads the code and an uncoded day is a day nobody can be paid for (BR-3, E2)."
+          }
+        ],
+        "onFailure": "Stop and report. Marking one's own record, an uncoded day and a future date are all enforced by the API and arrive as errors.",
+        "atomicity": "One write: the record with its code, its time in and the audit entry together or not at all. The code drives the month's payable days, derived from the codes rather than entered separately (BR-11). A day off or a holiday is coded as such and never counted as an absence (BR-8); a day on approved leave is coded Leave, not Absent, because payroll and any disciplinary process treat the two differently (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "staff.attendance.mark",
+          "method": "POST",
+          "path": "/api/v1/staff-attendance",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff_id + date, since a staff member carries one attendance record per date",
+          "purpose": "Record a staff member's attendance for a date with its code and time in.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No active staff member matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with department and role."
+              },
+              "notes": "The staff member, resolved from how the actor named them."
+            },
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the future (E3)."
+            },
+            {
+              "name": "code",
+              "source": "request",
+              "sourceRef": "$request.code",
+              "required": true,
+              "type": "enum: Present | Absent | Leave | Day-off | Holiday",
+              "notes": "How the day is treated. Payroll reads it (BR-3), so an uncoded day is a day nobody can be paid for. Leave and Absent are different facts (BR-9); Day-off and Holiday come from the calendar (BR-8)."
+            },
+            {
+              "name": "time_in",
+              "source": "request",
+              "sourceRef": "$request.time_in",
+              "required": false,
+              "type": "datetime",
+              "notes": "When they arrived, in 24-hour form. Required in substance where the code is Present."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The day as recorded.",
+            "fields": [
+              {
+                "name": "record_id",
+                "type": "string",
+                "description": "The day's record."
+              },
+              {
+                "name": "code",
+                "type": "string",
+                "description": "What payroll will read (BR-3)."
+              },
+              {
+                "name": "time_in",
+                "type": "string",
+                "description": "HH:mm, school-local."
+              },
+              {
+                "name": "source",
+                "type": "string",
+                "description": "Marked by School Admin, Marked by Principal, Self check-in or Corrected — it matters when the record is questioned."
+              },
+              {
+                "name": "calendar_code_applied",
+                "type": "string",
+                "description": "Where the calendar makes the day a Day-off or Holiday, that is what it is coded (BR-8)."
+              },
+              {
+                "name": "leave_code_applied",
+                "type": "boolean",
+                "description": "True where approved staff leave made it Leave rather than Absent (BR-9)."
+              },
+              {
+                "name": "payable_days_so_far",
+                "type": "string",
+                "description": "The month's payable days, derived from the codes (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "OWN_RECORD",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The School Admin attempted to mark their own attendance.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "Message: \"Your own attendance is marked by the Principal.\" The person who marks should not mark themselves (BR-5)."
+            },
+            {
+              "code": "DAY_NOT_CODED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The day carries no code.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "Payroll reads the code, and an uncoded day is a day nobody can be paid for (BR-3)."
+            },
+            {
+              "code": "FUTURE_DATE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The date is in the future.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            },
+            {
+              "code": "ACCOUNTS_CANNOT_CHANGE",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to set a code.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "The role that calculates pay must not be the role that sets the days it is calculated from (BR-10)."
+            },
+            {
+              "code": "SUPER_ADMIN_NO_AUTHORITY",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "A Super Admin attempted to mark a record.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "A technical administrator is not a person who decides what somebody is paid (BR-12)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the code. Payroll reads it (BR-3), so a code a planner picked decides what somebody is paid — and Absent, Leave, Day-off and Holiday are four different statements about one day.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-8",
+            "BR-9",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never code a day Absent where leave or the calendar applies. A day on approved leave is coded Leave and a closed day is coded as closed, and both are treated differently by payroll and by any disciplinary process (BR-8, BR-9).",
+          "derivedFrom": [
+            "BR-8",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never mark the acting user's own record. E1 is BR-5 working — the School Admin's attendance is the Principal's to mark.",
+          "derivedFrom": [
+            "BR-5",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never supply a time in the actor did not state. A time somebody entered is not evidence of when they arrived (UC-05-06 BR-3), and it sits on a record that determines pay.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never mark a staff member on Accounts' or a Super Admin's behalf. Accounts read the record for payroll and cannot amend it (BR-10); a Super Admin holds no authority over it at all (BR-12).",
+          "derivedFrom": [
+            "BR-10",
+            "BR-12",
+            "E7",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A recorded day is not re-marked. It is corrected through staff.attendance.correction.raise, which takes effect only when the Principal approves it (BR-7), and the original entry stays visible alongside the corrected one (BR-13). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Miss Nadia ki hazri laga do — subah 7:50 pe aayi thin",
+            "lang": "ur-Latn",
+            "gloss": "mark Miss Nadia's attendance — she arrived at 7:50"
+          },
+          "context": "School Admin, Johar Town branch. Today is a working day.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.mark",
+              "inputs": {
+                "staff_id": "$request.staff_phrase → \"Miss Nadia\"",
+                "date": "2026-09-08",
+                "code": "Present",
+                "time_in": "07:50",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The code and the time both come from the request (PR-1, PR-4)."
+            }
+          ],
+          "outcome": "The day is recorded Present with a time in of 07:50. The time out is entered later (BR-2). payable_days_so_far comes back for the month, derived from the codes."
+        },
+        {
+          "request": {
+            "text": "Mr Asif aaj nahi aaye",
+            "lang": "ur-Latn",
+            "gloss": "Mr Asif has not come in today"
+          },
+          "context": "School Admin, Johar Town branch, where Mr Asif has approved leave for today.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.mark",
+              "inputs": {
+                "staff_id": "$request.staff_phrase → \"Mr Asif\"",
+                "date": "2026-09-08",
+                "code": "$request.code",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted with code Absent. \"Has not come in\" is not a code — and he has approved leave, which makes the day Leave rather than Absent (PR-2)."
+            }
+          ],
+          "outcome": "Report that Mr Asif holds approved leave for today, so the day codes as Leave. Confirm before marking — Absent and Leave are treated differently by payroll and by any disciplinary process."
+        },
+        {
+          "request": {
+            "text": "meri apni hazri laga do",
+            "lang": "ur-Latn",
+            "gloss": "mark my own attendance"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.mark",
+              "inputs": {
+                "staff_id": "$request.staff_phrase → the acting School Admin",
+                "date": "2026-09-08",
+                "code": "Present",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns OWN_RECORD (E1)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the Principal marks the School Admin's own attendance — the person who marks should not mark themselves (PR-3)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-03-PC-2",
+      "intent": {
+        "name": "staff.attendance.timeout",
+        "summary": "Record when a staff member left, later in the day. One step, and a missing time out does not invalidate the day.",
+        "routesHere": [
+          "record Miss Nadia's time out as 14:30",
+          {
+            "text": "Miss Nadia 2:30 pe chali gayi thin, time out laga do",
+            "lang": "ur-Latn",
+            "gloss": "Miss Nadia left at 2:30, record the time out"
+          },
+          {
+            "text": "sab ka time out laga do",
+            "lang": "ur-Latn",
+            "gloss": "record everyone's time out"
+          },
+          {
+            "text": "ye teacher jaldi chali gayi thin",
+            "lang": "ur-Latn",
+            "gloss": "this teacher left early"
+          },
+          "log the departure time for today"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark the attendance"
+            },
+            "goesTo": "staff.attendance.mark — UC-05-03-PC-1",
+            "note": "The time in and the code come first; the time out follows later in the day (BR-2)."
+          },
+          {
+            "request": {
+              "text": "time out galat hai, theek karo",
+              "lang": "ur-Latn",
+              "gloss": "the time out is wrong, correct it"
+            },
+            "goesTo": "staff.attendance.correction.raise — UC-05-03-PC-3",
+            "note": "A record already made is corrected under approval (BR-7)."
+          },
+          {
+            "request": {
+              "text": "kisi ka time out nahi laga, chhod do",
+              "lang": "ur-Latn",
+              "gloss": "nobody recorded a time out, leave it"
+            },
+            "goesTo": "Nothing needed.",
+            "note": "A time out may be left blank where somebody left without it being recorded. The day is still coded, and the gap is visible rather than guessed at (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.attendance.timeout",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "date": "$request.date",
+              "time_out": "$request.time_out",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It adds the departure to a day already recorded and coded — the code is not touched."
+          }
+        ],
+        "onFailure": "Stop and report. A time out earlier than the time in is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the time out and the audit entry together or not at all. The day's code is unchanged, and so are the payable days derived from it (BR-11). Leaving it blank is a valid outcome, not a failure — the gap is visible rather than guessed at (BR-4)."
+      },
+      "operations": [
+        {
+          "name": "staff.attendance.timeout",
+          "method": "PATCH",
+          "path": "/api/v1/staff-attendance/time-out",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "staff_id + date, since a day carries one time out",
+          "purpose": "Add the departure time to a staff attendance record already made.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No active staff member matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with department and role."
+              },
+              "notes": "The staff member, resolved from how the actor named them."
+            },
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": true,
+              "type": "date",
+              "notes": "The day the record belongs to."
+            },
+            {
+              "name": "time_out",
+              "source": "request",
+              "sourceRef": "$request.time_out",
+              "required": true,
+              "type": "datetime",
+              "notes": "When they left, in 24-hour form. Not earlier than the time in (E10). Only where the actor states it — a departure time nobody observed is a guess on a record that determines pay."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The day as completed.",
+            "fields": [
+              {
+                "name": "record_id",
+                "type": "string",
+                "description": "The day's record."
+              },
+              {
+                "name": "time_in",
+                "type": "string",
+                "description": "Unchanged."
+              },
+              {
+                "name": "time_out",
+                "type": "string",
+                "description": "As recorded."
+              },
+              {
+                "name": "code",
+                "type": "string",
+                "description": "Unchanged by this (BR-11)."
+              },
+              {
+                "name": "hours",
+                "type": "string",
+                "description": "Between the two, where both are present."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "TIME_OUT_BEFORE_TIME_IN",
+              "mapsTo": "E10",
+              "httpStatus": 400,
+              "meaning": "The time out is earlier than the time in.",
+              "written": "Nothing.",
+              "notWritten": "Not recorded.",
+              "note": "Message: \"The time out cannot be before the time in.\" Never swap them to make it fit."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply a time out the actor did not state. A missing time out does not invalidate the day (BR-4), and a guessed departure sits on a record that determines pay.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never swap the times to get past E10. A time out before a time in means one of the two is wrong, and which is a question for the person who observed it.",
+          "derivedFrom": [
+            "BR-2",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never treat a blank time out as a problem to fix. It is explicitly permitted, and the gap is visible rather than guessed at (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never let a time out change the day's code. The code is what payroll reads (BR-3), and it is set when the day is marked.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A recorded time out is corrected under the Principal's approval like any other part of the record (BR-7), never overwritten. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Miss Nadia 2:30 pe chali gayi thin",
+            "lang": "ur-Latn",
+            "gloss": "Miss Nadia left at 2:30"
+          },
+          "context": "School Admin, Johar Town branch, on a day already recorded Present at 07:50.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.timeout",
+              "inputs": {
+                "staff_id": "$request.staff_phrase → \"Miss Nadia\"",
+                "date": "2026-09-08",
+                "time_out": "14:30",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The day now reads 07:50 to 14:30. The code is untouched and the payable days are unchanged (PR-4)."
+        },
+        {
+          "request": {
+            "text": "sab ka time out laga do, sab chale gaye hain",
+            "lang": "ur-Latn",
+            "gloss": "record everyone's time out, they have all left"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.timeout",
+              "inputs": {
+                "staff_id": "$request.staff_phrase → one staff member",
+                "date": "2026-09-08",
+                "time_out": "$request.time_out — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. \"They have all left\" states no time, and a departure time nobody observed is a guess on a pay record (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that a blank time out is permitted and the day is still coded (BR-4) — so nothing needs recording unless somebody actually observed the times."
+        },
+        {
+          "request": {
+            "text": "time out 7:00 subah ka laga do",
+            "lang": "ur-Latn",
+            "gloss": "record the time out as 7:00 in the morning"
+          },
+          "context": "School Admin, Johar Town branch, on a day with a time in of 07:50.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.timeout",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "date": "2026-09-08",
+                "time_out": "07:00",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as stated. The API returns TIME_OUT_BEFORE_TIME_IN (E10)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the time in is 07:50 and ask which of the two is wrong — never swap them to make the day fit (PR-2)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-03-PC-3",
+      "intent": {
+        "name": "staff.attendance.correction.raise",
+        "summary": "Raise a correction to a staff attendance record, with the reason. One step, and it changes nothing until the Principal approves it.",
+        "routesHere": [
+          "raise a correction — Miss Nadia was on leave, not absent",
+          {
+            "text": "Miss Nadia ki hazri theek karwani hai, wo chhutti pe thin",
+            "lang": "ur-Latn",
+            "gloss": "Miss Nadia's attendance needs correcting, she was on leave"
+          },
+          {
+            "text": "code galat laga hua hai",
+            "lang": "ur-Latn",
+            "gloss": "the code is wrong"
+          },
+          {
+            "text": "hazri mein ghalti hai, tashih ke liye bhejo",
+            "lang": "ur-Latn",
+            "gloss": "there is a mistake in the attendance, send it for correction"
+          },
+          "propose changing yesterday's code from absent to present"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark the attendance"
+            },
+            "goesTo": "staff.attendance.mark — UC-05-03-PC-1",
+            "note": "Where no record exists for the day yet."
+          },
+          {
+            "request": {
+              "text": "tashih manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the correction"
+            },
+            "goesTo": "staff.attendance.correction.approve — UC-05-03-PC-4",
+            "note": "The School Admin raises it; they do not grant it (BR-7)."
+          },
+          {
+            "request": {
+              "text": "payroll bhej chuke hain, ab theek karo",
+              "lang": "ur-Latn",
+              "gloss": "we have already sent it to payroll, fix it now"
+            },
+            "goesTo": "Raise it anyway, and read E9.",
+            "note": "A correction for a month already sent to payroll is handled differently — the message says so (E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.attendance.correction.raise",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "date": "$request.date",
+              "corrected_code": "$request.corrected_code",
+              "correction_reason": "$request.correction_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, producing a correction at pending. The record is unchanged and payroll still reads the original code until the Principal approves it (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing reason, an attempt by Accounts, and a month already sent to payroll are all enforced by the API and arrive as errors or as flagged outcomes.",
+        "atomicity": "One write: the proposed code, the reason and the audit entry together or not at all. The attendance record is untouched — a correction takes effect only when the Principal approves it (BR-7). Payroll still reads the original code meanwhile."
+      },
+      "operations": [
+        {
+          "name": "staff.attendance.correction.raise",
+          "method": "POST",
+          "path": "/api/v1/staff-attendance/corrections",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff_id + date + corrected_code, since a day carries one pending correction at a time",
+          "purpose": "Raise a correction to a staff attendance record for the Principal to approve.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No active staff member matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with department and role."
+              },
+              "notes": "The staff member, resolved from how the actor named them."
+            },
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": true,
+              "type": "date",
+              "notes": "The day whose record is wrong."
+            },
+            {
+              "name": "corrected_code",
+              "source": "request",
+              "sourceRef": "$request.corrected_code",
+              "required": true,
+              "type": "enum: Present | Absent | Leave | Day-off | Holiday",
+              "notes": "What the code should be. Read from what the actor stated — the four codes are four different statements about a day, and payroll reads whichever is approved."
+            },
+            {
+              "name": "correction_reason",
+              "source": "request",
+              "sourceRef": "$request.correction_reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters. Mandatory, since this record determines pay and a change to it with no explanation is the thing an auditor asks about first (BR-6, E4). The actor's own words."
+            },
+            {
+              "name": "corrected_time_in",
+              "source": "request",
+              "sourceRef": "$request.corrected_time_in",
+              "required": false,
+              "type": "datetime",
+              "notes": "Where the time is what was wrong."
+            },
+            {
+              "name": "corrected_time_out",
+              "source": "request",
+              "sourceRef": "$request.corrected_time_out",
+              "required": false,
+              "type": "datetime",
+              "notes": "Where the departure was wrong."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The correction as raised.",
+            "fields": [
+              {
+                "name": "correction_id",
+                "type": "string",
+                "description": "The correction."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Correction pending. The record is unchanged."
+              },
+              {
+                "name": "current_code",
+                "type": "string",
+                "description": "What the record says now, and what payroll still reads."
+              },
+              {
+                "name": "corrected_code",
+                "type": "string",
+                "description": "What it would become."
+              },
+              {
+                "name": "raised_by",
+                "type": "string",
+                "description": "The acting user, who may not also approve it (BR-7, E6)."
+              },
+              {
+                "name": "sent_to_payroll",
+                "type": "boolean",
+                "description": "True where the month has already gone to payroll (E9). The correction is handled differently and the message says so."
+              },
+              {
+                "name": "payable_days_effect",
+                "type": "string",
+                "description": "What the change would do to the month's payable days (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "A correction was raised with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not raised.",
+              "note": "Message: \"Give a reason. This record determines pay.\" Ask; never compose one."
+            },
+            {
+              "code": "ACCOUNTS_CANNOT_CHANGE",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to change a code.",
+              "written": "Nothing.",
+              "notWritten": "Not raised.",
+              "note": "The role that calculates pay must not be the role that sets the days it is calculated from (BR-10)."
+            },
+            {
+              "code": "MONTH_SENT_TO_PAYROLL",
+              "mapsTo": "E9",
+              "httpStatus": 200,
+              "meaning": "The month has already been sent to payroll.",
+              "written": "The correction is raised.",
+              "notWritten": "The month's figure is not changed by it.",
+              "treatedAsSuccess": true,
+              "note": "Reported rather than refused. Somebody has to decide how it is handled, and the message says so."
+            },
+            {
+              "code": "SUPER_ADMIN_NO_AUTHORITY",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "A Super Admin attempted a correction.",
+              "written": "Nothing.",
+              "notWritten": "Not raised."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the correction reason. This record determines pay, and a change to it with no explanation is the thing an auditor asks about first (BR-6).",
+          "derivedFrom": [
+            "BR-6",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never choose the corrected code. Present, Absent, Leave, Day-off and Holiday are five different statements about one day, and payroll reads whichever is approved.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-8",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain the approval. The School Admin raises it; they do not grant it (BR-7), and a correction to a pay record approved by the person who raised it is not a control.",
+          "derivedFrom": [
+            "BR-7",
+            "E5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the effect on the month's payable days. They are derived from the codes (BR-11), and a correction that moves a day from Absent to Present moves somebody's pay.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report MONTH_SENT_TO_PAYROLL rather than treating it as a refusal. The correction is raised and somebody has to decide how it is handled (E9) — a month already paid is not corrected silently.",
+          "derivedFrom": [
+            "BR-11",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A raised correction is approved or rejected by the Principal; nothing here withdraws one. The record is unchanged and payroll still reads the original code meanwhile."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Miss Nadia ki 5 tareekh wali hazri theek karwani hai — wo chhutti pe thin, absent nahi",
+            "lang": "ur-Latn",
+            "gloss": "Miss Nadia's attendance for the 5th needs correcting — she was on leave, not absent"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.correction.raise",
+              "inputs": {
+                "staff_id": "$request.staff_phrase → \"Miss Nadia\"",
+                "date": "2026-09-05",
+                "corrected_code": "Leave",
+                "correction_reason": "She had approved leave for 5 September which was not applied when the day was coded.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "A pending correction. The record still reads Absent and payroll still reads Absent until the Principal approves it (BR-7). Report what the change would do to the month's payable days (PR-4)."
+        },
+        {
+          "request": {
+            "text": "code galat hai, theek karwao",
+            "lang": "ur-Latn",
+            "gloss": "the code is wrong, get it corrected"
+          },
+          "context": "School Admin, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.correction.raise",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "date": "$request.date",
+                "corrected_code": "$request.corrected_code",
+                "correction_reason": "$request.correction_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: the reason is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the code should be and why — the record determines pay, and both are needed."
+        },
+        {
+          "request": {
+            "text": "pichle mahine ki hazri theek karwani hai",
+            "lang": "ur-Latn",
+            "gloss": "last month's attendance needs correcting"
+          },
+          "context": "School Admin, Johar Town branch, on a month already sent to payroll.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.correction.raise",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "date": "2026-08-14",
+                "corrected_code": "$request.corrected_code",
+                "correction_reason": "$request.correction_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns MONTH_SENT_TO_PAYROLL (E9) on the success path."
+            }
+          ],
+          "outcome": "The correction is raised, but report plainly that August has gone to payroll — the month's figure does not change by itself, and somebody has to decide how the difference is handled (PR-5)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-03-PC-4",
+      "intent": {
+        "name": "staff.attendance.correction.approve",
+        "summary": "Approve a staff attendance correction so the corrected code takes effect. Principal only, one step.",
+        "routesHere": [
+          "approve the correction on Miss Nadia's record",
+          {
+            "text": "hazri ki tashih manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the attendance correction"
+          },
+          {
+            "text": "ye tashih theek hai, manzoor karo",
+            "lang": "ur-Latn",
+            "gloss": "this correction is right, approve it"
+          },
+          "authorise the change from absent to leave"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye tashih rad kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject this correction"
+            },
+            "goesTo": "staff.attendance.correction.reject — UC-05-03-PC-5",
+            "note": "On a rejection the original record stands and nothing about the day changes (A4)."
+          },
+          {
+            "request": {
+              "text": "tashih bhejo",
+              "lang": "ur-Latn",
+              "gloss": "raise a correction"
+            },
+            "goesTo": "staff.attendance.correction.raise — UC-05-03-PC-3",
+            "note": "The School Admin raises; the Principal grants (BR-7)."
+          },
+          {
+            "request": {
+              "text": "School Admin approve kar de",
+              "lang": "ur-Latn",
+              "gloss": "let the School Admin approve it"
+            },
+            "goesTo": "Not offered.",
+            "note": "Only the Principal can approve an attendance correction (BR-7, E5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.attendance.correction.approve",
+            "inputs": {
+              "correction_id": "$request.correction_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The corrected code takes effect and the month's payable days are derived afresh from the codes (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. The acting role is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the approval and the audit entry together or not at all. The corrected code takes effect and the payable days are derived afresh (BR-11). The original entry stays visible alongside it, so a corrected record shows what it was as well as what it became (BR-13)."
+      },
+      "operations": [
+        {
+          "name": "staff.attendance.correction.approve",
+          "method": "POST",
+          "path": "/api/v1/staff-attendance/corrections/{correction_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "correction_id, since a correction carries one approval",
+          "purpose": "Approve a staff attendance correction, applying the corrected code.",
+          "parameters": [
+            {
+              "name": "correction_id",
+              "source": "resolved",
+              "sourceRef": "$request.correction_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_attendance_correction",
+                "fromPhrase": "$request.correction_phrase",
+                "onNoMatch": "Refuse. No pending correction matches.",
+                "onAmbiguous": "Ask, naming the candidates with staff member, date, current code and proposed code."
+              },
+              "notes": "The pending correction, resolved from the staff member and date the actor named."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The correction as approved, and what the record now says.",
+            "fields": [
+              {
+                "name": "correction_id",
+                "type": "string",
+                "description": "The correction."
+              },
+              {
+                "name": "code",
+                "type": "string",
+                "description": "What the record says now, and what payroll reads."
+              },
+              {
+                "name": "previous_code",
+                "type": "string",
+                "description": "Kept visible alongside it (BR-13)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The Principal. No other role can approve (BR-7)."
+              },
+              {
+                "name": "payable_days",
+                "type": "string",
+                "description": "The month's figure, derived afresh from the codes (BR-11)."
+              },
+              {
+                "name": "record_status",
+                "type": "string",
+                "description": "Corrected."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_PRINCIPAL",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "A School Admin attempted to approve.",
+              "written": "Nothing.",
+              "notWritten": "Not decided.",
+              "note": "Only the Principal can approve an attendance correction (BR-7)."
+            },
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The acting user raised the correction themselves.",
+              "written": "Nothing.",
+              "notWritten": "Not decided.",
+              "note": "The School Admin raises it; they do not grant it (BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never decide in any session but a Principal's. E5 and E6 are BR-7 working — the School Admin raises a correction and does not grant it, because the record determines pay.",
+          "derivedFrom": [
+            "BR-7",
+            "E5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the payable days after the decision. They are derived from the codes (BR-11), and this is the moment the month's figure moves.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the original entry stays visible. A corrected record shows what it was as well as what it became (BR-13), which is what makes it defensible later.",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A decision is not withdrawn. An approved correction that turns out wrong is corrected again through a fresh correction and a fresh approval, and every version stays visible (BR-13). A rejected one is raised again if somebody still believes it. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Miss Nadia wali tashih manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the correction on Miss Nadia's record"
+          },
+          "context": "Principal, Johar Town branch, on a pending change from Absent to Leave.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.correction.approve",
+              "inputs": {
+                "correction_id": "$request.correction_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The day now codes Leave with Absent kept visible beside it (BR-13). The month's payable days are derived afresh — report the new figure, because this is where the pay changes (PR-3)."
+        },
+        {
+          "request": {
+            "text": "main ne bheji thi, khud manzoor kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I raised it, I'll approve it myself"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.correction.approve",
+              "inputs": {
+                "correction_id": "$request.correction_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "In practice approve is absent from a School Admin allow-list here. The API returns NOT_PRINCIPAL (E5)."
+            }
+          ],
+          "outcome": "Nothing is decided. Report that only the Principal may approve an attendance correction — the record determines pay, and raising and granting are deliberately different hands (PR-1)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-03-PC-5",
+      "intent": {
+        "name": "staff.attendance.correction.reject",
+        "summary": "Reject a staff attendance correction, leaving the original record standing. Principal only, one step.",
+        "routesHere": [
+          "reject this correction, the original record was right",
+          {
+            "text": "ye tashih rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "reject this correction"
+          },
+          {
+            "text": "record theek tha, tashih manzoor nahi",
+            "lang": "ur-Latn",
+            "gloss": "the record was right, the correction is not approved"
+          },
+          {
+            "text": "tashih wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "turn the correction down"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tashih manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the correction"
+            },
+            "goesTo": "staff.attendance.correction.approve — UC-05-03-PC-4"
+          },
+          {
+            "request": {
+              "text": "tashih bhejo",
+              "lang": "ur-Latn",
+              "gloss": "raise a correction"
+            },
+            "goesTo": "staff.attendance.correction.raise — UC-05-03-PC-3",
+            "note": "The School Admin raises; the Principal grants (BR-7)."
+          },
+          {
+            "request": {
+              "text": "School Admin approve kar de",
+              "lang": "ur-Latn",
+              "gloss": "let the School Admin approve it"
+            },
+            "goesTo": "Not offered.",
+            "note": "Only the Principal can approve an attendance correction (BR-7, E5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.attendance.correction.reject",
+            "inputs": {
+              "correction_id": "$request.correction_phrase",
+              "decision_note": "$request.decision_note",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The original record stands and nothing about the day has changed (A4)."
+          }
+        ],
+        "onFailure": "Stop and report. The acting role is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the rejection and the audit entry together or not at all. The attendance record is untouched, the code is unchanged and the month's payable days are unmoved (A4)."
+      },
+      "operations": [
+        {
+          "name": "staff.attendance.correction.reject",
+          "method": "POST",
+          "path": "/api/v1/staff-attendance/corrections/{correction_id}/reject",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "correction_id, since a correction carries one decision",
+          "purpose": "Reject a staff attendance correction, leaving the original record in force.",
+          "parameters": [
+            {
+              "name": "correction_id",
+              "source": "resolved",
+              "sourceRef": "$request.correction_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_attendance_correction",
+                "fromPhrase": "$request.correction_phrase",
+                "onNoMatch": "Refuse. No pending correction matches.",
+                "onAmbiguous": "Ask, naming the candidates with staff member, date, current code and proposed code."
+              },
+              "notes": "The pending correction, resolved from the staff member and date the actor named."
+            },
+            {
+              "name": "decision_note",
+              "source": "request",
+              "sourceRef": "$request.decision_note",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 500 characters. Why the correction was not accepted. The use case does not require it — see OPEN-QUESTIONS — but the record determines pay, and a refusal with no stated reason is as hard to defend as a change with none."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The correction as rejected, and what the record still says.",
+            "fields": [
+              {
+                "name": "correction_id",
+                "type": "string",
+                "description": "The correction."
+              },
+              {
+                "name": "record_status",
+                "type": "string",
+                "description": "Marked. The original record stands and nothing about the day has changed (A4)."
+              },
+              {
+                "name": "code",
+                "type": "string",
+                "description": "Unchanged, and what payroll still reads."
+              },
+              {
+                "name": "proposed_code",
+                "type": "string",
+                "description": "What was asked for and refused."
+              },
+              {
+                "name": "rejected_by",
+                "type": "string",
+                "description": "The Principal."
+              },
+              {
+                "name": "payable_days",
+                "type": "string",
+                "description": "Unmoved."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_PRINCIPAL",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "A School Admin attempted to approve.",
+              "written": "Nothing.",
+              "notWritten": "Not decided.",
+              "note": "Only the Principal can approve an attendance correction (BR-7)."
+            },
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The acting user raised the correction themselves.",
+              "written": "Nothing.",
+              "notWritten": "Not decided.",
+              "note": "The School Admin raises it; they do not grant it (BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never reject in any session but a Principal's. Raising a correction and refusing it are as separate as raising and granting it (BR-7).",
+          "derivedFrom": [
+            "BR-7",
+            "E5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report that the original record stands and payroll still reads the original code. A rejection is not a neutral outcome — somebody raised it because they believed the record was wrong, and it now stays wrong in their view (A4).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Carry the Principal's own words into the decision note where they give any. The use case does not require one, but a refusal on a record that determines pay is as hard to defend without a reason as a change would be.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain a fresh correction onto a rejection. Where the School Admin still believes the record is wrong, raising it again with better evidence is their act.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A rejection is not undone. Where the School Admin still believes the record is wrong they raise the correction again, which is a fresh correction and a fresh decision. The original record has stood throughout."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye tashih rad kar do — wo waqai nahi aayi thin, koi manzoor shuda chhutti nahi thi",
+            "lang": "ur-Latn",
+            "gloss": "reject this correction — she genuinely did not come in, there was no approved leave"
+          },
+          "context": "Principal, Johar Town branch, on a pending change from Absent to Leave.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.correction.reject",
+              "inputs": {
+                "correction_id": "$request.correction_phrase",
+                "decision_note": "No approved leave was held for that date; the original record is correct.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The original record stands and nothing about the day has changed (A4). The month's payable days are unmoved. Report that the School Admin's correction was refused and why — they raised it believing the record was wrong (PR-2)."
+        },
+        {
+          "request": {
+            "text": "tashih rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "reject the correction"
+          },
+          "context": "Principal, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.correction.reject",
+              "inputs": {
+                "correction_id": "$request.correction_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "decision_note is omitted because the request gives none, and the use case does not require it (PR-3)."
+            }
+          ],
+          "outcome": "Rejected with no note. Report that the record stands — and that nothing on file says why, which is worth offering to fix while the Principal is still looking at it."
+        },
+        {
+          "request": {
+            "text": "main ne bheji thi, khud rad kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I raised it, I'll reject it myself"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.attendance.correction.reject",
+              "inputs": {
+                "correction_id": "$request.correction_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The API returns CANNOT_APPROVE_OWN (E6)."
+            }
+          ],
+          "outcome": "Nothing is decided. Report that only the Principal decides a correction either way (PR-1)."
+        }
+      ]
+    }
+  ]
+}

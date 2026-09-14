@@ -1,0 +1,2400 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-06-01",
+    "name": "Create an exam, schedule its papers, and publish the timetable once approved",
+    "module": "Examination",
+    "file": "../UseCases/UC-06-01.json",
+    "featureRef": "6.1 Exam creation and scheduling"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-06-01-PC-1",
+      "intent": {
+        "name": "exam.create",
+        "summary": "Create an exam and fix each subject's total, passing and grace marks in the same act. Two steps, and the three figures can never be changed afterwards.",
+        "routesHere": [
+          "create the First Term Examination for classes 6 to 8, starting 12 November",
+          {
+            "text": "First Term ka exam banao, 12 November se shuru",
+            "lang": "ur-Latn",
+            "gloss": "create the First Term exam, starting 12 November"
+          },
+          {
+            "text": "naya imtihan banana hai — classes 6, 7, 8 ke liye",
+            "lang": "ur-Latn",
+            "gloss": "we need to create a new exam — for classes 6, 7 and 8"
+          },
+          {
+            "text": "har mazmoon ke total aur passing marks bhi set kar do",
+            "lang": "ur-Latn",
+            "gloss": "set the total and passing marks for each subject too"
+          },
+          "set up the mid-term exam with theory out of 70 and practical out of 30"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "paper ki tareekh rakh do",
+              "lang": "ur-Latn",
+              "gloss": "set the paper's date"
+            },
+            "goesTo": "exam.paper.schedule — UC-06-01-PC-3",
+            "note": "Creating the exam fixes what is examined and how it is marked. When each paper is sat is scheduled separately."
+          },
+          {
+            "request": {
+              "text": "total marks badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the total marks"
+            },
+            "goesTo": "Not offered.",
+            "note": "The total, passing and grace figures are fixed at creation and cannot be changed afterwards (BR-3). Marks entry and grade calculation both read them, and a rule that moves after marks are entered makes every earlier entry unexplainable."
+          },
+          {
+            "request": {
+              "text": "imtihan ka natija nikalo",
+              "lang": "ur-Latn",
+              "gloss": "produce the exam result"
+            },
+            "goesTo": "exam.results.* — UC-06-03",
+            "note": "Creating an exam produces no marks and no results. It schedules an exam; it examines nobody (BR-11)."
+          },
+          {
+            "request": {
+              "text": "purana exam mita do",
+              "lang": "ur-Latn",
+              "gloss": "delete the old exam"
+            },
+            "goesTo": "exam.cancel — UC-06-01-PC-8",
+            "note": "An exam is never deleted. One that will not run is cancelled, and its schedule and approvals stay readable (BR-12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.create",
+            "inputs": {
+              "name": "$request.name",
+              "code": "$request.code",
+              "start_date": "$request.start_date",
+              "class_subjects": "$request.class_subjects",
+              "session_id": "$session.academic_session_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "The exam and what it covers. A subject not attached to the class cannot be examined in it (BR-1)."
+          },
+          {
+            "step": 2,
+            "operation": "exam.subjectrules.set",
+            "inputs": {
+              "exam_id": "$step1.exam_id",
+              "subject_rules": "$request.subject_rules"
+            },
+            "note": "Every subject carries its own total, passing and grace figures (BR-2) — a single figure across an exam does not survive contact with a practical paper worth 30 and a theory paper worth 70. Fixed here for good (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. Where step 2 fails the exam exists in Draft with no subject rules, and the rules are set again rather than the exam created twice.",
+        "atomicity": "Not atomic across the two steps. Step 1 writes the exam and step 2 the marking rules, and an exam left without rules is visible in Draft and can be completed. Nothing is published, nobody is notified and no student is examined by either step (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "exam.create",
+          "method": "POST",
+          "path": "/api/v1/exams",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "code + session_id, since a code is unique within the session",
+          "purpose": "Create an exam for the session, covering named classes and their subjects.",
+          "parameters": [
+            {
+              "name": "name",
+              "source": "request",
+              "sourceRef": "$request.name",
+              "required": true,
+              "type": "string",
+              "notes": "2 to 100 characters. What the exam is called on the timetable and on the result."
+            },
+            {
+              "name": "code",
+              "source": "request",
+              "sourceRef": "$request.code",
+              "required": true,
+              "type": "string",
+              "notes": "Unique within the academic session (E1). Where the actor did not give one, ask — never derive it from the name."
+            },
+            {
+              "name": "start_date",
+              "source": "request",
+              "sourceRef": "$request.start_date",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the past, and a working day."
+            },
+            {
+              "name": "class_subjects",
+              "source": "request",
+              "sourceRef": "$request.class_subjects",
+              "required": true,
+              "type": "object[]",
+              "notes": "The classes examined and, per class, the subjects. A subject not attached to the class cannot be examined in it (BR-1). Named by the actor; never widened to \"all subjects\" on their behalf."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The exam as created.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "code",
+                "type": "string",
+                "description": "As recorded."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. Nothing is scheduled, approved or published yet."
+              },
+              {
+                "name": "subjects_covered",
+                "type": "object[]",
+                "description": "The class and subject pairs now in the exam."
+              },
+              {
+                "name": "subjects_rejected",
+                "type": "object[]",
+                "description": "Subjects named that are not attached to the class, which are not in the exam (BR-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CODE_EXISTS",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The exam code already exists in this session.",
+              "written": "Nothing.",
+              "notWritten": "No exam created.",
+              "note": "Ask for a different code. Never append a suffix to make one unique."
+            }
+          ]
+        },
+        {
+          "name": "exam.subjectrules.set",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/subject-rules",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "exam_id + subject_id, since a subject carries one set of rules",
+          "purpose": "Fix the total marks, passing marks and maximum grace for each subject in the exam.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "step",
+              "sourceRef": "$step1.exam_id",
+              "required": true,
+              "type": "string",
+              "notes": "The exam created in step 1."
+            },
+            {
+              "name": "subject_rules",
+              "source": "request",
+              "sourceRef": "$request.subject_rules",
+              "required": true,
+              "type": "object[]",
+              "notes": "Per subject: total marks, passing marks and maximum grace marks (BR-2). Every figure is the actor's; a planner that supplies a customary 100 and 40 is inventing the school's marking scheme."
+            }
+          ],
+          "returns": {
+            "description": "The rules as fixed.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "rules",
+                "type": "object[]",
+                "description": "Per subject, the three figures now fixed (BR-3)."
+              },
+              {
+                "name": "subjects_without_rules",
+                "type": "string[]",
+                "description": "Subjects in the exam still carrying no rules. The exam cannot be submitted for approval until every one has them."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "PASSING_NOT_BELOW_TOTAL",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The passing marks are not below the total.",
+              "written": "Nothing.",
+              "notWritten": "No rules saved for that subject.",
+              "note": "The message names the subject and both figures (BR-2)."
+            },
+            {
+              "code": "RULES_ALREADY_FIXED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The three figures already exist for that subject and a change was attempted.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Fixed at creation and not changeable afterwards (BR-3). Report it; there is no route past it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply a total, passing or grace figure the actor did not state. They are fixed for the life of the exam (BR-3) and every mark and grade is read against them — a figure a planner assumed becomes the school's marking scheme.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never plan a change to those three figures. E3 is BR-3 working, and an exam whose rules moved after marks were entered makes every earlier entry unexplainable.",
+          "derivedFrom": [
+            "BR-3",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never widen the classes or subjects. \"The exam\" means the classes and subjects the actor named; a planner that reads it as every class in the school schedules papers for children who were not being examined.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the subjects rejected for not being attached to the class. They are silently absent from the exam otherwise, and nobody discovers it until the timetable is read (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never describe the exam as scheduled or published. Creating one produces no marks and no results, and nothing is visible to anybody until it is approved and published (BR-11, BR-6).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Ask for the code rather than deriving one. It is unique within the session (E1) and appears on every result — a planner that builds \"FT-2026\" from the exam's name has named the school's records for it.",
+          "derivedFrom": [
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "session_id and branch_id come from $session, even where the request names a year or a campus.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An exam is never deleted (BR-12). One created in error is cancelled with a reason, which keeps its schedule and approvals readable. The controller must not attempt a compensating call after a failed step 2 — the exam stands in Draft and its rules are set again."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "First Term Examination banao — classes 6, 7 aur 8 ke liye, 12 November se",
+            "lang": "ur-Latn",
+            "gloss": "create the First Term Examination — for classes 6, 7 and 8, starting 12 November"
+          },
+          "context": "Coordinator, Johar Town branch. The actor also gave, per subject, the totals and pass marks.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.create",
+              "inputs": {
+                "name": "First Term Examination",
+                "code": "$request.code",
+                "start_date": "2026-11-12",
+                "class_subjects": "$request.class_subjects",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The code is asked for, not derived from the name (PR-6)."
+            },
+            {
+              "step": 2,
+              "operation": "exam.subjectrules.set",
+              "inputs": {
+                "exam_id": "$step1.exam_id",
+                "subject_rules": "$request.subject_rules"
+              },
+              "note": "Every figure comes from what the Coordinator stated (PR-1)."
+            }
+          ],
+          "outcome": "The exam stands in Draft. Report the subjects rejected for not being attached to their class (PR-4), and that no paper is scheduled and nothing is visible to anybody yet (PR-5)."
+        },
+        {
+          "request": {
+            "text": "naya exam banao, total marks har mazmoon ke 100 rakh do",
+            "lang": "ur-Latn",
+            "gloss": "create a new exam, set every subject's total marks to 100"
+          },
+          "context": "Coordinator, Johar Town branch, where a practical paper in the exam is worth 30.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.create",
+              "inputs": {
+                "name": "$request.name",
+                "code": "$request.code",
+                "start_date": "$request.start_date",
+                "class_subjects": "$request.class_subjects",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              }
+            },
+            {
+              "step": 2,
+              "operation": "exam.subjectrules.set",
+              "inputs": {
+                "exam_id": "$step1.exam_id",
+                "subject_rules": "$request.subject_rules — 100 per subject, as stated"
+              },
+              "note": "Emitted as stated. The Coordinator said 100 for every subject, and it is their marking scheme to set (PR-1)."
+            }
+          ],
+          "outcome": "The rules are fixed at 100 across the board. Report that they cannot be changed afterwards (PR-2), and that the practical paper is now marked out of 100 — before the exam is submitted for approval is the only moment this is cheap to correct."
+        },
+        {
+          "request": {
+            "text": "mid-term ke total marks 50 se badal kar 70 kar do",
+            "lang": "ur-Latn",
+            "gloss": "change the mid-term's total marks from 50 to 70"
+          },
+          "context": "Coordinator, Johar Town branch, on an exam already created.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.subjectrules.set",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_rules": "$request.subject_rules"
+              },
+              "note": "No plan is emitted. The three figures are fixed at creation (PR-2), and there is no capability that moves them."
+            }
+          ],
+          "outcome": "Nothing is written. Report that the totals cannot be changed once the exam exists — marks entry and grade calculation both read them, and moving one would make every mark already entered unexplainable."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-01-PC-2",
+      "intent": {
+        "name": "exam.paper.assign",
+        "summary": "Attach a paper assembled from the question bank to a subject in the exam. One step. A paper a teacher authored arrives as a file and is not planned here.",
+        "routesHere": [
+          "attach the maths paper from the question bank to the mid-term",
+          {
+            "text": "question bank se paper laga do",
+            "lang": "ur-Latn",
+            "gloss": "attach the paper from the question bank"
+          },
+          {
+            "text": "physics ka paper exam ke sath jorh do",
+            "lang": "ur-Latn",
+            "gloss": "attach the physics paper to the exam"
+          },
+          {
+            "text": "jo paper bank se banaya tha wo is mazmoon par laga do",
+            "lang": "ur-Latn",
+            "gloss": "attach the paper we built from the bank to this subject"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "teacher ne khud paper banaya hai, wo lagana hai",
+              "lang": "ur-Latn",
+              "gloss": "the teacher authored the paper themselves, we need to attach it"
+            },
+            "goesTo": "Not offered.",
+            "note": "An authored paper is submitted as a file by the subject teacher and reviewed by the Coordinator (BR-4, A1). A file does not travel in a plan, so this is done on the screen."
+          },
+          {
+            "request": {
+              "text": "bank se naya paper banao",
+              "lang": "ur-Latn",
+              "gloss": "build a new paper from the bank"
+            },
+            "goesTo": "paper.create — UC-06-07",
+            "note": "Assembling a paper from the bank is the question bank's own work. This attaches one that exists."
+          },
+          {
+            "request": {
+              "text": "paper ki tareekh rakh do",
+              "lang": "ur-Latn",
+              "gloss": "set the paper's date"
+            },
+            "goesTo": "exam.paper.schedule — UC-06-01-PC-3"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.paper.assign",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "subject_id": "$request.subject_phrase",
+              "paper_id": "$request.paper_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every subject needs a paper before the exam can be submitted for approval (E7), because a paper nobody reviewed reaches the hall unchecked (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the paper attached to that subject in this exam, with the audit entry. The paper's contents are not read, shown or summarised by anything here — a leaked paper is the worst failure in this use case."
+      },
+      "operations": [
+        {
+          "name": "exam.paper.assign",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/subjects/{subject_id}/paper",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + subject_id, since a subject carries one paper",
+          "purpose": "Attach a paper held in the question bank to a subject in the exam.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code, dates and status."
+              },
+              "notes": "The exam the paper is for."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not in this exam.",
+                "onAmbiguous": "Ask, naming the subjects in the exam and their classes."
+              },
+              "notes": "The subject within the exam. A subject not in the exam has no paper slot (BR-1)."
+            },
+            {
+              "name": "paper_id",
+              "source": "resolved",
+              "sourceRef": "$request.paper_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "paper",
+                "fromPhrase": "$request.paper_phrase",
+                "onNoMatch": "Refuse. No paper in the bank matches.",
+                "onAmbiguous": "Ask, naming the candidates by title and subject — never by their questions."
+              },
+              "notes": "The paper held in the question bank. Its contents are never read into the plan or the reply."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The attachment.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "subject_id",
+                "type": "string",
+                "description": "The subject."
+              },
+              {
+                "name": "paper_id",
+                "type": "string",
+                "description": "The paper now attached."
+              },
+              {
+                "name": "subjects_without_paper",
+                "type": "string[]",
+                "description": "Subjects in the exam still carrying no paper. The exam cannot be submitted for approval until every one has one (E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SUBJECT_NOT_IN_EXAM",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The subject named is not part of this exam.",
+              "written": "Nothing.",
+              "notWritten": "Nothing attached."
+            },
+            {
+              "code": "PAPER_ALREADY_ATTACHED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "That subject already carries a paper.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Report which paper. Replacing one is a decision, not a retry."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never read, quote or summarise the paper's contents. Nothing before the exam should make a question readable, and a plan that echoed one back would leak it to whoever is watching the screen.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never plan an authored paper. It arrives as a file the teacher submits and the Coordinator reviews (BR-4, A1). A plan carries no file, and a paper nobody reviewed reaching the hall is what BR-4 exists to prevent.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report which subjects still carry no paper. The exam cannot be submitted for approval until every one has one (E7), and the Coordinator finds out at submission otherwise.",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never replace an attached paper as a retry. Report which paper is already there and let the Coordinator decide.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "No reversal is offered. A paper attached in error is replaced on the screen, where the Coordinator can see both."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mid-term ke liye maths ka paper bank se laga do",
+            "lang": "ur-Latn",
+            "gloss": "attach the maths paper from the bank for the mid-term"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.assign",
+              "inputs": {
+                "exam_id": "$request.exam_phrase → \"mid-term\"",
+                "subject_id": "$request.subject_phrase → \"maths\"",
+                "paper_id": "$request.paper_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The paper is named by title, never by its questions (PR-1)."
+            }
+          ],
+          "outcome": "Attached. Report the subjects still without a paper (PR-3) — the exam cannot go for approval until each has one."
+        },
+        {
+          "request": {
+            "text": "teacher ne physics ka paper bana kar bheja hai, laga do",
+            "lang": "ur-Latn",
+            "gloss": "the teacher has sent the physics paper they wrote, attach it"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.assign",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase",
+                "paper_id": "$request.paper_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. An authored paper is a file, and a file does not travel in a plan (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that the teacher submits it under their own exam duties and the Coordinator reviews it there — the review is the point, not the upload."
+        },
+        {
+          "request": {
+            "text": "is mazmoon par doosra paper laga do",
+            "lang": "ur-Latn",
+            "gloss": "attach a different paper to this subject"
+          },
+          "context": "Coordinator, Johar Town branch, where a paper is already attached.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.assign",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase",
+                "paper_id": "$request.paper_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns PAPER_ALREADY_ATTACHED."
+            }
+          ],
+          "outcome": "Nothing changes. Report which paper is attached and ask whether it is to be replaced (PR-4) — the plan does not decide that."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-01-PC-3",
+      "intent": {
+        "name": "exam.paper.schedule",
+        "summary": "Give one paper its date, time, duration, invigilator and marks deadline. One step, and the clash and holiday checks belong to the API.",
+        "routesHere": [
+          "schedule the maths paper for 14 November, 9am, two hours",
+          {
+            "text": "maths ka paper 14 November subah 9 baje rakh do",
+            "lang": "ur-Latn",
+            "gloss": "schedule the maths paper for 14 November at 9am"
+          },
+          {
+            "text": "paper ki tareekh aur waqt set karo, invigilator bhi laga do",
+            "lang": "ur-Latn",
+            "gloss": "set the paper's date and time, and assign an invigilator"
+          },
+          {
+            "text": "marks jama karane ki aakhri tareekh 20 November rakho",
+            "lang": "ur-Latn",
+            "gloss": "set the marks deadline to 20 November"
+          },
+          "schedule physics for the 16th with the deadline a week after"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti ka din badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the off-day"
+            },
+            "goesTo": "calendar.day.remove — UC-05-04",
+            "note": "A paper is not scheduled on a day the school is closed (BR-10). Which days are closed is the calendar's business, and moving one to fit a paper is a decision about the school year."
+          },
+          {
+            "request": {
+              "text": "shaya-shuda timetable badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the published timetable"
+            },
+            "goesTo": "exam.schedule.edit — UC-06-01-PC-7",
+            "note": "Once published, a change is the School Admin's, carries a reason, and everybody affected is told (BR-9)."
+          },
+          {
+            "request": {
+              "text": "imtihan manzoori ke liye bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the exam for approval"
+            },
+            "goesTo": "exam.approval.submit — UC-06-01-PC-4"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.paper.schedule",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "subject_id": "$request.subject_phrase",
+              "paper_date": "$request.paper_date",
+              "time_slot": "$request.time_slot",
+              "duration_minutes": "$request.duration",
+              "marks_deadline": "$request.marks_deadline",
+              "invigilator_id": "$request.invigilator_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The holiday check and the clash check are the API's (BR-10), and a refused slot means another is chosen — not that the check is worked around."
+          }
+        ],
+        "onFailure": "Stop and report. A closed day, a clash with another paper for the same class, and a deadline before the paper date all arrive as errors and each names what is wrong.",
+        "atomicity": "One write: the paper's slot, its invigilator and its marks deadline together with the audit entry, or not at all. Nothing is published — students, families and teachers learn nothing until the exam is approved (BR-6)."
+      },
+      "operations": [
+        {
+          "name": "exam.paper.schedule",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/subjects/{subject_id}/schedule",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + subject_id, since a subject carries one slot",
+          "purpose": "Schedule one paper with its date, slot, duration, invigilator and marks deadline.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code, dates and status."
+              },
+              "notes": "The exam, resolved from its name or code."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not in this exam.",
+                "onAmbiguous": "Ask, naming the subjects in the exam and their classes."
+              },
+              "notes": "The subject within the exam, which fixes the class the paper is for."
+            },
+            {
+              "name": "paper_date",
+              "source": "request",
+              "sourceRef": "$request.paper_date",
+              "required": true,
+              "type": "date",
+              "notes": "The day the paper is sat. Not a day the school is closed (BR-10, E4)."
+            },
+            {
+              "name": "time_slot",
+              "source": "request",
+              "sourceRef": "$request.time_slot",
+              "required": true,
+              "type": "datetime",
+              "notes": "The start time, 24-hour. Two papers for the same class must not overlap (BR-10, E5)."
+            },
+            {
+              "name": "duration_minutes",
+              "source": "request",
+              "sourceRef": "$request.duration",
+              "required": true,
+              "type": "integer",
+              "notes": "How long the paper runs. The actor's; never taken from another paper."
+            },
+            {
+              "name": "marks_deadline",
+              "source": "request",
+              "sourceRef": "$request.marks_deadline",
+              "required": true,
+              "type": "date",
+              "notes": "When the subject's teacher must have uploaded the marks. On or after the paper date (BR-5, E6). It is what makes the completeness check in marks entry mean anything."
+            },
+            {
+              "name": "invigilator_id",
+              "source": "resolved",
+              "sourceRef": "$request.invigilator_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.invigilator_phrase",
+                "onNoMatch": "Refuse. No staff member matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their subject and class."
+              },
+              "notes": "The staff member invigilating. A clash with their own timetable is not checked by anything modelled here."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The slot as scheduled.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "subject_id",
+                "type": "string",
+                "description": "The subject."
+              },
+              {
+                "name": "paper_date",
+                "type": "date",
+                "description": "As scheduled."
+              },
+              {
+                "name": "time_slot",
+                "type": "datetime",
+                "description": "As scheduled."
+              },
+              {
+                "name": "marks_deadline",
+                "type": "date",
+                "description": "The teacher's deadline for this subject (BR-5)."
+              },
+              {
+                "name": "invigilator_id",
+                "type": "string",
+                "description": "The staff member assigned."
+              },
+              {
+                "name": "subjects_unscheduled",
+                "type": "string[]",
+                "description": "Subjects in the exam still carrying no slot."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CLOSED_DAY",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The date is a holiday or an off-day.",
+              "written": "Nothing.",
+              "notWritten": "No slot saved.",
+              "note": "The message names the day and why it is closed. Choose another date with the Coordinator; never move the calendar to fit the paper."
+            },
+            {
+              "code": "CLASS_CLASH",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "Another paper for the same class overlaps that slot.",
+              "written": "Nothing.",
+              "notWritten": "No slot saved.",
+              "note": "The message names the other paper. A class cannot sit two papers at once (BR-10)."
+            },
+            {
+              "code": "DEADLINE_BEFORE_PAPER",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "The marks deadline falls before the paper date.",
+              "written": "Nothing.",
+              "notWritten": "No slot saved."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose a date or a time the actor did not give. A timetable is read by every family in the school, and a planner that filled in \"the next working day\" has scheduled an exam nobody agreed to.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never work around a closed day or a clash. E4 and E5 are BR-10 working — report which day is closed or which paper clashes, and let the Coordinator choose another slot.",
+          "derivedFrom": [
+            "BR-10",
+            "E4",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never derive the marks deadline from the paper date. It is the teacher's deadline and the completeness check reads it (BR-5); a planner that added a customary week set that teacher's workload.",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the subjects still unscheduled. Every paper needs a slot before the exam can go for approval, and the Coordinator discovers it at submission otherwise.",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never describe the schedule as published. Students, families and teachers learn nothing until the School Admin approves it (BR-6, BR-7).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "No reversal is offered. A slot is rescheduled while the exam is in Draft; once published, a change is the School Admin's and carries a reason (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "maths ka paper 14 November subah 9 baje, do ghante — marks 20 November tak",
+            "lang": "ur-Latn",
+            "gloss": "the maths paper on 14 November at 9am, two hours — marks by 20 November"
+          },
+          "context": "Coordinator, Johar Town branch. The invigilator was named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.schedule",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase → \"maths\"",
+                "paper_date": "2026-11-14",
+                "time_slot": "2026-11-14 09:00",
+                "duration_minutes": "120",
+                "marks_deadline": "2026-11-20",
+                "invigilator_id": "$request.invigilator_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Every figure is the Coordinator's, including the deadline (PR-3)."
+            }
+          ],
+          "outcome": "Scheduled. Report the subjects still without a slot (PR-4), and that nothing is visible to anybody yet (PR-5)."
+        },
+        {
+          "request": {
+            "text": "physics ka paper 15 November rakh do",
+            "lang": "ur-Latn",
+            "gloss": "schedule the physics paper for 15 November"
+          },
+          "context": "Coordinator, Johar Town branch, where 15 November is a public holiday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.schedule",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase",
+                "paper_date": "2026-11-15",
+                "time_slot": "$request.time_slot",
+                "duration_minutes": "$request.duration",
+                "marks_deadline": "$request.marks_deadline",
+                "invigilator_id": "$request.invigilator_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns CLOSED_DAY (E4)."
+            }
+          ],
+          "outcome": "Nothing is scheduled. Report that the 15th is a holiday and ask for another date — never open the calendar to make the date work (PR-2)."
+        },
+        {
+          "request": {
+            "text": "baaqi papers khud set kar do, hafte mein phaila do",
+            "lang": "ur-Latn",
+            "gloss": "set the remaining papers yourself, spread them over the week"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.paper.schedule",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase",
+                "paper_date": "$request.paper_date — absent",
+                "time_slot": "$request.time_slot — absent",
+                "duration_minutes": "$request.duration — absent",
+                "marks_deadline": "$request.marks_deadline — absent",
+                "invigilator_id": "$request.invigilator_phrase — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The dates, times and durations have nothing to take them from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. List the unscheduled subjects and ask for each paper's date, time, duration, invigilator and deadline — a timetable every family reads is not something to fill in on their behalf."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-01-PC-4",
+      "intent": {
+        "name": "exam.approval.submit",
+        "summary": "Send a completed exam to the School Admin for approval. One step, and it publishes nothing.",
+        "routesHere": [
+          "send the mid-term exam for approval",
+          {
+            "text": "imtihan manzoori ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the exam for approval"
+          },
+          {
+            "text": "sab papers set ho gaye hain, aage bhej do",
+            "lang": "ur-Latn",
+            "gloss": "all the papers are set, send it on"
+          },
+          {
+            "text": "School Admin ko manzoori ke liye bheja jaye",
+            "lang": "ur-Latn",
+            "gloss": "let it go to the School Admin for approval"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "khud manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve it yourself"
+            },
+            "goesTo": "exam.approve — UC-06-01-PC-5",
+            "note": "The Coordinator creates and schedules; the School Admin approves (BR-6). A Coordinator cannot approve their own exam (E8)."
+          },
+          {
+            "request": {
+              "text": "timetable shaya kar do",
+              "lang": "ur-Latn",
+              "gloss": "publish the timetable"
+            },
+            "goesTo": "exam.approve — UC-06-01-PC-5",
+            "note": "Publication is refused before approval (E9), and follows from the approval itself (BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.approval.submit",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every subject needs its rules, its paper and its slot before it goes (E7), and nothing is published by sending it."
+          }
+        ],
+        "onFailure": "Stop and report. A subject with no paper is enforced by the API and arrives as an error naming the subject.",
+        "atomicity": "One write: the exam moves to Awaiting approval, with the audit entry. Nothing is published — students, families and teachers still know nothing (BR-6)."
+      },
+      "operations": [
+        {
+          "name": "exam.approval.submit",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/submit",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id, since an exam sits in one place at a time",
+          "purpose": "Send the exam to the School Admin for approval.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code, dates and status."
+              },
+              "notes": "The exam in Draft or Returned."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The exam as submitted.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval."
+              },
+              {
+                "name": "papers_count",
+                "type": "integer",
+                "description": "Papers scheduled in the exam."
+              },
+              {
+                "name": "approver_role",
+                "type": "string",
+                "description": "Who it now sits with (BR-6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SUBJECT_WITHOUT_PAPER",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "A subject in the exam has no paper assigned.",
+              "written": "Nothing.",
+              "notWritten": "Not submitted.",
+              "note": "The message names the subjects. A paper nobody reviewed reaches the hall unchecked (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve as part of submitting. The Coordinator creates and schedules and the School Admin approves (BR-6) — one person doing both is the separation this rule exists for.",
+          "derivedFrom": [
+            "BR-6",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never describe submission as publication. Nothing reaches a student, a family or a teacher until the exam is approved and published (BR-6, BR-7).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the subjects that blocked the submission by name. \"Some subjects have no paper\" sends the Coordinator hunting through a timetable.",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A submission is not withdrawn here. The School Admin returns it with a reason (A3), which sends it back to the Coordinator with nothing published."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mid-term manzoori ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the mid-term for approval"
+          },
+          "context": "Coordinator, Johar Town branch, with every paper scheduled.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.approval.submit",
+              "inputs": {
+                "exam_id": "$request.exam_phrase → \"mid-term\"",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "It sits with the School Admin. Report that nothing is published yet (PR-2) — families see a timetable only after approval."
+        },
+        {
+          "request": {
+            "text": "imtihan bhej do, physics ka paper baad mein laga denge",
+            "lang": "ur-Latn",
+            "gloss": "send the exam, we will attach the physics paper later"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.approval.submit",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns SUBJECT_WITHOUT_PAPER (E7)."
+            }
+          ],
+          "outcome": "Not submitted. Report that physics has no paper (PR-3) and that a paper nobody reviewed reaching the hall is what the rule exists to prevent."
+        },
+        {
+          "request": {
+            "text": "imtihan bhej kar manzoor bhi kar do",
+            "lang": "ur-Latn",
+            "gloss": "send the exam and approve it too"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.approval.submit",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step only. The approval is not chained (PR-1) — a Coordinator cannot approve their own exam."
+            }
+          ],
+          "outcome": "Submitted, and it sits with the School Admin. Report that approval is theirs, and that it publishes the schedule to everybody when it comes."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-01-PC-5",
+      "intent": {
+        "name": "exam.approve",
+        "summary": "Approve the exam, which publishes the schedule to the Principal, the teachers, the students and their families in the same act. School Admin only, one step.",
+        "routesHere": [
+          "approve the mid-term exam and publish the timetable",
+          {
+            "text": "imtihan manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the exam"
+          },
+          {
+            "text": "timetable shaya kar do",
+            "lang": "ur-Latn",
+            "gloss": "publish the timetable"
+          },
+          {
+            "text": "manzoori de do, sab ko bata do",
+            "lang": "ur-Latn",
+            "gloss": "approve it and tell everybody"
+          },
+          "approve the first term exam"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "manzoor nahi karna, wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "do not approve it, send it back"
+            },
+            "goesTo": "exam.return — UC-06-01-PC-6",
+            "note": "Returning carries a reason and publishes nothing (A3)."
+          },
+          {
+            "request": {
+              "text": "alag se shaya karo",
+              "lang": "ur-Latn",
+              "gloss": "publish it separately"
+            },
+            "goesTo": "exam.approve, which publishes",
+            "note": "On approval the schedule is published to everybody concerned in one act (BR-7). There is no separate publication step to plan."
+          },
+          {
+            "request": {
+              "text": "walidain ko bhi bata do",
+              "lang": "ur-Latn",
+              "gloss": "tell the parents as well"
+            },
+            "goesTo": "exam.approve, which tells them",
+            "note": "Students, guardians, teachers and the Principal are all notified by the approval (BR-7, BR-8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.approve",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches every family in the exam. On approval the schedule is published to the Principal, the teachers, the students and their guardians in one act (BR-7) — each teacher's notice lists their own duties and their upload deadline (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by the Coordinator who created the exam is refused by the API and arrives as an error.",
+        "atomicity": "One write, atomic in itself: the approval, the publication and the notifications to everybody concerned together or not at all (BR-7). This is the moment the exam becomes real to families — after it, a change is an edit that carries a reason and notifies everybody again (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "exam.approve",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id, since an exam is approved once and a repeat must not notify every family twice",
+          "purpose": "Approve the exam and publish its schedule to everybody concerned.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code, dates and status."
+              },
+              "notes": "The exam awaiting approval."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval and what it published.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Published."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "papers_published",
+                "type": "object[]",
+                "description": "Each paper with its date, slot and duration, as families now see it."
+              },
+              {
+                "name": "teachers_notified",
+                "type": "integer",
+                "description": "Each told their own invigilation, their own marking and their own deadline (BR-8)."
+              },
+              {
+                "name": "students_notified",
+                "type": "integer",
+                "description": "Students and guardians told the schedule (BR-7)."
+              },
+              {
+                "name": "notification_status",
+                "type": "string",
+                "description": "Delivery status per the Messaging module policy."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SELF_APPROVAL",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "The actor is the Coordinator who created the exam.",
+              "written": "Nothing.",
+              "notWritten": "Not approved, nothing published.",
+              "note": "The Coordinator creates and schedules; the School Admin approves (BR-6)."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The exam is in Draft, Returned, Published or Cancelled.",
+              "written": "Nothing.",
+              "notWritten": "Nothing published.",
+              "note": "Publication before approval is refused (BR-6). Report the state it is actually in."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never chain a separate publication call. Approval publishes the schedule in the same act (BR-7), and a second call would message every family in the exam twice.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never approve an exam the actor created. E8 is BR-6 working, and a planner that reached for approval on a Coordinator's behalf would collapse the only check on a timetable.",
+          "derivedFrom": [
+            "BR-6",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report what was published and to whom. This is the moment thousands of families are messaged, and \"approved\" alone does not say that it happened.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never re-approve to resend a notification. The approval is idempotent for good reason; a resend is not a plan this contract offers.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never plan a change to the schedule in the same breath. Once published, a change is an edit that carries a reason and notifies everybody again (BR-9) — moving a date one minute after publishing it messages every family twice for one decision.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. A published schedule is edited with a reason and everybody affected is notified (BR-9); an exam that will not run at all is cancelled (BR-12). The controller must not attempt a compensating call — the notifications have already gone."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mid-term manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the mid-term"
+          },
+          "context": "School Admin, Johar Town branch, on an exam awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.approve",
+              "inputs": {
+                "exam_id": "$request.exam_phrase → \"mid-term\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step. No publication call is chained (PR-1)."
+            }
+          ],
+          "outcome": "Approved and published. Report the paper dates as families now see them, and that every teacher has their own duties and deadline (PR-3)."
+        },
+        {
+          "request": {
+            "text": "apna banaya hua imtihan manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the exam I created"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.approve",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns SELF_APPROVAL (E8)."
+            }
+          ],
+          "outcome": "Nothing is approved and nothing is published. Report that the School Admin approves — the Coordinator schedules, and the two being different people is the whole check."
+        },
+        {
+          "request": {
+            "text": "manzoor kar do aur physics ka paper ek din aage kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve it and move the physics paper a day later"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.approve",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only. The date change is not chained (PR-5)."
+            }
+          ],
+          "outcome": "Published as it stands. Report that moving physics now is an edit to a published schedule — it carries a reason and messages every affected family again, so it is worth doing deliberately rather than in the same breath."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-01-PC-6",
+      "intent": {
+        "name": "exam.return",
+        "summary": "Return an exam to the Coordinator with the reason it was not approved. School Admin only, one step, and nothing is published.",
+        "routesHere": [
+          "return this exam — the physics date clashes with the sports day",
+          {
+            "text": "imtihan wapas bhej do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "return the exam with a reason"
+          },
+          {
+            "text": "manzoor nahi kar sakte, theek kar ke dobara bhejo",
+            "lang": "ur-Latn",
+            "gloss": "we cannot approve it, correct it and send it again"
+          },
+          {
+            "text": "tareekhein durust karwa lo",
+            "lang": "ur-Latn",
+            "gloss": "have the dates corrected"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "imtihan manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the exam"
+            },
+            "goesTo": "exam.approve — UC-06-01-PC-5"
+          },
+          {
+            "request": {
+              "text": "imtihan hoga hi nahi",
+              "lang": "ur-Latn",
+              "gloss": "the exam will not happen at all"
+            },
+            "goesTo": "exam.cancel — UC-06-01-PC-8",
+            "note": "Returning sends it back for correction; cancelling ends it."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.return",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing has been public, so nothing has to be retracted — students and families learn nothing of a schedule that was not agreed (A3)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. The exam goes back to the Coordinator, who corrects it and resubmits. No student, family or teacher is told anything, because nothing was ever published to them."
+      },
+      "operations": [
+        {
+          "name": "exam.return",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id, since an exam sits in one place at a time",
+          "purpose": "Return the exam to the Coordinator with the reason it was not approved.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code, dates and status."
+              },
+              "notes": "The exam awaiting approval."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Why it was not approved. The Coordinator acts on it, so it says what to change."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It sits with the Coordinator again."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "coordinator_notified",
+                "type": "string",
+                "description": "Delivery status."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E10",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned.",
+              "note": "Ask what should change; never compose one."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The exam is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. The Coordinator acts on it, and a reason a planner wrote sends somebody rescheduling papers on a guess.",
+          "derivedFrom": [
+            "BR-9",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never notify students or families of a return. Nothing was published to them, and telling them an exam was not approved would be the first they had heard of it (A3).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never plan the correction alongside the return. What to change is the Coordinator's to decide from the reason given.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. The Coordinator corrects the exam and resubmits it, which is the route back."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "imtihan wapas bhej do — physics ka paper sports day se takra raha hai",
+            "lang": "ur-Latn",
+            "gloss": "return the exam — the physics paper clashes with sports day"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.return",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "reason": "The physics paper falls on sports day. Move it and resubmit.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the School Admin's own words (PR-1)."
+            }
+          ],
+          "outcome": "Returned to the Coordinator. Nothing was published, so nothing has to be retracted and no family is told anything (PR-2)."
+        },
+        {
+          "request": {
+            "text": "ye imtihan wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return this exam"
+          },
+          "context": "School Admin, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.return",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The reason has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the Coordinator should change — a return with no reason sends them back to a timetable with no idea what was wrong with it."
+        },
+        {
+          "request": {
+            "text": "wapas bhej do aur tareekhein bhi theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "return it and fix the dates as well"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.return",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The return only. The rescheduling is not chained (PR-3)."
+            }
+          ],
+          "outcome": "Returned with the reason. Report that the Coordinator reschedules and resubmits — which dates work is theirs to decide, and that is what the return is for."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-01-PC-7",
+      "intent": {
+        "name": "exam.schedule.edit",
+        "summary": "Change a published schedule, with the reason, and tell everybody affected. School Admin only, one step.",
+        "routesHere": [
+          "move the physics paper to the 18th — the hall is unavailable",
+          {
+            "text": "shaya-shuda timetable mein tabdeeli karni hai",
+            "lang": "ur-Latn",
+            "gloss": "we need to change the published timetable"
+          },
+          {
+            "text": "physics ka paper 18 tareekh par kar do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "move the physics paper to the 18th, with the reason"
+          },
+          {
+            "text": "paper ki tareekh badal do aur sab ko itla kar do",
+            "lang": "ur-Latn",
+            "gloss": "change the paper's date and inform everybody"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "abhi shaya nahi hua, tareekh badal do",
+              "lang": "ur-Latn",
+              "gloss": "it is not published yet, change the date"
+            },
+            "goesTo": "exam.paper.schedule — UC-06-01-PC-3",
+            "note": "Before publication a slot is simply rescheduled and nobody is told, because nobody was told in the first place."
+          },
+          {
+            "request": {
+              "text": "imtihan hi mansookh kar do",
+              "lang": "ur-Latn",
+              "gloss": "cancel the exam altogether"
+            },
+            "goesTo": "exam.cancel — UC-06-01-PC-8"
+          },
+          {
+            "request": {
+              "text": "total marks bhi badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the total marks as well"
+            },
+            "goesTo": "Not offered.",
+            "note": "The total, passing and grace figures are fixed at creation (BR-3). A published schedule's dates can move; its marking rules cannot."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.schedule.edit",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "changes": "$request.changes",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it messages every affected teacher, student and guardian. A changed date nobody was told about is worse than no schedule at all (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. A change with no reason, a closed day and a clash all arrive as errors.",
+        "atomicity": "One write, atomic in itself: the changed slots, the reason and the notifications to every affected teacher, student and guardian together or not at all (BR-9). What marks already entered against a moved paper become is not specified anywhere in this use case — it is an open question, and a Coordinator moving a paper that has been sat should be told so."
+      },
+      "operations": [
+        {
+          "name": "exam.schedule.edit",
+          "method": "PATCH",
+          "path": "/api/v1/exams/{exam_id}/schedule",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + changes, since a repeat must not message every family twice",
+          "purpose": "Change one or more papers in a published schedule, with the reason, notifying everybody affected.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code, dates and status."
+              },
+              "notes": "The published exam."
+            },
+            {
+              "name": "changes",
+              "source": "request",
+              "sourceRef": "$request.changes",
+              "required": true,
+              "type": "object[]",
+              "notes": "Per paper: the subject and the new date, slot, duration, deadline or invigilator. Only what the actor named — a planner that tidied the rest of the timetable moved papers nobody asked about."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (BR-9, E10). It goes to every family told of the change, so it is the school's own words."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The change and who was told.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "papers_changed",
+                "type": "object[]",
+                "description": "Each paper with its previous and new slot."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given, sent to everybody affected."
+              },
+              {
+                "name": "teachers_notified",
+                "type": "integer",
+                "description": "Affected teachers told, with their duties restated (BR-8)."
+              },
+              {
+                "name": "students_notified",
+                "type": "integer",
+                "description": "Affected students and guardians told (BR-9)."
+              },
+              {
+                "name": "marks_already_entered",
+                "type": "object[]",
+                "description": "Papers changed that already carry marks. What becomes of them is not specified (open question)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E10",
+              "httpStatus": 400,
+              "meaning": "A published schedule was edited with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed, nobody notified."
+            },
+            {
+              "code": "CLOSED_DAY",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "A new date is a holiday or an off-day.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            },
+            {
+              "code": "CLASS_CLASH",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "A new slot overlaps another paper for the same class.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "The message names the other paper."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. It goes to every family told of the change (BR-9), and a reason a planner wrote is the school explaining itself in words nobody chose.",
+          "derivedFrom": [
+            "BR-9",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Change only the papers the actor named. Every change messages families, and a planner that tidied an adjacent slot has told a hundred households their child's exam moved.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where a changed paper already carries marks. What becomes of them is not specified anywhere in this use case, and moving a paper that has been sat is the moment to say so rather than after.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never work around a closed day or a clash on an edit. The same checks apply as at scheduling (BR-10), and a published timetable is a worse place to break them.",
+          "derivedFrom": [
+            "BR-10",
+            "E4",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "No reversal is offered. A change put back is another edit, with its own reason, and everybody is messaged again. The controller must not attempt a compensating call — the first notifications have gone."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "physics ka paper 18 tareekh par kar do — hall khali nahi hai",
+            "lang": "ur-Latn",
+            "gloss": "move the physics paper to the 18th — the hall is not free"
+          },
+          "context": "School Admin, Johar Town branch, on a published exam.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.schedule.edit",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "changes": "physics → 2026-11-18, slot and duration unchanged",
+                "reason": "The examination hall is unavailable on the 16th.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only physics is in the change (PR-2). The reason is the School Admin's own (PR-1)."
+            }
+          ],
+          "outcome": "Moved, and every affected teacher, student and guardian is told with the reason. Report how many were messaged — this reaches families' phones."
+        },
+        {
+          "request": {
+            "text": "tareekhein aage barha do",
+            "lang": "ur-Latn",
+            "gloss": "push the dates back"
+          },
+          "context": "School Admin, Johar Town branch, on a published exam, with no reason and no papers named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.schedule.edit",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "changes": "$request.changes — absent",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Neither which papers nor the reason has anything to take it from (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask which papers move, to when, and what families should be told — this messages every household in the exam."
+        },
+        {
+          "request": {
+            "text": "maths ka paper agle hafte kar do",
+            "lang": "ur-Latn",
+            "gloss": "move the maths paper to next week"
+          },
+          "context": "School Admin, Johar Town branch, where the maths paper was sat yesterday and its marks are being entered.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.schedule.edit",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "changes": "maths → the date given",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The change goes through and marks_already_entered names the maths paper. Report it plainly (PR-3): the paper has been sat and marks exist against it, and what happens to them is not specified anywhere — worth settling before the notifications land."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-01-PC-8",
+      "intent": {
+        "name": "exam.cancel",
+        "summary": "Cancel an exam that will not run, with the reason, keeping its schedule and approvals readable. One step.",
+        "routesHere": [
+          "cancel the mid-term exam — the school is closed that week",
+          {
+            "text": "imtihan mansookh kar do",
+            "lang": "ur-Latn",
+            "gloss": "cancel the exam"
+          },
+          {
+            "text": "ye imtihan ab nahi hoga, wajah ke sath band kar do",
+            "lang": "ur-Latn",
+            "gloss": "this exam will not happen now, close it with a reason"
+          },
+          {
+            "text": "imtihan mita do",
+            "lang": "ur-Latn",
+            "gloss": "delete the exam"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "sirf ek paper mansookh karna hai",
+              "lang": "ur-Latn",
+              "gloss": "only one paper is to be cancelled"
+            },
+            "goesTo": "exam.schedule.edit — UC-06-01-PC-7",
+            "note": "Cancelling ends the whole exam. Removing or moving one paper is an edit to the schedule."
+          },
+          {
+            "request": {
+              "text": "record se hata do",
+              "lang": "ur-Latn",
+              "gloss": "remove it from the records"
+            },
+            "goesTo": "Not offered.",
+            "note": "An exam is never deleted. Its schedule and approvals stay readable after cancellation (BR-12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.cancel",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It is cancelled rather than deleted, everybody concerned is notified, and its schedule and approvals stay readable (BR-12, A6)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the cancellation, its reason, and the notifications to everybody who was told of the schedule, together or not at all. Nothing is erased — the papers, the slots, the duties and the approvals stay readable, because a school has to be able to say what it had planned and why it did not happen (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "exam.cancel",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/cancel",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id, since an exam is cancelled once and a repeat must not notify everybody twice",
+          "purpose": "Cancel an exam, keeping its schedule and approvals readable.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code, dates and status."
+              },
+              "notes": "The exam being cancelled."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Why the exam will not run. It goes to everybody who was told of the schedule."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The cancellation.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Cancelled. Terminal, and its record stays readable (BR-12)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "papers_cancelled",
+                "type": "object[]",
+                "description": "The papers that will not now be sat, with their scheduled slots kept."
+              },
+              {
+                "name": "marks_already_entered",
+                "type": "object[]",
+                "description": "Papers already carrying marks. They are kept and not erased."
+              },
+              {
+                "name": "recipients_notified",
+                "type": "integer",
+                "description": "Everybody who had been told the schedule."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_CANCELLED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The exam is already cancelled.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never describe cancellation as deletion. An exam is never deleted, and its schedule and approvals stay readable afterwards (BR-12) — a family asking why their child's exam did not happen is owed a record.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the reason. It goes to every family that was told of the schedule.",
+          "derivedFrom": [
+            "BR-9",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where marks were already entered. They are kept, not erased, and whoever entered them should know the exam they belong to has been cancelled.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never cancel to fix a mistake in the schedule. A wrong date is an edit (BR-9); cancelling tells every family the exam is off.",
+          "derivedFrom": [
+            "BR-9",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Cancelled is terminal. An exam that runs after all is created afresh, which is deliberate — everybody was told this one was off."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mid-term mansookh kar do — us hafte school band rahega",
+            "lang": "ur-Latn",
+            "gloss": "cancel the mid-term — the school will be closed that week"
+          },
+          "context": "School Admin, Johar Town branch, on a published exam.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.cancel",
+              "inputs": {
+                "exam_id": "$request.exam_phrase → \"mid-term\"",
+                "reason": "The school will be closed that week.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Cancelled and everybody who was told the schedule is told it is off. Its papers, slots and approvals stay readable (PR-1)."
+        },
+        {
+          "request": {
+            "text": "imtihan ka record system se mita do",
+            "lang": "ur-Latn",
+            "gloss": "remove the exam's record from the system"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.cancel",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted for a deletion — there is no such capability (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that an exam is cancelled rather than deleted, and that cancelling keeps the schedule and approvals readable — which is the point of it."
+        },
+        {
+          "request": {
+            "text": "imtihan mansookh karo, tareekh ghalat thi",
+            "lang": "ur-Latn",
+            "gloss": "cancel the exam, the date was wrong"
+          },
+          "context": "Coordinator, Johar Town branch, on a published exam whose physics date is wrong.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.cancel",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. A wrong date is an edit, not a cancellation (PR-4)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that the School Admin can move the paper with a reason and every affected family is told — cancelling would tell them the whole exam is off."
+        }
+      ]
+    }
+  ]
+}

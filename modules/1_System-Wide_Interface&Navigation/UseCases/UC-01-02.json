@@ -1,0 +1,378 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-01-02",
+  "featureRef": "1.2 Sign out",
+  "name": "End the session and return to the login screen",
+  "module": "Admin — system-wide",
+  "alsoAffectsModules": [],
+  "priority": "MVP",
+  "priorityReason": "Ships with login. Every signed-in actor uses it, and shared devices make it a safeguarding matter.",
+  "goal": {
+    "actor": "any signed-in actor",
+    "capability": "to end my session from any screen",
+    "outcome": "nobody can use my account on a shared device after I leave"
+  },
+  "primaryActor": "Every actor who can sign in — Super Admin, School Admin, Accounts, Staff, Coordinator, Principal, Teacher, Student, Parent / Guardian, Driver.",
+  "secondaryActors": [],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "scheduled",
+        "description": "The session passes the idle timeout set by the password policy and is ended in the same way.",
+        "source": "Session service"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An authenticated session exists.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    }
+  ],
+  "postConditions": [
+    "The session is invalidated on the server. Any token issued from it is dead, so a copy retained elsewhere cannot be replayed.",
+    "No protected page is reachable from this device until the actor signs in again, whether by the back button or by a direct address.",
+    "Client-side session storage is cleared, so nothing about the actor remains on a shared device.",
+    "The sign-out is recorded in the audit log, marked as explicit or as an idle timeout.",
+    "Any other session the same actor holds — another device, or the driver app — remains active and untouched.",
+    "Unsaved form data is discarded, except where a use case defines a draft state.",
+    "No student, staff, fee or academic record changes."
+  ],
+  "screens": [
+    {
+      "name": "Header sign-out control",
+      "route": "(every authenticated screen)",
+      "sidebar": "Header",
+      "actions": [
+        "Sign out"
+      ],
+      "visibleTo": [
+        "Every signed-in actor"
+      ]
+    },
+    {
+      "name": "Login",
+      "route": "/login",
+      "sidebar": "None",
+      "actions": [
+        "Sign in"
+      ],
+      "visibleTo": [
+        "The actor after sign-out"
+      ]
+    }
+  ],
+  "dataFields": [],
+  "entities": [
+    {
+      "entity": "Session",
+      "operations": [
+        "deactivate"
+      ],
+      "notes": "Invalidated server-side, not only cleared in the browser."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Records the sign-out and whether it was explicit or caused by the idle timeout."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Every signed-in actor",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own session only.",
+      "notes": "No actor can sign another out. Withdrawing an account is suspension, which is role and account management."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "The session is invalidated on the server, not only in the browser. A token retained from before sign-out must not work afterwards."
+    },
+    {
+      "id": "BR-2",
+      "rule": "After sign-out no protected page is reachable, including by the browser back button or by typing the address directly."
+    },
+    {
+      "id": "BR-3",
+      "rule": "A session left idle past the timeout set by the password policy is ended automatically, in the same way and with the same audit entry, marked as a timeout rather than an explicit sign-out."
+    },
+    {
+      "id": "BR-4",
+      "rule": "Unsaved form data is discarded without a prompt, except where a use case defines a draft state."
+    },
+    {
+      "id": "BR-5",
+      "rule": "Signing out of the driver app ends the driver session only, and has no effect on any main-system session held by the same person."
+    },
+    {
+      "id": "BR-6",
+      "rule": "Every sign-out is written to the audit log."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Session",
+      "states": [
+        "Active",
+        "Ended by user",
+        "Ended by timeout"
+      ],
+      "initial": "Active",
+      "terminal": [
+        "Ended by user",
+        "Ended by timeout"
+      ],
+      "transitions": [
+        {
+          "from": "Active",
+          "to": "Ended by user",
+          "triggeredBy": "The signed-in actor",
+          "condition": "Sign out is selected in the header."
+        },
+        {
+          "from": "Active",
+          "to": "Ended by timeout",
+          "triggeredBy": "System",
+          "condition": "The idle timeout is reached (BR-3)."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Any signed-in actor",
+      "navigation": "Any authenticated screen → Header → Sign out",
+      "userAction": "Selects the sign-out control in the header.",
+      "function": "signOut(session)",
+      "systemResponse": "Invalidates the session server-side.",
+      "rules": [
+        "BR-1"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "clearClientSession()",
+      "systemResponse": "Clears client-side session storage and writes the audit entry.",
+      "rules": [
+        "BR-6"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "System",
+      "navigation": "Any authenticated screen → Login screen",
+      "userAction": "—",
+      "function": "redirectToLogin()",
+      "systemResponse": "Returns the actor to the login screen. No protected page is reachable afterwards, by the back button or by a direct address.",
+      "rules": [
+        "BR-2"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 1,
+      "condition": "The session reached the idle timeout rather than the actor signing out",
+      "actor": "System",
+      "navigation": "Any authenticated screen → Login screen",
+      "behaviour": "The same steps run automatically. The audit entry records a timeout rather than an explicit sign-out, and the login screen explains that the session ended (BR-3).",
+      "function": "endIdleSession(session)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 1,
+      "condition": "The actor is signed in to the driver app",
+      "actor": "Driver",
+      "navigation": "Driver app → Sign out → Driver login screen",
+      "behaviour": "The driver session ends. Any main-system session held by the same person is unaffected (BR-5).",
+      "function": "signOut(driverSession)",
+      "resumesAtStep": 2
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 1,
+      "condition": "The session had already expired",
+      "systemResponse": "Treated as success. The actor reaches the login screen either way.",
+      "messageShown": "You have been signed out.",
+      "messageStyle": "page"
+    },
+    {
+      "id": "E2",
+      "atStep": 1,
+      "condition": "The network is unavailable",
+      "systemResponse": "Client-side session data is cleared immediately and the server session is invalidated on next contact.",
+      "messageShown": "You have been signed out on this device.",
+      "messageStyle": "page"
+    },
+    {
+      "id": "E3",
+      "atStep": 3,
+      "condition": "A protected page is requested after sign-out",
+      "systemResponse": "The request is refused and the actor is returned to the login screen.",
+      "messageShown": "Your session has ended. Please sign in again.",
+      "messageStyle": "page"
+    }
+  ],
+  "notifications": [],
+  "sideEffects": [],
+  "integrations": [],
+  "reports": [],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "A signed-in actor on any screen",
+      "when": "they select Sign out",
+      "then": "they reach the login screen and the browser back button reaches no protected page"
+    },
+    {
+      "id": "AC-2",
+      "given": "A session token captured before sign-out",
+      "when": "it is replayed against any protected endpoint",
+      "then": "the request is rejected"
+    },
+    {
+      "id": "AC-3",
+      "given": "A session left idle past the timeout",
+      "when": "the actor returns to the tab",
+      "then": "they see the login screen and the audit log records the end as a timeout, not an explicit sign-out"
+    },
+    {
+      "id": "AC-4",
+      "given": "A Driver signed in to the driver app and also to the main system",
+      "when": "they sign out of the driver app",
+      "then": "the main-system session is still active"
+    },
+    {
+      "id": "AC-5",
+      "given": "Any sign-out",
+      "when": "the audit log is inspected",
+      "then": "it holds the actor, the time and whether the end was explicit or a timeout"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "A session must exist to end."
+      },
+      {
+        "id": "UC-25-05",
+        "name": "Password management",
+        "link": "UC-25-05.json",
+        "why": "Owns the idle timeout setting."
+      },
+      {
+        "id": "UC-25-06",
+        "name": "Audit trail and activity log",
+        "link": "UC-25-06.json",
+        "why": "Receives the sign-out entry."
+      }
+    ],
+    "masterData": [
+      "Idle timeout setting in the password policy"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Suspending or deactivating an account",
+      "handledBy": {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json"
+      }
+    },
+    {
+      "item": "The idle timeout value itself, which the password policy owns",
+      "handledBy": {
+        "id": "UC-25-05",
+        "name": "Password management",
+        "link": "UC-25-05.json"
+      }
+    },
+    {
+      "item": "Signing in",
+      "handledBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": []
+  },
+  "openQuestions": [
+    {
+      "question": "Should signing out end the actor's sessions on their other devices as well?",
+      "assumption": "No — only the current device.",
+      "confirmWith": "Super Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "What is the idle timeout, and does it differ by role?",
+      "assumption": "One value for all roles, set in the password policy. The value is not yet specified.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

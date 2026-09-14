@@ -1,0 +1,2495 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-12-11",
+    "name": "Take a vacancy from advertisement through shortlisting and interview to an appointed member of staff",
+    "module": "HR and payroll",
+    "file": "../UseCases/UC-12-11.json",
+    "featureRef": "12.11 Staff recruitment"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-12-11-PC-1",
+      "intent": {
+        "name": "vacancy.create",
+        "summary": "Post a vacancy with its requirements and its salary budget. Two steps, and it is not posted without the budget.",
+        "routesHere": [
+          "post a vacancy for a maths teacher, closing on the 30th",
+          {
+            "text": "maths ke ustad ki asami nikalo, 30 tareekh tak",
+            "lang": "ur-Latn",
+            "gloss": "post a vacancy for a maths teacher, closing on the 30th"
+          },
+          {
+            "text": "nayi asami website par daal do",
+            "lang": "ur-Latn",
+            "gloss": "put a new vacancy on the website"
+          },
+          {
+            "text": "is post ke liye bajat bhi set kar do",
+            "lang": "ur-Latn",
+            "gloss": "set the salary budget for this post too"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "umeedwar ki darkhwast daal do",
+              "lang": "ur-Latn",
+              "gloss": "submit a candidate's application"
+            },
+            "goesTo": "Not offered.",
+            "note": "Applications come in on the form with a CV attached (E3). A file does not travel in a plan."
+          },
+          {
+            "request": {
+              "text": "asami wapas le lo",
+              "lang": "ur-Latn",
+              "gloss": "withdraw the vacancy"
+            },
+            "goesTo": "vacancy.withdraw — UC-12-11-PC-2"
+          },
+          {
+            "request": {
+              "text": "shortlist bana do",
+              "lang": "ur-Latn",
+              "gloss": "draw the shortlist"
+            },
+            "goesTo": "application.shortlist — UC-12-11-PC-3",
+            "note": "Applications are reviewed after the closing date (BR-3, E5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "vacancy.create",
+            "inputs": {
+              "role": "$request.role",
+              "requirements": "$request.requirements",
+              "closing_date": "$request.closing_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "The vacancy and what the school is looking for."
+          },
+          {
+            "step": 2,
+            "operation": "vacancy.salarybudget.set",
+            "inputs": {
+              "vacancy_id": "$step1.vacancy_id",
+              "amount_or_range": "$request.salary_budget",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "Accounts set the salary budget at the same time the vacancy is posted — the amount, or the range, the school is prepared to pay (BR-2). It is not posted without one (E1)."
+          }
+        ],
+        "onFailure": "Stop and report. Where step 2 fails the vacancy exists in Draft and is not posted, and the budget is set again rather than the vacancy created twice.",
+        "atomicity": "Not atomic across the two steps. Step 1 creates the vacancy and step 2 sets its budget; it reaches the website only when both are done (BR-1, BR-2, E1). Posting it is public — candidates will apply against it, and every application is answered."
+      },
+      "operations": [
+        {
+          "name": "vacancy.create",
+          "method": "POST",
+          "path": "/api/v1/vacancies",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "role + closing_date + branch_id, since the same post advertised twice is one vacancy",
+          "purpose": "Create a vacancy with its role, requirements and closing date.",
+          "parameters": [
+            {
+              "name": "role",
+              "source": "request",
+              "sourceRef": "$request.role",
+              "required": true,
+              "type": "string",
+              "notes": "The post being advertised. 2 to 100 characters."
+            },
+            {
+              "name": "requirements",
+              "source": "request",
+              "sourceRef": "$request.requirements",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 2000 characters. What the school is looking for. It goes on the website and candidates apply against it, so it is the school's own words — a planner that drafted requirements has written the school's advertisement."
+            },
+            {
+              "name": "closing_date",
+              "source": "request",
+              "sourceRef": "$request.closing_date",
+              "required": true,
+              "type": "date",
+              "notes": "After which applications are reviewed. Not in the past (BR-3, E2)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The vacancy as created.",
+            "fields": [
+              {
+                "name": "vacancy_id",
+                "type": "string",
+                "description": "The vacancy."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft until the salary budget is set (E1)."
+              },
+              {
+                "name": "closing_date",
+                "type": "date",
+                "description": "Applications are reviewed after it (BR-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CLOSING_DATE_PAST",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The closing date is in the past.",
+              "written": "Nothing.",
+              "notWritten": "No vacancy created."
+            }
+          ]
+        },
+        {
+          "name": "vacancy.salarybudget.set",
+          "method": "POST",
+          "path": "/api/v1/vacancies/{vacancy_id}/salary-budget",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "vacancy_id, since a vacancy carries one budget",
+          "purpose": "Set the salary budget for the role and post the vacancy.",
+          "parameters": [
+            {
+              "name": "vacancy_id",
+              "source": "step",
+              "sourceRef": "$step1.vacancy_id",
+              "required": true,
+              "type": "string",
+              "notes": "The vacancy created in step 1."
+            },
+            {
+              "name": "amount_or_range",
+              "source": "request",
+              "sourceRef": "$request.salary_budget",
+              "required": true,
+              "type": "money",
+              "notes": "The amount, or the range, the school is prepared to pay (BR-2). Set by Accounts — a figure a planner produced is what the school will offer somebody."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The budget, and the vacancy posted.",
+            "fields": [
+              {
+                "name": "vacancy_id",
+                "type": "string",
+                "description": "The vacancy."
+              },
+              {
+                "name": "salary_budget",
+                "type": "string",
+                "description": "The amount or range."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Posted. It is on the school website where candidates can find it (BR-1)."
+              },
+              {
+                "name": "closing_date",
+                "type": "date",
+                "description": "When applications close."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_SALARY_BUDGET",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The vacancy was posted with no salary budget.",
+              "written": "Nothing.",
+              "notWritten": "Not posted.",
+              "note": "Accounts set it at the same time the vacancy is posted (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never draft the requirements. They go on the school's website and candidates apply against them (BR-1), and text a planner wrote is the school advertising terms nobody agreed.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply the salary budget. It is what the school is prepared to pay somebody (BR-2), and the agreed salary is later recorded against it.",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never post without the budget. E1 is BR-2 working — a vacancy live with no figure behind it invites applications the school may not be able to meet.",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say plainly that posting is public. Candidates will apply against it, every application is answered, and none can be deleted while the vacancy is open (BR-9, BR-13).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "vacancy.withdraw",
+        "statement": "Withdrawing the vacancy with a reason before it closes (A5). Applications already received stay on the record."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "maths ke ustad ki asami nikalo, 30 September tak — bajat 60,000 se 75,000",
+            "lang": "ur-Latn",
+            "gloss": "post a maths teacher vacancy closing 30 September — budget 60,000 to 75,000"
+          },
+          "context": "School Admin, Johar Town branch, with the requirements given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.create",
+              "inputs": {
+                "role": "Maths Teacher",
+                "requirements": "as the School Admin wrote them",
+                "closing_date": "2026-09-30",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The requirements are theirs, not drafted here (PR-1)."
+            },
+            {
+              "step": 2,
+              "operation": "vacancy.salarybudget.set",
+              "inputs": {
+                "vacancy_id": "$step1.vacancy_id",
+                "amount_or_range": "60,000 to 75,000",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Posted to the website. Report that it is public and that applications close on the 30th — shortlisting before then is refused, because a shortlist drawn while applications arrive is drawn from part of the field."
+        },
+        {
+          "request": {
+            "text": "asami nikal do, requirements tum likh do",
+            "lang": "ur-Latn",
+            "gloss": "post the vacancy, you write the requirements"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.create",
+              "inputs": {
+                "role": "$request.role",
+                "requirements": "$request.requirements — absent",
+                "closing_date": "$request.closing_date",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The requirements go on the school's website (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is created. Ask what the school is looking for — candidates apply against that text, and it is what the shortlist is later drawn on."
+        },
+        {
+          "request": {
+            "text": "asami abhi post kar do, bajat baad mein tay karenge",
+            "lang": "ur-Latn",
+            "gloss": "post the vacancy now, we will settle the budget later"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.create",
+              "inputs": {
+                "role": "$request.role",
+                "requirements": "$request.requirements",
+                "closing_date": "$request.closing_date",
+                "branch_id": "$session.branch_id"
+              }
+            },
+            {
+              "step": 2,
+              "operation": "vacancy.salarybudget.set",
+              "inputs": {
+                "vacancy_id": "$step1.vacancy_id",
+                "amount_or_range": "$request.salary_budget — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Step 2 is emitted without a figure and the API returns NO_SALARY_BUDGET (E1). No figure is supplied (PR-2)."
+            }
+          ],
+          "outcome": "The vacancy stands in Draft and is not on the website. Report that Accounts set the budget at the same time it is posted — advertising with no figure behind it invites applications the school may not be able to meet."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-11-PC-2",
+      "intent": {
+        "name": "vacancy.withdraw",
+        "summary": "Withdraw a vacancy before it closes, with the reason. One step.",
+        "routesHere": [
+          "withdraw this vacancy — the post has been filled internally",
+          {
+            "text": "ye asami wapas le lo, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "withdraw this vacancy with the reason"
+          },
+          {
+            "text": "asami ki ab zaroorat nahi rahi",
+            "lang": "ur-Latn",
+            "gloss": "the vacancy is no longer needed"
+          },
+          {
+            "text": "post band kar do",
+            "lang": "ur-Latn",
+            "gloss": "close the post"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "umeedwaron ki darkhwasten mita do",
+              "lang": "ur-Latn",
+              "gloss": "delete the applications"
+            },
+            "goesTo": "Not offered.",
+            "note": "An application is never deleted while the vacancy is open (BR-13)."
+          },
+          {
+            "request": {
+              "text": "umeedwaron ko rad kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject the candidates"
+            },
+            "goesTo": "application.reject — UC-12-11-PC-4",
+            "note": "Every candidate carries an outcome, and a rejection requires a written explanation (BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "vacancy.withdraw",
+            "inputs": {
+              "vacancy_id": "$request.vacancy_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Candidates who have already applied still hold applications, and each of them is owed an outcome (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the withdrawal, its reason and the audit entry together or not at all. The vacancy comes off the website. **The applications already received stay** — every candidate carries an outcome, and a candidate left with none has simply been forgotten (BR-9, BR-13)."
+      },
+      "operations": [
+        {
+          "name": "vacancy.withdraw",
+          "method": "POST",
+          "path": "/api/v1/vacancies/{vacancy_id}/withdraw",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "vacancy_id, since a vacancy is withdrawn once",
+          "purpose": "Withdraw a posted vacancy with the reason.",
+          "parameters": [
+            {
+              "name": "vacancy_id",
+              "source": "resolved",
+              "sourceRef": "$request.vacancy_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "vacancy",
+                "fromPhrase": "$request.vacancy_phrase",
+                "onNoMatch": "Refuse. No vacancy matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the vacancies with their role, closing date and status."
+              },
+              "notes": "The vacancy, resolved from its role and closing date."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Why the post is no longer being filled."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The withdrawal.",
+            "fields": [
+              {
+                "name": "vacancy_id",
+                "type": "string",
+                "description": "The vacancy."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Withdrawn. It is off the website."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "applications_received",
+                "type": "integer",
+                "description": "Candidates who applied and are still awaiting an outcome (BR-9)."
+              },
+              {
+                "name": "candidates_without_outcome",
+                "type": "object[]",
+                "description": "Each with the email on their form, which is where any message goes (BR-4, BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A vacancy was withdrawn with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing withdrawn."
+            },
+            {
+              "code": "NOT_POSTED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The vacancy is not posted.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. A post the school stopped filling is something people ask about later.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the candidates still without an outcome. They applied and are waiting, and a withdrawn vacancy does not answer them — each is owed a written explanation to the email on their form (BR-9, BR-11).",
+          "derivedFrom": [
+            "BR-9",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never reject the candidates as part of the withdrawal. Each rejection carries its own written explanation (BR-9, E7), and one reason covering a field of applicants is not an explanation to any of them.",
+          "derivedFrom": [
+            "BR-9",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never delete the applications. An application is never deleted while the vacancy is open (BR-13).",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A withdrawal is not undone. A post to be filled after all is advertised afresh, which is deliberate — the old candidates were told it was withdrawn."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye asami wapas le lo — post andar hi se bhar di hai",
+            "lang": "ur-Latn",
+            "gloss": "withdraw this vacancy — the post has been filled internally"
+          },
+          "context": "School Admin, Johar Town branch, with eleven applications received.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.withdraw",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "reason": "The post has been filled by an internal appointment.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the School Admin's own (PR-1)."
+            }
+          ],
+          "outcome": "Withdrawn and off the website. Report that eleven candidates applied and are still without an outcome (PR-2) — each is owed a written explanation at the email on their form."
+        },
+        {
+          "request": {
+            "text": "asami band kar do aur sab umeedwaron ko rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "close the vacancy and reject all the candidates"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.withdraw",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The withdrawal only. The rejections are not chained (PR-3)."
+            }
+          ],
+          "outcome": "Withdrawn. Report that each candidate's rejection carries its own written explanation, sent to the email on their form — one blanket reason across eleven people is not an explanation to any of them."
+        },
+        {
+          "request": {
+            "text": "asami hata do aur darkhwasten bhi mita do",
+            "lang": "ur-Latn",
+            "gloss": "remove the vacancy and delete the applications"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.withdraw",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The withdrawal only. Nothing is deleted (PR-4)."
+            }
+          ],
+          "outcome": "Withdrawn. Report that applications are never deleted while the vacancy is open — and that how long a rejected candidate's application, CV and personal details are kept afterwards, and who may see them, is not decided anywhere in this use case."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-11-PC-3",
+      "intent": {
+        "name": "application.shortlist",
+        "summary": "Draw the shortlist from the applications after the closing date. One step, and only shortlisted candidates are interviewed.",
+        "routesHere": [
+          "shortlist these four candidates",
+          {
+            "text": "in chaar umeedwaron ko shortlist kar do",
+            "lang": "ur-Latn",
+            "gloss": "shortlist these four candidates"
+          },
+          {
+            "text": "CV dekh kar shortlist bana do",
+            "lang": "ur-Latn",
+            "gloss": "draw the shortlist from the CVs"
+          },
+          {
+            "text": "interview ke liye umeedwar chun lo",
+            "lang": "ur-Latn",
+            "gloss": "pick the candidates for interview"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "interview ka waqt rakh do",
+              "lang": "ur-Latn",
+              "gloss": "set the interview time"
+            },
+            "goesTo": "interview.schedule — UC-12-11-PC-5",
+            "note": "Only shortlisted candidates are interviewed (BR-5)."
+          },
+          {
+            "request": {
+              "text": "jo shortlist nahi hue un ko bata do",
+              "lang": "ur-Latn",
+              "gloss": "tell the ones who were not shortlisted"
+            },
+            "goesTo": "application.reject — UC-12-11-PC-4",
+            "note": "A candidate who is not shortlisted is rejected with a written explanation (A2, BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "application.shortlist",
+            "inputs": {
+              "vacancy_id": "$request.vacancy_phrase",
+              "application_ids": "$request.candidate_phrases",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Applications are reviewed after the closing date — a shortlist drawn while applications are still arriving is drawn from part of the field (BR-3, E5)."
+          }
+        ],
+        "onFailure": "Stop and report. Shortlisting before the closing date is refused by the API.",
+        "atomicity": "One write: the shortlist and the audit entry together or not at all. Nobody is told anything by it. The candidates left off are not rejected by being left off — each still needs an outcome with a written explanation (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "application.shortlist",
+          "method": "POST",
+          "path": "/api/v1/vacancies/{vacancy_id}/shortlist",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "vacancy_id + application_ids, since a repeat marks the same shortlist",
+          "purpose": "Mark the shortlisted applications for a vacancy.",
+          "parameters": [
+            {
+              "name": "vacancy_id",
+              "source": "resolved",
+              "sourceRef": "$request.vacancy_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "vacancy",
+                "fromPhrase": "$request.vacancy_phrase",
+                "onNoMatch": "Refuse. No vacancy matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the vacancies with their role, closing date and status."
+              },
+              "notes": "The vacancy, resolved from its role and closing date."
+            },
+            {
+              "name": "application_ids",
+              "source": "resolved",
+              "sourceRef": "$request.candidate_phrases",
+              "required": true,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "application",
+                "fromPhrase": "$request.candidate_phrases",
+                "onNoMatch": "Refuse. One or more candidates do not match for this vacancy.",
+                "onAmbiguous": "Ask, naming the applications with their candidate and the email on the form."
+              },
+              "notes": "The candidates called to interview (BR-5). The School Admin draws the shortlist from the applications and the CVs — a shortlist a planner drew has decided who the school considers."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The shortlist.",
+            "fields": [
+              {
+                "name": "vacancy_id",
+                "type": "string",
+                "description": "The vacancy."
+              },
+              {
+                "name": "shortlisted",
+                "type": "integer",
+                "description": "Candidates called to interview."
+              },
+              {
+                "name": "not_shortlisted",
+                "type": "object[]",
+                "description": "Applications left off, each still awaiting an outcome with a written explanation (BR-9)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Shortlisting."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "BEFORE_CLOSING_DATE",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "Shortlisting was attempted before the closing date.",
+              "written": "Nothing.",
+              "notWritten": "No shortlist drawn.",
+              "note": "A shortlist drawn while applications arrive is drawn from part of the field (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never draw the shortlist. The School Admin draws it from the applications and the CVs (BR-5), and a selection a planner made has decided who the school considers for a job.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never shortlist before the closing date. E5 is BR-3 working, and a shortlist drawn early is drawn from whoever happened to apply first.",
+          "derivedFrom": [
+            "BR-3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the candidates left off, and that they are not yet rejected. Every candidate carries an outcome, and one left with none has simply been forgotten (BR-9, E8).",
+          "derivedFrom": [
+            "BR-9",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A shortlist is redrawn rather than undone while the vacancy is open. Nobody has been told anything by it."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "in chaar umeedwaron ko shortlist kar do",
+            "lang": "ur-Latn",
+            "gloss": "shortlist these four candidates"
+          },
+          "context": "School Admin, Johar Town branch, after the closing date, eleven applications received.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "application.shortlist",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "application_ids": "the four named",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The four are the School Admin's choice (PR-1)."
+            }
+          ],
+          "outcome": "Shortlisted. Report the seven left off (PR-3) — none of them is rejected by being left off, and each is owed a written explanation before the vacancy can close."
+        },
+        {
+          "request": {
+            "text": "sab se achay CV wale paanch umeedwar chun lo",
+            "lang": "ur-Latn",
+            "gloss": "pick the five candidates with the best CVs"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "application.shortlist",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "application_ids": "$request.candidate_phrases — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Who the school considers is the School Admin's judgement (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is shortlisted. Offer to list the applications with their candidates and CVs so the School Admin can choose — the list helps, the choice is a decision about people's jobs."
+        },
+        {
+          "request": {
+            "text": "abhi shortlist bana do, baqi darkhwasten baad mein dekh lenge",
+            "lang": "ur-Latn",
+            "gloss": "draw the shortlist now, we will look at the rest later"
+          },
+          "context": "School Admin, Johar Town branch, before the closing date.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "application.shortlist",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "application_ids": "$request.candidate_phrases",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns BEFORE_CLOSING_DATE (E5)."
+            }
+          ],
+          "outcome": "Nothing is drawn. Report the closing date — a shortlist drawn now is drawn from whoever applied first rather than from the field, and candidates applying tomorrow would never be considered."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-11-PC-4",
+      "intent": {
+        "name": "application.reject",
+        "summary": "Record a candidate's rejection with the written explanation sent to them. One step.",
+        "routesHere": [
+          "reject this candidate — not enough classroom experience",
+          {
+            "text": "is umeedwar ko rad kar do, wajah likh dein",
+            "lang": "ur-Latn",
+            "gloss": "reject this candidate, with the explanation"
+          },
+          {
+            "text": "jo shortlist nahi hue un ko rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "reject the candidates who were not shortlisted"
+          },
+          {
+            "text": "interview ke baad umeedwar rad karna hai",
+            "lang": "ur-Latn",
+            "gloss": "reject a candidate after the interview"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "umeedwar chun lo",
+              "lang": "ur-Latn",
+              "gloss": "select the candidate"
+            },
+            "goesTo": "vacancy.outcome.recommend — UC-12-11-PC-7",
+            "note": "Selection goes to the Principal for approval; a rejection is recorded here (BR-8, BR-9)."
+          },
+          {
+            "request": {
+              "text": "sab ko ek hi paighaam bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send them all the same message"
+            },
+            "goesTo": "Not offered as one act.",
+            "note": "Every rejection carries its own written explanation, recorded against that candidate (BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "application.reject",
+            "inputs": {
+              "application_id": "$request.candidate_phrase",
+              "explanation": "$request.explanation",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step per candidate. Every candidate carries an outcome, and a rejection requires a written explanation — a candidate left with no outcome at all has simply been forgotten (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. A rejection with no explanation is not recorded.",
+        "atomicity": "One write: the rejection, its explanation and the message to the candidate together or not at all. It goes to the email on their form, which is the only address the school has for them (BR-4, BR-11). The vacancy cannot be closed while any candidate carries no outcome (E8)."
+      },
+      "operations": [
+        {
+          "name": "application.reject",
+          "method": "POST",
+          "path": "/api/v1/applications/{application_id}/reject",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "application_id, since a candidate carries one outcome",
+          "purpose": "Record a candidate's rejection with the explanation, and tell them.",
+          "parameters": [
+            {
+              "name": "application_id",
+              "source": "resolved",
+              "sourceRef": "$request.candidate_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "application",
+                "fromPhrase": "$request.candidate_phrase",
+                "onNoMatch": "Refuse. No application matches for that vacancy.",
+                "onAmbiguous": "Ask, naming the candidates with their name and the email on the form."
+              },
+              "notes": "The candidate's application. Every application is recorded against the email on the form (BR-4)."
+            },
+            {
+              "name": "explanation",
+              "source": "request",
+              "sourceRef": "$request.explanation",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters. Required for every rejection, and sent to the candidate (BR-9, BR-11, E7). Their own copy of why they did not get the job."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The rejection.",
+            "fields": [
+              {
+                "name": "application_id",
+                "type": "string",
+                "description": "The application."
+              },
+              {
+                "name": "candidate_name",
+                "type": "string",
+                "description": "The candidate."
+              },
+              {
+                "name": "email",
+                "type": "string",
+                "description": "The address on the form, where the message goes (BR-4, BR-11)."
+              },
+              {
+                "name": "outcome",
+                "type": "string",
+                "description": "Rejected."
+              },
+              {
+                "name": "explanation",
+                "type": "string",
+                "description": "As given, and sent to them."
+              },
+              {
+                "name": "notification_status",
+                "type": "string",
+                "description": "Delivery status. A failed delivery means a candidate who was not reached (E6)."
+              },
+              {
+                "name": "candidates_without_outcome",
+                "type": "integer",
+                "description": "Others on this vacancy still awaiting one. It cannot be closed while any remains (E8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "EXPLANATION_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A rejection was recorded with no explanation.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "Every candidate carries an outcome and every rejection carries its reason (BR-9)."
+            },
+            {
+              "code": "DELIVERY_FAILED",
+              "mapsTo": "E6",
+              "httpStatus": 200,
+              "meaning": "The message could not be delivered to the email on the form.",
+              "written": "The rejection is recorded.",
+              "notWritten": "The candidate was not reached.",
+              "treatedAsSuccess": true,
+              "note": "Marked failed and listed, so a candidate who was not reached is identifiable rather than assumed told (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the explanation. It is sent to the candidate as the school's account of why they did not get the job (BR-9, BR-11), and one a planner wrote is the school saying something nobody decided.",
+          "derivedFrom": [
+            "BR-9",
+            "BR-11",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never reject a group under one explanation. Each candidate carries their own outcome with its own written reason (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report a failed delivery. A candidate not reached is identifiable rather than assumed told (BR-4, E6) — the email on the form is the only address the school has for them.",
+          "derivedFrom": [
+            "BR-4",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report how many candidates still carry no outcome. The vacancy cannot be closed while any remains, and one forgotten is somebody still waiting to hear (BR-9, E8).",
+          "derivedFrom": [
+            "BR-9",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An outcome is not withdrawn. The candidate has been told."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is umeedwar ko rad kar do — class ka tajurba kam hai",
+            "lang": "ur-Latn",
+            "gloss": "reject this candidate — not enough classroom experience"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "application.reject",
+              "inputs": {
+                "application_id": "$request.candidate_phrase",
+                "explanation": "The panel was looking for more classroom experience at secondary level.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The explanation is the School Admin's own words (PR-1)."
+            }
+          ],
+          "outcome": "Recorded and sent to the email on their form. Report the delivery status (PR-3) and how many candidates still carry no outcome (PR-4)."
+        },
+        {
+          "request": {
+            "text": "jo saat shortlist nahi hue un sab ko rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "reject all seven who were not shortlisted"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "application.reject",
+              "inputs": {
+                "application_id": "$request.candidate_phrase — one candidate at a time",
+                "explanation": "$request.explanation — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted for the group. Each rejection is its own record with its own explanation (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is recorded. List the seven and ask what each should be told — a single sentence sent to seven people who applied for a job is not an explanation to any of them, and each keeps their copy."
+        },
+        {
+          "request": {
+            "text": "umeedwar ko rad kar do, paighaam bhejne ki zaroorat nahi",
+            "lang": "ur-Latn",
+            "gloss": "reject the candidate, no need to send a message"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "application.reject",
+              "inputs": {
+                "application_id": "$request.candidate_phrase",
+                "explanation": "$request.explanation",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted with the explanation, which is sent as part of the same write."
+            }
+          ],
+          "outcome": "Recorded and the candidate is told. Report that the explanation goes to the email on their form as part of recording the outcome — a rejection nobody sends leaves somebody waiting indefinitely, which is what the rule exists to prevent."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-11-PC-5",
+      "intent": {
+        "name": "interview.schedule",
+        "summary": "Set a shortlisted candidate's interview time and invite them. One step, and the proposal can always be overridden.",
+        "routesHere": [
+          "schedule this candidate's interview for Thursday at 11",
+          {
+            "text": "is umeedwar ka interview jumeraat gyara baje rakh do",
+            "lang": "ur-Latn",
+            "gloss": "schedule this candidate's interview for Thursday at eleven"
+          },
+          {
+            "text": "system ka tajweez karda waqt theek hai, wahi rakh do",
+            "lang": "ur-Latn",
+            "gloss": "the proposed slot is fine, take it"
+          },
+          {
+            "text": "interview ka waqt tay kar ke bula lo",
+            "lang": "ur-Latn",
+            "gloss": "set the interview time and invite them"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "shortlist kar do",
+              "lang": "ur-Latn",
+              "gloss": "shortlist them"
+            },
+            "goesTo": "application.shortlist — UC-12-11-PC-3",
+            "note": "Only shortlisted candidates are interviewed (BR-5)."
+          },
+          {
+            "request": {
+              "text": "interview ke number darj karo",
+              "lang": "ur-Latn",
+              "gloss": "record the interview marks"
+            },
+            "goesTo": "interview.marks.record — UC-12-11-PC-6"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "interview.schedule",
+            "inputs": {
+              "application_id": "$request.candidate_phrase",
+              "chosen_slot": "$request.chosen_slot",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and the invitation goes with it. The system proposes timings and the School Admin either takes a proposed slot or enters one of their own — a proposal that cannot be overridden is a constraint rather than a suggestion (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. An invitation that cannot be delivered is marked failed and listed rather than assumed sent.",
+        "atomicity": "One write: the interview time and the invitation to the email on the form together or not at all. Where delivery fails it is marked and listed, so a candidate who was not reached is identifiable rather than assumed invited (BR-4, E6) — otherwise somebody simply does not turn up."
+      },
+      "operations": [
+        {
+          "name": "interview.schedule",
+          "method": "POST",
+          "path": "/api/v1/applications/{application_id}/interview",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "application_id, since a candidate carries one interview slot",
+          "purpose": "Set the interview slot for a shortlisted candidate and send the invitation.",
+          "parameters": [
+            {
+              "name": "application_id",
+              "source": "resolved",
+              "sourceRef": "$request.candidate_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "application",
+                "fromPhrase": "$request.candidate_phrase",
+                "onNoMatch": "Refuse. No application matches for that vacancy.",
+                "onAmbiguous": "Ask, naming the candidates with their name and the email on the form."
+              },
+              "notes": "The candidate's application. Every application is recorded against the email on the form (BR-4)."
+            },
+            {
+              "name": "chosen_slot",
+              "source": "request",
+              "sourceRef": "$request.chosen_slot",
+              "required": true,
+              "type": "datetime",
+              "notes": "The time actually set for the interview (BR-6). Either a proposed slot the School Admin took, or one they entered — but always their decision, since it is a time a person is asked to attend."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The interview as scheduled.",
+            "fields": [
+              {
+                "name": "application_id",
+                "type": "string",
+                "description": "The application."
+              },
+              {
+                "name": "candidate_name",
+                "type": "string",
+                "description": "The candidate."
+              },
+              {
+                "name": "chosen_slot",
+                "type": "datetime",
+                "description": "The time set."
+              },
+              {
+                "name": "proposed_slot",
+                "type": "datetime",
+                "description": "What the system had proposed, where the School Admin entered their own instead (BR-6)."
+              },
+              {
+                "name": "email",
+                "type": "string",
+                "description": "Where the invitation went (BR-4)."
+              },
+              {
+                "name": "invitation_status",
+                "type": "string",
+                "description": "Delivered or failed. A failed one means a candidate who was not reached (E6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_SHORTLISTED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The candidate is not shortlisted.",
+              "written": "Nothing.",
+              "notWritten": "Nothing scheduled.",
+              "note": "Only shortlisted candidates are interviewed (BR-5)."
+            },
+            {
+              "code": "INVITATION_FAILED",
+              "mapsTo": "E6",
+              "httpStatus": 200,
+              "meaning": "The invitation could not be delivered to the email on the form.",
+              "written": "The interview is scheduled.",
+              "notWritten": "The candidate was not reached.",
+              "treatedAsSuccess": true,
+              "note": "Marked failed and listed, so somebody can reach them another way rather than waiting for them to arrive (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the slot. It is a time a person is asked to attend, and the School Admin takes a proposal or enters their own (BR-6) — a planner that accepted a proposed slot has made an appointment on somebody's behalf.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report a failed invitation immediately. A candidate not reached is identifiable rather than assumed invited (BR-4, E6), and the alternative is an empty chair on the day.",
+          "derivedFrom": [
+            "BR-4",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the proposed slot beside the chosen one where they differ. The proposal exists to be overridden, and seeing both is how a clash gets noticed.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A slot is rescheduled rather than withdrawn, which sends the candidate a new invitation. The old one has already reached them."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is umeedwar ka interview jumeraat gyara baje rakh do",
+            "lang": "ur-Latn",
+            "gloss": "schedule this candidate's interview for Thursday at eleven"
+          },
+          "context": "School Admin, Johar Town branch, on a shortlisted candidate.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "interview.schedule",
+              "inputs": {
+                "application_id": "$request.candidate_phrase",
+                "chosen_slot": "Thursday 11:00, as given",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The slot is the School Admin's (PR-1)."
+            }
+          ],
+          "outcome": "Scheduled and the invitation is sent to the email on the form. Report the delivery status (PR-2)."
+        },
+        {
+          "request": {
+            "text": "sab shortlist walon ke interview tajweez karda waqt par rakh do",
+            "lang": "ur-Latn",
+            "gloss": "schedule all the shortlisted candidates at the proposed times"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "interview.schedule",
+              "inputs": {
+                "application_id": "$request.candidate_phrase — one at a time",
+                "chosen_slot": "$request.chosen_slot — the proposals, not yet confirmed",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted until the School Admin confirms each slot (PR-1)."
+            }
+          ],
+          "outcome": "List the four candidates with the slot proposed for each and ask for confirmation. Taking the proposals automatically would book four people into times the School Admin never looked at — the proposal exists to be checked, not applied."
+        },
+        {
+          "request": {
+            "text": "interview ka waqt rakh do",
+            "lang": "ur-Latn",
+            "gloss": "set the interview time"
+          },
+          "context": "School Admin, Johar Town branch, where the invitation bounces.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "interview.schedule",
+              "inputs": {
+                "application_id": "$request.candidate_phrase",
+                "chosen_slot": "$request.chosen_slot",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns INVITATION_FAILED (E6) on the success path."
+            }
+          ],
+          "outcome": "The interview is scheduled but the candidate was not reached. Report it plainly (PR-2) — the email on the form is the only address the school has, and without another route they will simply not arrive."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-11-PC-6",
+      "intent": {
+        "name": "interview.marks.record",
+        "summary": "Record a candidate's interview marks beside their form and CV. One step.",
+        "routesHere": [
+          "record 38 out of 50 for this candidate",
+          {
+            "text": "is umeedwar ke interview ke number darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "record this candidate's interview marks"
+          },
+          {
+            "text": "interview ho gaya, number laga do",
+            "lang": "ur-Latn",
+            "gloss": "the interview is done, enter the marks"
+          },
+          {
+            "text": "panel ne 38 diye hain",
+            "lang": "ur-Latn",
+            "gloss": "the panel gave 38"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "umeedwar chun lo",
+              "lang": "ur-Latn",
+              "gloss": "select the candidate"
+            },
+            "goesTo": "vacancy.outcome.recommend — UC-12-11-PC-7",
+            "note": "Marks are recorded; the recommendation is a separate act and the Principal decides (BR-8)."
+          },
+          {
+            "request": {
+              "text": "sab se zyada number wale ko rakh lo",
+              "lang": "ur-Latn",
+              "gloss": "appoint whoever scored highest"
+            },
+            "goesTo": "Not offered.",
+            "note": "The School Admin selects and recommends (BR-8). A mark is read alongside what it was given for (BR-7), not treated as the decision."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "interview.marks.record",
+            "inputs": {
+              "application_id": "$request.candidate_phrase",
+              "marks": "$request.marks",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The marks are recorded beside that candidate's form and CV, so a mark is read alongside what it was given for (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the marks and the audit entry together or not at all. Nothing is decided by them — every candidate still carries an outcome, and the selection goes to the Principal (BR-8, BR-9)."
+      },
+      "operations": [
+        {
+          "name": "interview.marks.record",
+          "method": "POST",
+          "path": "/api/v1/applications/{application_id}/interview-marks",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "application_id, since a candidate carries one set of interview marks",
+          "purpose": "Record the interview marks against the candidate's application.",
+          "parameters": [
+            {
+              "name": "application_id",
+              "source": "resolved",
+              "sourceRef": "$request.candidate_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "application",
+                "fromPhrase": "$request.candidate_phrase",
+                "onNoMatch": "Refuse. No application matches for that vacancy.",
+                "onAmbiguous": "Ask, naming the candidates with their name and the email on the form."
+              },
+              "notes": "The candidate's application. Every application is recorded against the email on the form (BR-4)."
+            },
+            {
+              "name": "marks",
+              "source": "request",
+              "sourceRef": "$request.marks",
+              "required": true,
+              "type": "number",
+              "notes": "What the panel gave (BR-7). Never inferred from anything on the CV — the mark is the panel's judgement of the interview."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The marks as recorded.",
+            "fields": [
+              {
+                "name": "application_id",
+                "type": "string",
+                "description": "The application."
+              },
+              {
+                "name": "candidate_name",
+                "type": "string",
+                "description": "The candidate."
+              },
+              {
+                "name": "marks",
+                "type": "number",
+                "description": "As recorded, beside their form and CV (BR-7)."
+              },
+              {
+                "name": "interviewed",
+                "type": "integer",
+                "description": "Shortlisted candidates now carrying marks."
+              },
+              {
+                "name": "awaiting_interview",
+                "type": "integer",
+                "description": "Shortlisted candidates not yet interviewed."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_INTERVIEWED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "No interview is scheduled for the candidate.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the marks. They are the panel's judgement of an interview, and a figure derived from a CV is a mark for something nobody watched.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never read the marks as the decision. The School Admin selects and recommends and the Principal decides (BR-8) — the highest mark is not automatically the appointment.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report who is still to be interviewed. A recommendation made before the field is interviewed is a decision taken on part of it.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Marks are recorded again rather than withdrawn, and the record stays beside the form and CV."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is umeedwar ke 38 number darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "record 38 for this candidate"
+          },
+          "context": "School Admin, Johar Town branch, after the interview.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "interview.marks.record",
+              "inputs": {
+                "application_id": "$request.candidate_phrase",
+                "marks": "38",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The figure is the panel's (PR-1)."
+            }
+          ],
+          "outcome": "Recorded beside their form and CV. Report how many shortlisted candidates are still to be interviewed (PR-3)."
+        },
+        {
+          "request": {
+            "text": "jis ka CV sab se acha hai us ke number zyada laga do",
+            "lang": "ur-Latn",
+            "gloss": "give the highest marks to whoever has the best CV"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "interview.marks.record",
+              "inputs": {
+                "application_id": "$request.candidate_phrase",
+                "marks": "$request.marks — derived from the CV",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. A mark read off a CV is a mark for something nobody watched (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the interview mark is the panel's judgement of the interview — the CV is already in front of them beside it, which is the point of recording the two together."
+        },
+        {
+          "request": {
+            "text": "number chadha kar sab se aage wale ko rakh lo",
+            "lang": "ur-Latn",
+            "gloss": "enter the marks and appoint whoever comes top"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "interview.marks.record",
+              "inputs": {
+                "application_id": "$request.candidate_phrase",
+                "marks": "$request.marks",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The marks only. No selection is chained (PR-2)."
+            }
+          ],
+          "outcome": "Recorded. Report that the School Admin recommends and the Principal decides — the mark is read alongside the form and the CV, and the highest is not automatically the appointment."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-11-PC-7",
+      "intent": {
+        "name": "vacancy.outcome.recommend",
+        "summary": "Recommend a candidate for appointment, with an outcome for every other applicant. One step, and the Principal decides.",
+        "routesHere": [
+          "recommend this candidate, and here are the explanations for the rest",
+          {
+            "text": "is umeedwar ki sifarish kar do",
+            "lang": "ur-Latn",
+            "gloss": "recommend this candidate"
+          },
+          {
+            "text": "chun kar Principal ko bhej do",
+            "lang": "ur-Latn",
+            "gloss": "select and send it to the Principal"
+          },
+          {
+            "text": "baqi umeedwaron ki wajoohat bhi likh di hain",
+            "lang": "ur-Latn",
+            "gloss": "the explanations for the other candidates are written too"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "khud manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve it yourself"
+            },
+            "goesTo": "vacancy.outcome.approve — UC-12-11-PC-8",
+            "note": "The School Admin selects and recommends; the Principal decides. The recommender is never the approver (BR-8, E9)."
+          },
+          {
+            "request": {
+              "text": "umeedwar ka staff record bana do",
+              "lang": "ur-Latn",
+              "gloss": "create the candidate's staff record"
+            },
+            "goesTo": "staff.record.create — UC-12-01-PC-1",
+            "note": "Only an approved candidate can be converted into a staff record (BR-12, UC-12-01 BR-1)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "vacancy.outcome.recommend",
+            "inputs": {
+              "vacancy_id": "$request.vacancy_phrase",
+              "selected_id": "$request.selected_phrase",
+              "rejections": "$request.rejections",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every candidate carries an outcome, and a rejection requires a written explanation — a candidate left with no outcome at all has simply been forgotten (BR-9, E8)."
+          }
+        ],
+        "onFailure": "Stop and report. A rejection with no explanation, and a candidate left with no outcome, both arrive as errors.",
+        "atomicity": "One write: the recommendation, the outcome for every candidate and the audit entry together or not at all. **Nobody is told anything yet** — the candidates are notified when the Principal approves the outcome (BR-11). The selected candidate is not appointed and has no joining date until then (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "vacancy.outcome.recommend",
+          "method": "POST",
+          "path": "/api/v1/vacancies/{vacancy_id}/recommend",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "vacancy_id, since a vacancy carries one recommendation at a time",
+          "purpose": "Recommend the selected candidate and record an outcome for every other applicant.",
+          "parameters": [
+            {
+              "name": "vacancy_id",
+              "source": "resolved",
+              "sourceRef": "$request.vacancy_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "vacancy",
+                "fromPhrase": "$request.vacancy_phrase",
+                "onNoMatch": "Refuse. No vacancy matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the vacancies with their role, closing date and status."
+              },
+              "notes": "The vacancy, resolved from its role and closing date."
+            },
+            {
+              "name": "selected_id",
+              "source": "resolved",
+              "sourceRef": "$request.selected_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "application",
+                "fromPhrase": "$request.selected_phrase",
+                "onNoMatch": "Refuse. No interviewed candidate matches for this vacancy.",
+                "onAmbiguous": "Ask, naming the interviewed candidates with their marks."
+              },
+              "notes": "The candidate being recommended. The School Admin selects; the Principal decides (BR-8)."
+            },
+            {
+              "name": "rejections",
+              "source": "request",
+              "sourceRef": "$request.rejections",
+              "required": true,
+              "type": "object[]",
+              "notes": "Every other candidate with their written explanation, 20 to 500 characters each (BR-9, E7). Each is sent to that candidate when the outcome is approved — one sentence covering the field is not an explanation to any of them."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The recommendation.",
+            "fields": [
+              {
+                "name": "vacancy_id",
+                "type": "string",
+                "description": "The vacancy."
+              },
+              {
+                "name": "selected_candidate",
+                "type": "string",
+                "description": "Recommended, not yet appointed (BR-8)."
+              },
+              {
+                "name": "interview_marks",
+                "type": "number",
+                "description": "Their marks, read beside their form and CV (BR-7)."
+              },
+              {
+                "name": "rejections_recorded",
+                "type": "integer",
+                "description": "Candidates with an outcome and an explanation."
+              },
+              {
+                "name": "candidates_without_outcome",
+                "type": "object[]",
+                "description": "Applicants still carrying none. The vacancy cannot be closed while any remains (BR-9, E8)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval."
+              },
+              {
+                "name": "approver_role",
+                "type": "string",
+                "description": "Who decides. Configuration-based, and never the recommender (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "EXPLANATION_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A rejection was recorded with no explanation.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            },
+            {
+              "code": "CANDIDATE_WITHOUT_OUTCOME",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "A candidate is left with no outcome.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "The vacancy cannot be closed and the candidate has simply been forgotten (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the candidate. The School Admin selects on what they saw at interview (BR-8), and a selection a planner made from marks has appointed somebody to a job.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the rejection explanations. Each is sent to that candidate as the school's account of why they did not get the job (BR-9, BR-11).",
+          "derivedFrom": [
+            "BR-9",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the candidates still without an outcome. The vacancy cannot be closed while any remains, and one forgotten is somebody who never hears back (BR-9, E8).",
+          "derivedFrom": [
+            "BR-9",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never approve in the same plan. The recommender is never the approver (BR-8, E9), and the Principal sets the joining date on approval (BR-10).",
+          "derivedFrom": [
+            "BR-8",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say plainly that nobody has been told. Candidates are notified when the outcome is approved (BR-11), and a selected candidate told early may resign a post on a decision nobody made.",
+          "derivedFrom": [
+            "BR-10",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A recommendation is not withdrawn. The Principal returns it with a reason (A3), and where the selected candidate declines an alternative is recommended afresh (A4)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is umeedwar ki sifarish kar do, baqi teen ki wajoohat likh di hain",
+            "lang": "ur-Latn",
+            "gloss": "recommend this candidate, the explanations for the other three are written"
+          },
+          "context": "School Admin, Johar Town branch, four interviewed.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.outcome.recommend",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "selected_id": "$request.selected_phrase",
+                "rejections": "the three, each with its own explanation",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The selection and every explanation are the School Admin's (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Recommended and awaiting the Principal. Report that nobody has been told yet (PR-5), and any candidate still without an outcome (PR-3) — the seven who were not shortlisted need theirs too before the vacancy can close."
+        },
+        {
+          "request": {
+            "text": "sab se zyada number wale ki sifarish kar do",
+            "lang": "ur-Latn",
+            "gloss": "recommend whoever scored highest"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.outcome.recommend",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "selected_id": "$request.selected_phrase — read off the marks",
+                "rejections": "$request.rejections — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The selection is the School Admin's judgement, not the top of a list (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report the interviewed candidates with their marks so the School Admin can choose, and ask what each unsuccessful candidate should be told — the marks are read beside the form and CV rather than deciding on their own."
+        },
+        {
+          "request": {
+            "text": "sifarish kar ke umeedwar ko bata bhi do ke wo select ho gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "recommend the candidate and tell them they have been selected"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.outcome.recommend",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "selected_id": "$request.selected_phrase",
+                "rejections": "$request.rejections",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The recommendation only. Nobody is notified (PR-5)."
+            }
+          ],
+          "outcome": "Recommended. Report that candidates are told when the Principal approves the outcome and sets the joining date — telling somebody now that they have the job, before the decision is made, is how a person resigns a post on an appointment that may not happen."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-11-PC-8",
+      "intent": {
+        "name": "vacancy.outcome.approve",
+        "summary": "Approve the recommended outcome and set the joining date, which tells every candidate. Principal or Director, one step.",
+        "routesHere": [
+          "approve the appointment, joining on the 1st of October",
+          {
+            "text": "tqarruri manzoor kar do, 1 October ko join karenge",
+            "lang": "ur-Latn",
+            "gloss": "approve the appointment, joining on 1 October"
+          },
+          {
+            "text": "umeedwar manzoor hai, tareekh 1 October rakh do",
+            "lang": "ur-Latn",
+            "gloss": "the candidate is approved, set the date as 1 October"
+          },
+          {
+            "text": "manzoori de do aur sab umeedwaron ko bata do",
+            "lang": "ur-Latn",
+            "gloss": "approve it and tell all the candidates"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "sifarish manzoor nahi",
+              "lang": "ur-Latn",
+              "gloss": "the recommendation is not accepted"
+            },
+            "goesTo": "vacancy.outcome.return — UC-12-11-PC-9"
+          },
+          {
+            "request": {
+              "text": "staff record bana do",
+              "lang": "ur-Latn",
+              "gloss": "create the staff record"
+            },
+            "goesTo": "staff.record.create — UC-12-01-PC-1",
+            "note": "Only an approved candidate can be converted into a staff record, and that happens when they actually join (BR-12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "vacancy.outcome.approve",
+            "inputs": {
+              "vacancy_id": "$request.vacancy_phrase",
+              "joining_date": "$request.joining_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches every candidate. The selected one is told their joining date and every rejected one is told the explanation recorded against them — both to the email on the form (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval with no joining date, and an approval by the recommender, are both refused.",
+        "atomicity": "One write, atomic in itself: the approval, the joining date and the messages to every candidate together or not at all (BR-11). This is the moment the school tells people whether they have a job. The appointment does not create a staff record — that happens when the person actually joins (BR-12, UC-12-01 BR-1)."
+      },
+      "operations": [
+        {
+          "name": "vacancy.outcome.approve",
+          "method": "POST",
+          "path": "/api/v1/vacancies/{vacancy_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "vacancy_id, since a vacancy is filled once and a repeat must not message every candidate twice",
+          "purpose": "Approve the outcome, set the joining date and notify every candidate.",
+          "parameters": [
+            {
+              "name": "vacancy_id",
+              "source": "resolved",
+              "sourceRef": "$request.vacancy_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "vacancy",
+                "fromPhrase": "$request.vacancy_phrase",
+                "onNoMatch": "Refuse. No vacancy matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the vacancies with their role, closing date and status."
+              },
+              "notes": "The vacancy, resolved from its role and closing date."
+            },
+            {
+              "name": "joining_date",
+              "source": "request",
+              "sourceRef": "$request.joining_date",
+              "required": true,
+              "type": "date",
+              "notes": "Set by the Principal on approval (BR-10, E10). An appointment with no start date is not an appointment, and the candidate is told this date."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval.",
+            "fields": [
+              {
+                "name": "vacancy_id",
+                "type": "string",
+                "description": "The vacancy."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Filled."
+              },
+              {
+                "name": "selected_candidate",
+                "type": "string",
+                "description": "Appointed."
+              },
+              {
+                "name": "joining_date",
+                "type": "date",
+                "description": "As set, and told to them (BR-10, BR-11)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The Principal or Director."
+              },
+              {
+                "name": "candidates_notified",
+                "type": "integer",
+                "description": "Selected and rejected alike, each to the email on their form (BR-11)."
+              },
+              {
+                "name": "notification_failures",
+                "type": "object[]",
+                "description": "Candidates who could not be reached, listed rather than assumed told (BR-4, E6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_JOINING_DATE",
+              "mapsTo": "E10",
+              "httpStatus": 400,
+              "meaning": "The outcome was approved with no joining date.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "An appointment with no start date is not an appointment (BR-10)."
+            },
+            {
+              "code": "SELF_APPROVAL",
+              "mapsTo": "E9",
+              "httpStatus": 403,
+              "meaning": "The School Admin attempted to approve their own recommendation.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "The recommender is never the approver (BR-8)."
+            },
+            {
+              "code": "CANDIDATE_WITHOUT_OUTCOME",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "A candidate is left with no outcome.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "The vacancy cannot be closed (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the joining date. The Principal sets it on approval (BR-10) and the candidate is told it — a date a planner picked is when somebody is expected to start work.",
+          "derivedFrom": [
+            "BR-10",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never approve a recommendation the actor made. E9 is BR-8 working, and it is the only check between one person's preference and an appointment.",
+          "derivedFrom": [
+            "BR-8",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report who was told and that failures were listed. Every candidate hears at this moment, and one who could not be reached is identifiable rather than assumed told (BR-4, BR-11, E6).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-11",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never describe the appointment as a staff record. Only an approved candidate can be converted into one, and that happens when they actually join (BR-12).",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn — every candidate has been told. Where the selected candidate declines, an alternative is recommended afresh with its own approval (A4)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "tqarruri manzoor kar do, 1 October ko join karenge",
+            "lang": "ur-Latn",
+            "gloss": "approve the appointment, joining on 1 October"
+          },
+          "context": "Principal, Johar Town branch, on a recommendation.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.outcome.approve",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "joining_date": "2026-10-01",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The joining date is the Principal's (PR-1)."
+            }
+          ],
+          "outcome": "Approved. Every candidate is told — the selected one their joining date, each rejected one their explanation. Report any that could not be reached (PR-3), and that the staff record is created when the person actually attends on the 1st (PR-4)."
+        },
+        {
+          "request": {
+            "text": "umeedwar manzoor hai",
+            "lang": "ur-Latn",
+            "gloss": "the candidate is approved"
+          },
+          "context": "Principal, Johar Town branch, with no joining date given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.outcome.approve",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "joining_date": "$request.joining_date — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is approved. Ask for the joining date — it goes to the candidate as part of the offer, and an appointment with no start date is not an appointment."
+        },
+        {
+          "request": {
+            "text": "maine sifarish ki thi, ab manzoor bhi kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I made the recommendation, I will approve it as well"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.outcome.approve",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "joining_date": "$request.joining_date",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns SELF_APPROVAL (E9)."
+            }
+          ],
+          "outcome": "Not approved. Report that the Principal decides — the School Admin selects and recommends, and the separation is the only check between one person's preference and an appointment."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-11-PC-9",
+      "intent": {
+        "name": "vacancy.outcome.return",
+        "summary": "Return a recommended outcome with the reason. One step, and no candidate is told anything.",
+        "routesHere": [
+          "return this recommendation — I want to see the second candidate again",
+          {
+            "text": "ye sifarish wapas bhej do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "return this recommendation with the reason"
+          },
+          {
+            "text": "sifarish manzoor nahi, dobara dekho",
+            "lang": "ur-Latn",
+            "gloss": "the recommendation is not accepted, look again"
+          },
+          {
+            "text": "doosre umeedwar par ghaur karo",
+            "lang": "ur-Latn",
+            "gloss": "consider the other candidate"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tqarruri manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the appointment"
+            },
+            "goesTo": "vacancy.outcome.approve — UC-12-11-PC-8"
+          },
+          {
+            "request": {
+              "text": "doosre umeedwar ki sifarish kar do",
+              "lang": "ur-Latn",
+              "gloss": "recommend the other candidate"
+            },
+            "goesTo": "vacancy.outcome.recommend — UC-12-11-PC-7",
+            "note": "Recommending is the School Admin's act, and a fresh recommendation carries outcomes for everybody again."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "vacancy.outcome.return",
+            "inputs": {
+              "vacancy_id": "$request.vacancy_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. No candidate has been told anything, because notifications go out on approval (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. It goes back to the School Admin. No candidate learns anything — selected or rejected, they are told only when an outcome is approved (BR-11), so nothing has to be retracted."
+      },
+      "operations": [
+        {
+          "name": "vacancy.outcome.return",
+          "method": "POST",
+          "path": "/api/v1/vacancies/{vacancy_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "vacancy_id, since a recommendation carries one decision",
+          "purpose": "Return the recommended outcome with the reason.",
+          "parameters": [
+            {
+              "name": "vacancy_id",
+              "source": "resolved",
+              "sourceRef": "$request.vacancy_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "vacancy",
+                "fromPhrase": "$request.vacancy_phrase",
+                "onNoMatch": "Refuse. No vacancy matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the vacancies with their role, closing date and status."
+              },
+              "notes": "The vacancy, resolved from its role and closing date."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Why the recommendation is not accepted. The School Admin recommends again from it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "vacancy_id",
+                "type": "string",
+                "description": "The vacancy."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Interviewing again. It sits with the School Admin."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The Principal or Director."
+              },
+              {
+                "name": "candidates_notified",
+                "type": "integer",
+                "description": "Zero. Nobody is told until an outcome is approved (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A recommendation was returned with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The vacancy is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. The School Admin recommends again from it, and a reason a planner wrote sends them back through a field of candidates on a guess.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never notify any candidate of a return. They are told only when an outcome is approved (BR-11), and a rejected candidate told twice — once wrongly — cannot be untold.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never name the alternative candidate. Recommending is the School Admin's act (BR-8), and a returned recommendation with a name attached is the approver making the selection.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. The School Admin recommends again, with outcomes for every candidate, and it comes back for approval."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye sifarish wapas bhej do — main doosre umeedwar ko dobara dekhna chahta hoon",
+            "lang": "ur-Latn",
+            "gloss": "return this recommendation — I want to look at the second candidate again"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.outcome.return",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "reason": "I would like the second candidate reconsidered before an appointment is made.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Principal's own (PR-1). No candidate is named as the alternative (PR-3)."
+            }
+          ],
+          "outcome": "Returned to the School Admin. Report that no candidate has been told anything (PR-2) — notifications go out only when an outcome is approved, so nothing has to be retracted."
+        },
+        {
+          "request": {
+            "text": "sifarish wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return the recommendation"
+          },
+          "context": "Principal, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.outcome.return",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why — the School Admin recommends again from the reason, and without one they will recommend the same candidate."
+        },
+        {
+          "request": {
+            "text": "wapas bhej do aur doosre umeedwar ki sifarish kar do",
+            "lang": "ur-Latn",
+            "gloss": "return it and recommend the second candidate"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "vacancy.outcome.return",
+              "inputs": {
+                "vacancy_id": "$request.vacancy_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The return only. No fresh recommendation is chained (PR-3)."
+            }
+          ],
+          "outcome": "Returned with the reason. Report that recommending is the School Admin's act — a fresh recommendation carries an outcome and an explanation for every candidate again, and the approver naming the appointee would collapse the separation the approval exists for."
+        }
+      ]
+    }
+  ]
+}

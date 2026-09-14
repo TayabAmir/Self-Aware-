@@ -1,0 +1,1377 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-18-04",
+    "name": "Bring purchased goods into stock and settle the advance that funded them, in both halves",
+    "module": "Inventory, Assets & Point-of-Sale",
+    "file": "../UseCases/UC-18-04.json",
+    "featureRef": "18.4 Recording a receipt into stock"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-18-04-PC-1",
+      "intent": {
+        "name": "stock.receipt.record",
+        "summary": "Record what physically arrived against the approved request, with the supplier receipt.",
+        "routesHere": [
+          "record the receipt for the marker request — 12 arrived from Al-Karam",
+          {
+            "text": "saman aa gaya hai, receipt record kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the goods have arrived, record the receipt"
+          },
+          {
+            "text": "10 ream aaye hain, 12 manzoor hue the",
+            "lang": "ur-Latn",
+            "gloss": "10 reams arrived, 12 were approved"
+          },
+          {
+            "text": "stock mein le lein jo aaya hai",
+            "lang": "ur-Latn",
+            "gloss": "take into stock what has arrived"
+          },
+          "book in the stationery that came today"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "receipt ghalat likhi gayi thi, theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "the receipt was recorded wrongly, correct it"
+            },
+            "goesTo": "stock.adjustment.raise — UC-18-06.",
+            "note": "A receipt is never deleted. A wrong one is corrected by a stock adjustment, which has its own record and its own approval (BR-10, E10, A6)."
+          },
+          {
+            "request": {
+              "text": "main ne hi khareeda tha, main hi receive kar leta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I bought it myself, I will receive it myself"
+            },
+            "goesTo": "Refused.",
+            "note": "The person who bought the goods cannot receive them. That is the cheapest control against one person holding the whole cycle of requesting, taking the cash, purchasing and returning the receipt (BR-5, E1, A4)."
+          },
+          {
+            "request": {
+              "text": "receipt baad mein laga dein",
+              "lang": "ur-Latn",
+              "gloss": "attach the receipt later"
+            },
+            "goesTo": "Refused.",
+            "note": "The supplier receipt is required. The settlement rests on it (BR-2, E2)."
+          },
+          {
+            "request": {
+              "text": "advance settle kar dein",
+              "lang": "ur-Latn",
+              "gloss": "settle the advance"
+            },
+            "goesTo": "stock.advance.settle — this use case.",
+            "note": "Recording what arrived and settling the money are two acts by two different people: the storekeeper records the goods, Accounts post the settlement (BR-2, BR-3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.receipt.record",
+            "inputs": {
+              "request_id": "$request.request_phrase",
+              "lines": "$request.lines",
+              "supplier": "$request.supplier",
+              "receipt_document_id": "$request.receipt_phrase",
+              "receipt_value": "$request.receipt_value",
+              "shortfall_reason": "$request.shortfall_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it records what arrived rather than what was approved. The two are allowed to differ, and the difference is recorded rather than assumed away (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. No supplier receipt, a quantity in the wrong unit, or a shortfall with no reason each refuses the whole record. Nothing is half-received.",
+        "atomicity": "One write. **The stock balance does not move here** — the goods are recorded as arrived and the balance rises when Accounts post the settlement, together with the ledger, or not at all (BR-3, BR-11, E6)."
+      },
+      "operations": [
+        {
+          "name": "stock.receipt.record",
+          "method": "POST",
+          "path": "/api/v1/stock-receipts",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "request_id + the lines, so a double press does not record the same delivery twice and settle it twice over",
+          "purpose": "Record the goods that arrived against an approved request, with the supplier receipt attached.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.request_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_request",
+                "fromPhrase": "$request.request_phrase",
+                "onNoMatch": "Refuse. No approved request awaiting receipt matches.",
+                "onAmbiguous": "Ask, naming the approved requests with advances against them, their purchasers and their values."
+              },
+              "notes": "The approved request the goods were bought against. What was asked for, what was approved, what was bought and what arrived are all read together (BR-7)."
+            },
+            {
+              "name": "lines",
+              "source": "request",
+              "sourceRef": "$request.lines",
+              "required": true,
+              "type": "object[]",
+              "notes": "One entry per item: the item and the quantity that **physically arrived**, in that item's own unit so it can be added to the balance without conversion (BR-9, E3). May differ from what was approved (BR-8)."
+            },
+            {
+              "name": "supplier",
+              "source": "request",
+              "sourceRef": "$request.supplier",
+              "required": true,
+              "type": "string",
+              "notes": "2 to 100 characters. Who the goods were bought from. Typed each time — no feature holds a supplier list anywhere, an open question this use case raises and does not answer (OQ-4)."
+            },
+            {
+              "name": "receipt_document_id",
+              "source": "resolved",
+              "sourceRef": "$request.receipt_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "uploaded_file",
+                "fromPhrase": "$request.receipt_phrase",
+                "onNoMatch": "Refuse. No uploaded file matches. The supplier receipt is attached on the screen first.",
+                "onAmbiguous": "Ask, naming the files uploaded against this request."
+              },
+              "notes": "The supplier receipt the purchaser returned with. Required — the settlement rests on it (BR-2, E2). Uploaded on the screen first; a file cannot travel in a plan."
+            },
+            {
+              "name": "receipt_value",
+              "source": "request",
+              "sourceRef": "$request.receipt_value",
+              "required": true,
+              "type": "money",
+              "notes": "What was actually spent, read from the supplier receipt. Where it exceeds the advance the difference is reimbursed only with approval; where it falls short the unspent cash is returned (BR-4)."
+            },
+            {
+              "name": "shortfall_reason",
+              "source": "request",
+              "sourceRef": "$request.shortfall_reason",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 500 characters. **Required where less arrived than was approved** (BR-8, E4) — a request part-filled is not a request completed, and the shortfall is the item the school is still short of."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What arrived, and what it leaves open.",
+            "fields": [
+              {
+                "name": "receipt_id",
+                "type": "string",
+                "description": "The receipt."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Received. Not settled — the money and the stock move together when Accounts post it (BR-3, BR-11)."
+              },
+              {
+                "name": "received_by",
+                "type": "string",
+                "description": "The storekeeper. Never the person who bought the goods (BR-5, E1)."
+              },
+              {
+                "name": "purchased_by",
+                "type": "string",
+                "description": "Who held the advance and bought them."
+              },
+              {
+                "name": "lines",
+                "type": "object[]",
+                "description": "Item, approved quantity and quantity received, in the item's own unit (BR-9)."
+              },
+              {
+                "name": "short",
+                "type": "object[]",
+                "description": "Lines where less arrived than was approved, with the reason. The request is part-filled, not completed, and those items are still short on the shelf (BR-8)."
+              },
+              {
+                "name": "over",
+                "type": "object[]",
+                "description": "Lines where more arrived than was approved. Taken in and flagged — whether the excess should be taken in at all is an open question this use case raises and does not answer (E5, OQ-3)."
+              },
+              {
+                "name": "receipt_value",
+                "type": "string",
+                "description": "What the supplier receipt says."
+              },
+              {
+                "name": "advance_amount",
+                "type": "string",
+                "description": "What was issued. The difference either way is settled, not ignored (BR-4)."
+              },
+              {
+                "name": "difference",
+                "type": "string",
+                "description": "Over the advance means a reimbursement, which needs approval before it is paid; under it means cash to be returned (BR-4, E7)."
+              },
+              {
+                "name": "stock_balance_moved",
+                "type": "boolean",
+                "description": "False. It rises at settlement, with the ledger, or not at all (BR-3, BR-11, E6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "PURCHASER_CANNOT_RECEIVE",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user is the person who bought the goods.",
+              "written": "Nothing.",
+              "notWritten": "The receipt is not recorded.",
+              "note": "Another member of staff receives them. In a school with one storekeeper who also does the buying, this is an open question the use case raises and does not answer (BR-5, A4, OQ-1)."
+            },
+            {
+              "code": "NO_SUPPLIER_RECEIPT",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No supplier receipt was attached.",
+              "written": "Nothing.",
+              "notWritten": "The receipt is not recorded.",
+              "note": "The settlement rests on it (BR-2)."
+            },
+            {
+              "code": "WRONG_UNIT",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A quantity was entered in a different unit from the item's.",
+              "written": "Nothing.",
+              "notWritten": "The receipt is not recorded.",
+              "note": "It could not be added to the balance without conversion (BR-9)."
+            },
+            {
+              "code": "SHORTFALL_REASON_MISSING",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "Less arrived than was approved and no reason was given.",
+              "written": "Nothing.",
+              "notWritten": "The receipt is not recorded.",
+              "note": "A request part-filled is not a request completed (BR-8)."
+            },
+            {
+              "code": "MORE_THAN_APPROVED",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "More arrived than was approved.",
+              "written": "The receipt is recorded and flagged.",
+              "notWritten": "Nothing is refused.",
+              "treatedAsSuccess": true,
+              "note": "It may indicate a reimbursement is being sought, and one needs approval before it is paid (BR-4, E7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Record what arrived, never what was approved. The two are allowed to differ and the difference is the point — an approved quantity copied into the received column is a shortfall assumed away and an item the school still does not have (BR-8, E4).",
+          "derivedFrom": [
+            "BR-8",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never receive goods the acting user bought. It is the cheapest control in the module against one person requesting, taking the cash, purchasing and returning the receipt, and it is worth saying why rather than reading as an obstruction (BR-5, E1, A4).",
+          "derivedFrom": [
+            "BR-5",
+            "E1",
+            "A4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never proceed without the supplier receipt. The whole settlement rests on it, and a receipt promised later is a settlement against a figure nobody can check (BR-2, E2).",
+          "derivedFrom": [
+            "BR-2",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Check the unit against the item before the number. Ten of something counted in reams and ten counted in boxes add differently to the same balance, and the delivery note rarely uses the store's unit (BR-9, E3).",
+          "derivedFrom": [
+            "BR-9",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that the balance has not moved yet. The goods are on the shelf and the system does not show them until Accounts post the settlement — that is deliberate, because the money and the stock move together or neither does (BR-3, BR-11, E6).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-11",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Name the difference against the advance either way. Over means somebody is owed money and it needs approval before it is paid; under means cash is in a pocket until it is recorded back (BR-4, E7).",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A receipt is never deleted. A wrong one is corrected by a stock adjustment, which carries its own reason and its own approval (BR-10, E10, A6) — so the record shows both what was recorded and what corrected it."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "marker wali request ka saman aa gaya, 12 aaye hain Al-Karam se, receipt laga di hai",
+            "lang": "ur-Latn",
+            "gloss": "the goods for the marker request have arrived, 12 from Al-Karam, I have attached the receipt"
+          },
+          "context": "Staff (storekeeper), Johar Town branch, 12 approved, advance PKR 2,400, receipt PKR 2,280.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.receipt.record",
+              "inputs": {
+                "request_id": "$request.request_phrase → the marker request",
+                "lines": "12 pieces, as counted on the shelf",
+                "supplier": "Al-Karam Stationers",
+                "receipt_document_id": "$request.receipt_phrase → the uploaded receipt",
+                "receipt_value": "PKR 2,280",
+                "shortfall_reason": "not required — nothing short",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "What arrived, in pieces, which is how this item is counted (PR-4)."
+            }
+          ],
+          "outcome": "Report it recorded and then the two things that are not finished: the balance has not moved yet — it rises when Accounts post the settlement, together with the ledger — and PKR 120 of the advance is unspent and has to be recorded as cash returned, otherwise it stays in a pocket and the advance never closes."
+        },
+        {
+          "request": {
+            "text": "10 ream aaye hain, dukaan pe sirf 10 the, 12 manzoor hue the",
+            "lang": "ur-Latn",
+            "gloss": "10 reams arrived, the shop only had 10, 12 were approved"
+          },
+          "context": "Staff (storekeeper), Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.receipt.record",
+              "inputs": {
+                "request_id": "$request.request_phrase → the paper request",
+                "lines": "10 reams",
+                "supplier": "asked — not named",
+                "receipt_document_id": "$request.receipt_phrase",
+                "receipt_value": "from the supplier receipt",
+                "shortfall_reason": "as they said it — the supplier had only ten",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Ten recorded, not twelve, with their reason (PR-1)."
+            }
+          ],
+          "outcome": "Ask for the supplier name and the receipt value. After: report that the request is part-filled rather than completed — two reams were approved, paid for in the advance and never arrived, so the money owed back does not match the goods, and A4 paper is still short of what the school decided it needed."
+        },
+        {
+          "request": {
+            "text": "main ne khud khareeda tha, main hi stock mein daal deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I bought it myself, I will put it into stock myself"
+          },
+          "context": "Staff, the same person who held the advance.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.receipt.record",
+              "inputs": {
+                "request_id": "$request.request_phrase → their own request",
+                "lines": "as they counted",
+                "supplier": "as named",
+                "receipt_document_id": "$request.receipt_phrase",
+                "receipt_value": "as on the receipt",
+                "shortfall_reason": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused. The purchaser cannot receive (PR-2)."
+            }
+          ],
+          "outcome": "It cannot go through in their name. Another member of staff records what arrived — the point is not distrust but that one person otherwise requests, takes the cash, buys, and certifies what came back, with nothing outside it to check against. Where the school has one storekeeper who also does the buying, the use case itself flags this as unresolved."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-04-PC-2",
+      "intent": {
+        "name": "stock.advance.settle",
+        "summary": "Post the settlement: the amount to the ledger and the stock onto the shelf, together or not at all.",
+        "routesHere": [
+          "settle the advance for the marker request",
+          {
+            "text": "marker wali request ka advance settle kar dein",
+            "lang": "ur-Latn",
+            "gloss": "settle the advance for the marker request"
+          },
+          {
+            "text": "receipt aa gayi hai, hisaab band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the receipt has come, close the account"
+          },
+          "post the settlement for today's stationery receipt"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "sirf ledger mein daal dein, stock baad mein",
+              "lang": "ur-Latn",
+              "gloss": "just post it to the ledger, stock later"
+            },
+            "goesTo": "Refused.",
+            "note": "Both halves are recorded together or not at all. A voucher records an amount, while stock needs to know that ten reams arrived — without the second half the books are clean and the inventory never moves (BR-3, BR-11, E6)."
+          },
+          {
+            "request": {
+              "text": "advance ko pehle hi kharcha likh dein",
+              "lang": "ur-Latn",
+              "gloss": "book the advance as an expense earlier"
+            },
+            "goesTo": "Not offered.",
+            "note": "The advance becomes an expense **here** and not before. Until this point it was an amount owed back (BR-6, E9)."
+          },
+          {
+            "request": {
+              "text": "bacha hua paisa bhi likh dein",
+              "lang": "ur-Latn",
+              "gloss": "record the unspent cash too"
+            },
+            "goesTo": "stock.cashreturned.record — this use case.",
+            "note": "The cash handed back is its own record, because it is money physically returned rather than an accounting entry (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.advance.settle",
+            "inputs": {
+              "receipt_id": "$request.receipt_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step with two halves. The amount posts to the ledger and the stock balance rises by what arrived — a settled advance with no stock increase is the failure this is built to prevent (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. Where either half fails the whole settlement is rolled back and nothing is recorded — the advance stays outstanding and the goods stay unrecorded on the shelf (E6).",
+        "atomicity": "One atomic act: the ledger posting, the stock increase, and the advance ceasing to be an amount owed back. **The advance becomes an expense at this moment and not before** (BR-6, E9). Where the receipt exceeded the advance the settlement waits for a reimbursement approval rather than paying the difference (BR-4, E7)."
+      },
+      "operations": [
+        {
+          "name": "stock.advance.settle",
+          "method": "POST",
+          "path": "/api/v1/stock-receipts/{receipt_id}/settle",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "receipt_id, since a receipt settles once and a repeat would post the amount to the ledger twice and raise the balance twice",
+          "purpose": "Post the settlement to the ledger and raise the stock balance, together.",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "source": "resolved",
+              "sourceRef": "$request.receipt_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_receipt",
+                "fromPhrase": "$request.receipt_phrase",
+                "onNoMatch": "Refuse. No recorded receipt matches.",
+                "onAmbiguous": "Ask, naming the receipts awaiting settlement with their requests, suppliers and values."
+              },
+              "notes": "The recorded receipt, named by its request or by what arrived."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was posted and what is now on the shelf.",
+            "fields": [
+              {
+                "name": "receipt_id",
+                "type": "string",
+                "description": "The receipt."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Settled, or awaiting reimbursement approval where the receipt exceeded the advance (BR-4)."
+              },
+              {
+                "name": "ledger_posted",
+                "type": "string",
+                "description": "The amount, and the account. The advance stops being owed back and becomes an expense here (BR-6, E9)."
+              },
+              {
+                "name": "stock_increased",
+                "type": "object[]",
+                "description": "Item by item, what the balance rose by, in each item's own unit (BR-3, BR-9)."
+              },
+              {
+                "name": "advance_closed",
+                "type": "string",
+                "description": "What the advance was and what it settled against."
+              },
+              {
+                "name": "cash_to_return",
+                "type": "string",
+                "description": "Where the receipt fell short. Still owed until it is physically handed back and recorded (BR-4)."
+              },
+              {
+                "name": "reimbursement_pending",
+                "type": "string",
+                "description": "Where the receipt exceeded the advance. Not paid until it is approved (BR-4, E7)."
+              },
+              {
+                "name": "items_still_below_reorder_level",
+                "type": "object[]",
+                "description": "Items that arrived and are still below their level, because less arrived than was approved or the level moved (BR-8, UC-18-01 BR-7)."
+              },
+              {
+                "name": "request_status",
+                "type": "string",
+                "description": "Received and settled. The requester can see it (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "HALF_FAILED",
+              "mapsTo": "E6",
+              "httpStatus": 500,
+              "meaning": "The ledger posted but the stock balance did not, or the reverse.",
+              "written": "Nothing.",
+              "notWritten": "The whole settlement is rolled back.",
+              "note": "A settled advance with no stock increase is the failure this rule prevents. The books would be clean and the inventory would never move (BR-11)."
+            },
+            {
+              "code": "NO_ADVANCE",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "There is no advance against this request.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is settled.",
+              "note": "There is nothing owed back to close."
+            },
+            {
+              "code": "REIMBURSEMENT_NOT_APPROVED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The receipt exceeds the advance and no reimbursement has been approved.",
+              "written": "The settlement is held.",
+              "notWritten": "The difference is not paid.",
+              "note": "A reimbursement needs approval before it is paid (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never post one half without the other. The amount and the stock move together or neither does — this is the single most consequential rule in the module, because the books look right either way and the shelf does not (BR-3, BR-11, E6).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-11",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the expense happens here. Until this moment the money was an amount owed back; the ledger entry that turns it into a cost is this one, and posting it earlier is the error the module names as most likely (BR-6, E9).",
+          "derivedFrom": [
+            "BR-6",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never settle past a difference. Cash short of the advance is still in somebody's pocket until it is recorded back, and cash over it is not paid until a reimbursement is approved (BR-4, E7).",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report a rolled-back settlement as nothing recorded. The advance is still outstanding and the goods are still on the shelf unrecorded — both true and neither visible unless it is said (E6).",
+          "derivedFrom": [
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say which items are still short. Where less arrived than was approved, settling closes the money and leaves the shortage; the item goes back on the next round (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A settled receipt is not reversed. A wrong one is corrected by a stock adjustment on the stock side, which carries its own reason and approval (BR-10, A6) — the ledger side is a matter for the finance module's own correction route."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "marker wali receipt ka settlement post kar dein",
+            "lang": "ur-Latn",
+            "gloss": "post the settlement for the marker receipt"
+          },
+          "context": "Accounts, Johar Town branch, advance PKR 2,400, receipt PKR 2,280, 12 pieces received.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.advance.settle",
+              "inputs": {
+                "receipt_id": "$request.receipt_phrase → the marker receipt",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Both halves, together (PR-1)."
+            }
+          ],
+          "outcome": "Report both halves plainly: PKR 2,280 posted as an expense — which it becomes now and did not before — and the marker balance up by 12 pieces. Then the part that is not finished: PKR 120 of the advance is unspent and the advance does not fully close until that cash is physically handed back and recorded."
+        },
+        {
+          "request": {
+            "text": "is receipt ka settlement kar dein",
+            "lang": "ur-Latn",
+            "gloss": "settle this receipt"
+          },
+          "context": "Accounts, receipt PKR 2,650 against an advance of PKR 2,400.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.advance.settle",
+              "inputs": {
+                "receipt_id": "$request.receipt_phrase → the receipt",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Held. The difference needs approval before it is paid (PR-3)."
+            }
+          ],
+          "outcome": "The settlement is held. The receipt is PKR 250 above the advance, and a reimbursement is not paid without approval — the School Admin or the Principal decides. Nothing has posted and the stock has not moved, so the goods are on the shelf and invisible to the system until this is resolved either way."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-04-PC-3",
+      "intent": {
+        "name": "stock.cashreturned.record",
+        "summary": "Record the unspent cash handed back, so an advance does not close with money still in a pocket.",
+        "routesHere": [
+          "record 120 rupees returned against the marker advance",
+          {
+            "text": "120 rupay wapas aa gaye hain, record kar dein",
+            "lang": "ur-Latn",
+            "gloss": "120 rupees have come back, record it"
+          },
+          {
+            "text": "bacha hua paisa Imran ne wapas kar diya hai",
+            "lang": "ur-Latn",
+            "gloss": "Imran has returned the unspent cash"
+          },
+          "log the change from the stationery purchase"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "thora sa hai, chhod dein",
+              "lang": "ur-Latn",
+              "gloss": "it is a small amount, leave it"
+            },
+            "goesTo": "Not offered.",
+            "note": "The unspent cash is returned and recorded rather than staying in a pocket unnoticed. That is the rule's exact wording, and the amount being small is why it goes unnoticed (BR-4)."
+          },
+          {
+            "request": {
+              "text": "receipt zyada ki hai, paisa wapas nahi balke dena hai",
+              "lang": "ur-Latn",
+              "gloss": "the receipt is higher, money is owed the other way"
+            },
+            "goesTo": "stock.reimbursement.approve — this use case.",
+            "note": "Where the receipt exceeds the advance the difference is reimbursed, and only with approval (BR-4, E7)."
+          },
+          {
+            "request": {
+              "text": "tankhwah se kaat lein",
+              "lang": "ur-Latn",
+              "gloss": "take it out of salary"
+            },
+            "goesTo": "stock.advance.recover — UC-18-03.",
+            "note": "Recovery is for an advance that produced nothing. This is cash physically handed back against one that did."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.cashreturned.record",
+            "inputs": {
+              "receipt_id": "$request.receipt_phrase",
+              "amount": "$request.amount",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The cash comes back into the school's hands and the advance closes against goods plus cash rather than against goods alone (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. An amount that does not match the difference between the advance and the receipt is recorded as given and the gap is reported — the arithmetic is not silently corrected.",
+        "atomicity": "One write. Nothing about the stock changes: this is the money half of an advance whose goods have already been recorded (BR-4)."
+      },
+      "operations": [
+        {
+          "name": "stock.cashreturned.record",
+          "method": "POST",
+          "path": "/api/v1/stock-receipts/{receipt_id}/cash-returned",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "receipt_id + the amount, so a double press does not record the same cash coming back twice",
+          "purpose": "Record unspent cash physically handed back against an advance.",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "source": "resolved",
+              "sourceRef": "$request.receipt_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_receipt",
+                "fromPhrase": "$request.receipt_phrase",
+                "onNoMatch": "Refuse. No recorded receipt matches.",
+                "onAmbiguous": "Ask, naming the receipts awaiting settlement with their requests, suppliers and values."
+              },
+              "notes": "The recorded receipt, named by its request or by what arrived."
+            },
+            {
+              "name": "amount",
+              "source": "request",
+              "sourceRef": "$request.amount",
+              "required": true,
+              "type": "money",
+              "notes": "What was physically handed back. Where it does not match the difference between the advance and the receipt, the gap is reported rather than assumed away (BR-4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What came back and what is left open.",
+            "fields": [
+              {
+                "name": "receipt_id",
+                "type": "string",
+                "description": "The receipt."
+              },
+              {
+                "name": "cash_returned",
+                "type": "string",
+                "description": "What was handed back."
+              },
+              {
+                "name": "expected",
+                "type": "string",
+                "description": "The difference between the advance and the supplier receipt."
+              },
+              {
+                "name": "still_unaccounted",
+                "type": "string",
+                "description": "Where less came back than the arithmetic expects. This is money out of the school that nobody has explained (BR-4)."
+              },
+              {
+                "name": "advance_status",
+                "type": "string",
+                "description": "Whether the advance now closes fully, and against what — goods plus cash."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "Who handed it back. The holder the advance is against (UC-18-03 BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_ADVANCE",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "There is no advance against this request.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is recorded.",
+              "note": "There is nothing owed back to return against."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never let a small difference go. The rule exists because unspent cash stays in a pocket unnoticed, and it goes unnoticed precisely because the amounts are small (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report a gap rather than closing it. Where less comes back than the receipt and the advance imply, that difference is money out of the school nobody has explained — say the figure (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say what the advance now closes against. Goods plus cash is a closed advance; goods alone with cash outstanding is not, however complete the delivery looked (BR-4, BR-6).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Cash physically handed back is not un-handed. A wrong figure is corrected by recording the true one, and both entries stay on the record."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Imran ne 120 rupay wapas kar diye hain",
+            "lang": "ur-Latn",
+            "gloss": "Imran has handed back 120 rupees"
+          },
+          "context": "Accounts, Johar Town branch, advance PKR 2,400 against a receipt of PKR 2,280.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.cashreturned.record",
+              "inputs": {
+                "receipt_id": "$request.receipt_phrase → the marker receipt",
+                "amount": "PKR 120",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "It matches the difference exactly (PR-2)."
+            }
+          ],
+          "outcome": "Report the advance as fully closed — PKR 2,280 in goods and PKR 120 in cash against PKR 2,400 out. That is the whole of what was owed back, and nothing is outstanding against him on this request."
+        },
+        {
+          "request": {
+            "text": "100 rupay wapas aaye hain",
+            "lang": "ur-Latn",
+            "gloss": "100 rupees have come back"
+          },
+          "context": "Accounts, advance PKR 2,400 against a receipt of PKR 2,280.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.cashreturned.record",
+              "inputs": {
+                "receipt_id": "$request.receipt_phrase → the receipt",
+                "amount": "PKR 100",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Recorded as given, and the gap is reported rather than corrected (PR-2)."
+            }
+          ],
+          "outcome": "Recorded — and say the figure plainly: PKR 20 is still unaccounted for. The receipt and the advance imply 120 back and 100 came. It is a small amount and that is exactly why it goes unnoticed; the advance does not close until somebody explains it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-04-PC-4",
+      "intent": {
+        "name": "stock.reimbursement.approve",
+        "summary": "Agree to pay back the difference where the purchase cost more than the advance.",
+        "routesHere": [
+          "approve the 250 rupee reimbursement on the stationery receipt",
+          {
+            "text": "receipt advance se zyada hai, farq manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the receipt is above the advance, approve the difference"
+          },
+          {
+            "text": "Imran ne apni jeb se 250 diye the, wapas kar dein",
+            "lang": "ur-Latn",
+            "gloss": "Imran paid 250 from his own pocket, pay it back"
+          },
+          "approve the top-up on this purchase"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "bina manzoori ke de dein",
+              "lang": "ur-Latn",
+              "gloss": "just pay it without approval"
+            },
+            "goesTo": "Refused.",
+            "note": "A reimbursement is not paid without approval. There is no route that pays the difference on the storekeeper's or Accounts' own authority (BR-4, E7)."
+          },
+          {
+            "request": {
+              "text": "nahi dena, wajah likh dein",
+              "lang": "ur-Latn",
+              "gloss": "do not pay it, put the reason in"
+            },
+            "goesTo": "stock.reimbursement.refuse — this use case.",
+            "note": "The difference is simply not paid, with the reason recorded (A5)."
+          },
+          {
+            "request": {
+              "text": "advance barha dein",
+              "lang": "ur-Latn",
+              "gloss": "increase the advance instead"
+            },
+            "goesTo": "Not offered.",
+            "note": "The advance was issued against the approval that preceded it. Money spent above it is a reimbursement, decided after the fact (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.reimbursement.approve",
+            "inputs": {
+              "receipt_id": "$request.receipt_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It permits the difference to be paid; it is not paid without this (BR-4, E7)."
+          }
+        ],
+        "onFailure": "Stop and report. Approval by anybody other than the School Admin or the Principal is refused, and the difference stays unpaid.",
+        "atomicity": "One write, and the settlement it was holding completes. The amount posts to the ledger and the stock rises together, as any settlement does (BR-3, BR-11)."
+      },
+      "operations": [
+        {
+          "name": "stock.reimbursement.approve",
+          "method": "POST",
+          "path": "/api/v1/stock-receipts/{receipt_id}/reimbursement/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "receipt_id, since a receipt carries one reimbursement decision and a repeat would pay the difference twice",
+          "purpose": "Approve payment of the difference where the receipt exceeded the advance.",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "source": "resolved",
+              "sourceRef": "$request.receipt_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_receipt",
+                "fromPhrase": "$request.receipt_phrase",
+                "onNoMatch": "Refuse. No receipt awaiting reimbursement approval matches.",
+                "onAmbiguous": "Ask, naming the receipts awaiting approval with their requests, their advances and the difference on each."
+              },
+              "notes": "The recorded receipt whose value exceeded the advance."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What is being paid back and why it arose.",
+            "fields": [
+              {
+                "name": "receipt_id",
+                "type": "string",
+                "description": "The receipt."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Settled. The settlement that was held now completes (BR-3)."
+              },
+              {
+                "name": "reimbursement",
+                "type": "string",
+                "description": "The difference being paid back."
+              },
+              {
+                "name": "advance_amount",
+                "type": "string",
+                "description": "What was issued against the approved request."
+              },
+              {
+                "name": "receipt_value",
+                "type": "string",
+                "description": "What was actually spent, from the supplier receipt."
+              },
+              {
+                "name": "paid_to",
+                "type": "string",
+                "description": "The person who held the advance and covered the difference themselves."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The School Admin or the Principal. Not Accounts and not the storekeeper (BR-4)."
+              },
+              {
+                "name": "quantities_over_approved",
+                "type": "object[]",
+                "description": "Lines where more arrived than was approved. This is often why the receipt exceeded the advance, and it is a purchase nobody agreed to in advance (E5, OQ-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_THE_APPROVER",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "The acting user cannot approve a reimbursement.",
+              "written": "Nothing.",
+              "notWritten": "The difference is not paid and the settlement stays held.",
+              "note": "A reimbursement needs approval before it is paid, and the approval sits with the School Admin or the Principal (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say what the difference was actually spent on. A receipt above the advance is often more goods than were approved, which is a purchase nobody agreed to before the money went out — and it reads on the screen as an ordinary overspend (E5, OQ-3).",
+          "derivedFrom": [
+            "E5",
+            "OQ-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never pay it without this. There is no route anywhere that reimburses on Accounts' or the storekeeper's own authority (BR-4, E7).",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that approving completes the settlement. The ledger posting and the stock increase were waiting on it, so this is the act that finally puts the goods on the system (BR-3, BR-11).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no unapprove. Once the difference is paid it has left the school; the lifecycle has no transition back from Settled. Refusing is the other answer and it has to be given before this one."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "receipt 250 zyada ki hai, Imran ne apni jeb se diye the, manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the receipt is 250 over, Imran paid it from his own pocket, approve it"
+          },
+          "context": "School Admin, Johar Town branch, receipt PKR 2,650 against an advance of PKR 2,400.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.reimbursement.approve",
+              "inputs": {
+                "receipt_id": "$request.receipt_phrase → the stationery receipt",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step, and the held settlement completes (PR-3)."
+            }
+          ],
+          "outcome": "Before approving, say where the PKR 250 went: 14 pieces arrived against 12 approved, so the overspend is two extra pieces nobody agreed to buy. After: report the settlement completed — the amount posted and the balance up by 14 — and that Imran is repaid."
+        },
+        {
+          "request": {
+            "text": "farq manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve the difference"
+          },
+          "context": "Accounts, receipt above the advance.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.reimbursement.approve",
+              "inputs": {
+                "receipt_id": "$request.receipt_phrase → the receipt",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused. Accounts pay; they do not decide (PR-2)."
+            }
+          ],
+          "outcome": "It is not Accounts' to approve. The School Admin or the Principal decides, and Accounts pay once they have — the same separation that applies to the advance itself. Until then the settlement stays held and the goods are on the shelf without being on the system."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-04-PC-5",
+      "intent": {
+        "name": "stock.reimbursement.refuse",
+        "summary": "Decline to pay the difference, with the reason recorded.",
+        "routesHere": [
+          "refuse the reimbursement — nobody approved buying two extra boxes",
+          {
+            "text": "farq nahi dena, wajah likh dein",
+            "lang": "ur-Latn",
+            "gloss": "do not pay the difference, put the reason in"
+          },
+          {
+            "text": "jitna manzoor tha usi ka paisa banta hai",
+            "lang": "ur-Latn",
+            "gloss": "only what was approved is owed"
+          },
+          "turn down the top-up on this receipt"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "de dein, chhoti si raqam hai",
+              "lang": "ur-Latn",
+              "gloss": "pay it, it is a small amount"
+            },
+            "goesTo": "stock.reimbursement.approve — this use case.",
+            "note": "Paying it is the other answer, and it is a decision the School Admin or the Principal makes rather than one that follows from the amount being small (BR-4)."
+          },
+          {
+            "request": {
+              "text": "saman wapas kar dein",
+              "lang": "ur-Latn",
+              "gloss": "send the goods back"
+            },
+            "goesTo": "Not offered here.",
+            "note": "Refusing the reimbursement does not return the goods. What arrived was recorded as arriving, and where more came than was approved it is taken into stock and flagged (E5, OQ-3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.reimbursement.refuse",
+            "inputs": {
+              "receipt_id": "$request.receipt_phrase",
+              "refusal_reason": "$request.refusal_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The difference is not paid, the reason is recorded, and the receipt goes back to Received (A5)."
+          }
+        ],
+        "onFailure": "Stop and report. A refusal with no reason is not recorded — the person who paid the difference out of their own pocket is being told they will not get it back, and they are owed the reason.",
+        "atomicity": "One write. The difference stays unpaid and the settlement completes for the advance amount alone. The goods that arrived stay on the record either way (E5)."
+      },
+      "operations": [
+        {
+          "name": "stock.reimbursement.refuse",
+          "method": "POST",
+          "path": "/api/v1/stock-receipts/{receipt_id}/reimbursement/refuse",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "receipt_id, since a receipt carries one reimbursement decision",
+          "purpose": "Refuse payment of the difference, with the reason recorded.",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "source": "resolved",
+              "sourceRef": "$request.receipt_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_receipt",
+                "fromPhrase": "$request.receipt_phrase",
+                "onNoMatch": "Refuse. No receipt awaiting reimbursement approval matches.",
+                "onAmbiguous": "Ask, naming the receipts awaiting approval with their requests, their advances and the difference on each."
+              },
+              "notes": "The recorded receipt whose value exceeded the advance."
+            },
+            {
+              "name": "refusal_reason",
+              "source": "request",
+              "sourceRef": "$request.refusal_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters, the approver's own. Required — somebody covered this from their own pocket and is being told they will not be repaid (BR-4, A5)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What is not being paid, and what remains true anyway.",
+            "fields": [
+              {
+                "name": "receipt_id",
+                "type": "string",
+                "description": "The receipt."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Received. The difference is not paid (A5)."
+              },
+              {
+                "name": "refused_amount",
+                "type": "string",
+                "description": "What the purchaser covered and will not get back."
+              },
+              {
+                "name": "refusal_reason",
+                "type": "string",
+                "description": "Why, in the approver's own words."
+              },
+              {
+                "name": "goods_kept",
+                "type": "object[]",
+                "description": "What arrived, which stays in stock whether or not the difference is paid (E5)."
+              },
+              {
+                "name": "purchaser_out_of_pocket",
+                "type": "string",
+                "description": "The person, by name, and the amount they are down. Nothing else in the system tracks this."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_THE_APPROVER",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "The acting user cannot decide a reimbursement.",
+              "written": "Nothing.",
+              "notWritten": "The receipt stays awaiting approval.",
+              "note": "The decision sits with the School Admin or the Principal (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. Somebody is being told they will not be repaid money they spent, and \"not approved\" is not an answer that anybody can act on next time (BR-4, A5).",
+          "derivedFrom": [
+            "BR-4",
+            "A5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the goods stay. Refusing the reimbursement does not send anything back — what arrived was recorded as arriving and stays in stock, so the school keeps the extra and does not pay for it (E5).",
+          "derivedFrom": [
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name who is out of pocket and by how much. Nothing else in the system tracks it, and the person who bought the school's supplies is the one carrying it (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "stock.reimbursement.approve",
+        "statement": "The decision can be taken the other way afterwards — the receipt goes back to Received rather than to a terminal state, so an approval can still follow (A5, A2)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "farq nahi dena, do dabbe zyada khareede gaye the jo manzoor nahi thay",
+            "lang": "ur-Latn",
+            "gloss": "do not pay the difference, two extra boxes were bought which were not approved"
+          },
+          "context": "School Admin, Johar Town branch, PKR 250 over.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.reimbursement.refuse",
+              "inputs": {
+                "receipt_id": "$request.receipt_phrase → the stationery receipt",
+                "refusal_reason": "as they gave it — two boxes above what was approved",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words, and the purchaser reads them (PR-1)."
+            }
+          ],
+          "outcome": "Report the refusal and then the two things it leaves standing: the extra boxes are in stock and stay there, so the school keeps goods it has not paid for; and Imran Sultan is PKR 250 down with nothing else in the system tracking it. The decision can still be taken the other way — this does not close the receipt permanently."
+        }
+      ]
+    }
+  ]
+}

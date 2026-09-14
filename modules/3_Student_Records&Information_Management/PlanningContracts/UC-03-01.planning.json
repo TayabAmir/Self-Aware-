@@ -1,0 +1,1111 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-03-01",
+    "name": "View and maintain the student record",
+    "module": "Student",
+    "file": "../UseCases/UC-03-01.json",
+    "featureRef": "3.1 View and maintain the student record"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-03-01-PC-1",
+      "intent": {
+        "name": "student.read",
+        "summary": "Open a student's record within the actor's row scope, showing what their role is permitted to see. One step, and the act global search deliberately stops short of.",
+        "routesHere": [
+          "open Ayesha Khan's record",
+          {
+            "text": "Ayesha ka record kholo",
+            "lang": "ur-Latn",
+            "gloss": "open Ayesha's record"
+          },
+          {
+            "text": "is bache ki profile dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show this child's profile"
+          },
+          {
+            "text": "roll number 2024-0417 ka record nikalo",
+            "lang": "ur-Latn",
+            "gloss": "pull up the record for roll number 2024-0417"
+          },
+          "show me STD-2024-0117's details",
+          {
+            "text": "us ka guardian ka number kya hai?",
+            "lang": "ur-Latn",
+            "gloss": "what is their guardian's number?"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "Ayesha naam ki student dhoondo",
+              "lang": "ur-Latn",
+              "gloss": "find a student called Ayesha"
+            },
+            "goesTo": "search.global — UC-01-10",
+            "note": "Search finds candidates and stops; the actor confirms which person before a record opens (UC-01-10 A2). This capability is what they confirm into."
+          },
+          {
+            "request": {
+              "text": "us ka address change kar do",
+              "lang": "ur-Latn",
+              "gloss": "change their address"
+            },
+            "goesTo": "student.update — UC-03-01-PC-2"
+          },
+          {
+            "request": {
+              "text": "medical history dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show the medical history"
+            },
+            "goesTo": "The medical record, under its own restricted access.",
+            "note": "Medical information is never on this profile and never in this response (BR-7, AC-7). The profile links to it; the link is not this capability."
+          },
+          {
+            "request": {
+              "text": "is bache ki class kaunsi hai",
+              "lang": "ur-Latn",
+              "gloss": "which class is this child in"
+            },
+            "goesTo": "student.read",
+            "note": "Class and section are shown on the record. Changing them is placement and is not this use case (BR-8)."
+          },
+          {
+            "request": {
+              "text": "saare grade 5 ke students ki list do",
+              "lang": "ur-Latn",
+              "gloss": "give me the list of all grade 5 students"
+            },
+            "goesTo": "The student list.",
+            "note": "One record is a read of a person; a class is a list, and lists are not this capability."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.read",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Which fields come back is decided by the acting role server-side — a Teacher receives no identity numbers, and no role receives medical information (BR-7, BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. Row scope and field visibility are enforced by the API and arrive as errors or as absent fields; the plan does not test for them beforehand.",
+        "atomicity": "A read. Nothing is created, changed or deactivated. The one thing written is the audit entry for opening a record, since this reaches a child's personal data — so a run that stops after the read has still recorded that the record was opened."
+      },
+      "operations": [
+        {
+          "name": "student.read",
+          "method": "GET",
+          "path": "/api/v1/students/{student_id}",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return a student's record filtered to what the acting role may see, with the placement, the guardian and the documents held against it.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student matches within the actor's row scope. A student outside that scope is indistinguishable from one that does not exist (E6).",
+                "onAmbiguous": "Ask, naming the candidates with student ID, class and section. Two children of the same name is the ordinary case, and picking the likelier one puts a correction on the wrong record."
+              },
+              "notes": "The student, resolved from how the actor named them — a student ID, a roll number, or the child's name. Passed exactly as given: a system-issued identifier is never re-spelled and a name is never transliterated, because the record holds the spelling it was registered with."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The record as this role may see it. A field the role may not see is absent from the response rather than blanked.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The system-issued identifier."
+              },
+              {
+                "name": "full_name",
+                "type": "string",
+                "description": "As registered."
+              },
+              {
+                "name": "roll_number",
+                "type": "string",
+                "description": "Absent where the student is Registered and not yet placed (BR-8, A6)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Registered, Enrolled, Left, Struck off or Transferred."
+              },
+              {
+                "name": "class_name",
+                "type": "string",
+                "description": "Current placement. Changed by placement, never here (BR-8)."
+              },
+              {
+                "name": "section_name",
+                "type": "string",
+                "description": "Current placement."
+              },
+              {
+                "name": "guardian_name",
+                "type": "string",
+                "description": "On the record."
+              },
+              {
+                "name": "guardian_contact",
+                "type": "string",
+                "description": "The number the guardian signs in and receives messages on (BR-6)."
+              },
+              {
+                "name": "family_code",
+                "type": "string",
+                "description": "Links siblings into one household. Set at admission."
+              },
+              {
+                "name": "identity_number",
+                "type": "string",
+                "description": "Absent entirely for a Teacher, who needs to know who is in their class and not a child's B-Form number (BR-9, AC-5)."
+              },
+              {
+                "name": "date_of_birth",
+                "type": "date",
+                "description": "An identity field. Present for reading; changing it is a different capability."
+              },
+              {
+                "name": "documents",
+                "type": "object[]",
+                "description": "Those captured at admission and any added since."
+              },
+              {
+                "name": "editable_fields",
+                "type": "string[]",
+                "description": "What this role may change here. A planner reads it before proposing an update rather than discovering the refusal."
+              },
+              {
+                "name": "medical_record_link",
+                "type": "string",
+                "description": "A link only. Medical information is never in this response (BR-7, AC-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_IN_SCOPE",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The student is outside the acting user's row scope.",
+              "written": "Nothing beyond the audit entry.",
+              "notWritten": "No record returned.",
+              "note": "Message: \"You do not have permission to view this record.\" A Teacher reaching into another teacher's section lands here (AC-6). Indistinguishable from a student who does not exist, deliberately."
+            },
+            {
+              "code": "DEACTIVATED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The record has been deactivated since the list was loaded.",
+              "written": "Nothing.",
+              "notWritten": "No record returned.",
+              "note": "Message: \"This student record is no longer active.\""
+            }
+          ],
+          "writesOnRead": "Opening a student record writes an audit entry naming the actor, the student and the time, because this reaches a child's personal data. A read that is never shown has still recorded the opening."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report only the fields that came back, and never fill a gap. A field absent from the response is absent because the role may not see it — an identity number for a Teacher, medical information for anyone (BR-7, BR-9). Supplying it from an earlier read, from the search result, or from anywhere else defeats the filtering entirely.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-9",
+            "AC-5",
+            "AC-7",
+            "role-based-access"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never resolve an ambiguous name to the likelier student. This record is the single source of truth and every module keys off it (BR-2); a correction, a message or a fee action taken on the wrong child starts here and is not caught downstream.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain an update onto a read. Reading is a permitted act for eight roles; changing is permitted for three. One plan doing both proposes a change nobody asked for on a record someone only wanted to look at.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never plan this to enumerate. A record at a time is a read of a person; sweeping a class or a branch through repeated reads writes an audit entry per child and is a list by another name.",
+          "derivedFrom": [
+            "audit-trail"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session. A student at another campus is outside the row scope and returns NOT_IN_SCOPE, which is the correct answer, not a reason to widen anything.",
+          "derivedFrom": [
+            "branch-scope",
+            "E6"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse. The audit entry it writes is deliberate and never editable under the audit-trail convention — the controller must not attempt to remove it."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "roll number 2024-0417 ka record kholo",
+            "lang": "ur-Latn",
+            "gloss": "open the record for roll number 2024-0417"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.read",
+              "inputs": {
+                "student_id": "$request.student_phrase → \"2024-0417\"",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Ayesha Khan's record comes back with her class, section, guardian and documents. editable_fields lists what Staff may correct here — address, contact numbers, guardian details — and does not list the identity fields, which are School Admin's (BR-4)."
+        },
+        {
+          "request": {
+            "text": "meri class ke Bilal ka record dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show me Bilal's record from my class"
+          },
+          "context": "Teacher assigned to 6-A and 6-B, Johar Town branch. Bilal is in 6-A.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.read",
+              "inputs": {
+                "student_id": "$request.student_phrase → \"Bilal\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The same call as any other role. What differs is the response, decided server-side."
+            }
+          ],
+          "outcome": "The record comes back without identity_number and without date_of_birth, and editable_fields is empty — a Teacher reads and does not change (AC-5, E7). Report what came back; do not mention an identity number that was never sent (PR-1)."
+        },
+        {
+          "request": "open the record for the Sana Malik in Grade 7",
+          "context": "Staff, Johar Town branch, where two students named Sana Malik exist — one in Grade 7, one in Grade 3.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.read",
+              "inputs": {
+                "student_id": "$request.student_phrase → \"Sana Malik, Grade 7\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The class narrows the phrase enough for resolution to settle on one. Without it the resolver asks, naming both (PR-2)."
+            }
+          ],
+          "outcome": "One record, the Grade 7 Sana Malik. Had the request said only \"Sana Malik\", nothing would have been read — the two are reported with their student IDs and classes, and the actor chooses."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-01-PC-2",
+      "intent": {
+        "name": "student.update",
+        "summary": "Correct the personal, guardian and contact details on a student record. One step, and identity fields are not among them.",
+        "routesHere": [
+          "change Ayesha's address to 14-B Model Town",
+          {
+            "text": "us ka address change kar do — 14-B Model Town",
+            "lang": "ur-Latn",
+            "gloss": "change their address — 14-B Model Town"
+          },
+          {
+            "text": "guardian ka number update kar do, 03211234567 hai ab",
+            "lang": "ur-Latn",
+            "gloss": "update the guardian's number, it is 03211234567 now"
+          },
+          {
+            "text": "naam ki spelling theek kar do — Ayesha, Ayesa nahi",
+            "lang": "ur-Latn",
+            "gloss": "correct the spelling of the name — Ayesha, not Ayesa"
+          },
+          "add a second contact number for this student",
+          {
+            "text": "walid ka email daal do",
+            "lang": "ur-Latn",
+            "gloss": "put the father's email in"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "date of birth theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the date of birth"
+            },
+            "goesTo": "student.identity.update — UC-03-01-PC-3",
+            "note": "Date of birth, identity number, student ID and roll number are identity fields and are School Admin's alone, with a written reason (BR-4, BR-5)."
+          },
+          {
+            "request": {
+              "text": "is bache ko dusri section mein daal do",
+              "lang": "ur-Latn",
+              "gloss": "move this child to another section"
+            },
+            "goesTo": "Placement, not this use case.",
+            "note": "Class and section are shown here but never changed here, so a child is never moved as a side effect of correcting an address (BR-8)."
+          },
+          {
+            "request": {
+              "text": "birth certificate upload karna hai",
+              "lang": "ur-Latn",
+              "gloss": "I need to upload the birth certificate"
+            },
+            "goesTo": "Not offered through a plan.",
+            "note": "A document upload needs the file itself, and the request channel carries no file. It is done on the screen."
+          },
+          {
+            "request": {
+              "text": "medical condition record kar do",
+              "lang": "ur-Latn",
+              "gloss": "record a medical condition"
+            },
+            "goesTo": "The medical record, under its own access.",
+            "note": "Medical information is not held on this record at all (BR-7)."
+          },
+          {
+            "request": {
+              "text": "parent ne portal pe change bheja hai, apply kar do",
+              "lang": "ur-Latn",
+              "gloss": "the parent submitted a change on the portal, apply it"
+            },
+            "goesTo": "student.update, entered by the school user",
+            "note": "A submitted change does not reach the record on its own; Staff apply it, so every change has a school user behind it (BR-10, A3)."
+          },
+          {
+            "request": {
+              "text": "is student ko struck off kar do",
+              "lang": "ur-Latn",
+              "gloss": "strike this student off"
+            },
+            "goesTo": "Not specified.",
+            "note": "The lifecycle holds Left, Struck off and Transferred, and School Admin holds deactivate — but no capability is written for it here, and the use case's own open question asks who may do it. See below."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.update",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, carrying only the fields the request actually changes. A field not named is not sent — resupplying an unchanged value records a change that did not happen, and every change is written to the audit log with its previous value (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. Field-level permission, required fields and the format of each value are enforced by the API and arrive as errors; the plan does not test for them beforehand.",
+        "atomicity": "One write, atomic in itself: the changed fields, the audit entries carrying each previous and new value, and the propagation together or not at all. The correction then appears everywhere the student is shown — registers, invoices, result sheets, global search (BR-2) — so this is a small write with a wide blast radius. Where the guardian's contact changed, that is also their sign-in and messaging contact from this moment (BR-6), and an SMS goes to the new number."
+      },
+      "operations": [
+        {
+          "name": "student.update",
+          "method": "PATCH",
+          "path": "/api/v1/students/{student_id}",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "student_id + the changed field set and their new values, so a repeat does not write a second audit entry recording a change from a value to itself",
+          "purpose": "Correct the personal, guardian and contact details on a student record, writing each change to the audit log with its previous value.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student matches within the actor's row scope. A student outside that scope is indistinguishable from one that does not exist (E6).",
+                "onAmbiguous": "Ask, naming the candidates with student ID, class and section. Two children of the same name is the ordinary case, and picking the likelier one puts a correction on the wrong record."
+              },
+              "notes": "The student, resolved from how the actor named them — a student ID, a roll number, or the child's name. Passed exactly as given: a system-issued identifier is never re-spelled and a name is never transliterated, because the record holds the spelling it was registered with."
+            },
+            {
+              "name": "full_name",
+              "source": "request",
+              "sourceRef": "$request.full_name",
+              "required": false,
+              "type": "string",
+              "notes": "2 to 120 characters. Only where the request corrects it, and passed exactly as given — never re-spelled or transliterated on the way (AC-8)."
+            },
+            {
+              "name": "address",
+              "source": "request",
+              "sourceRef": "$request.address",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 250 characters. Required on the record, so it may be corrected but never cleared (E4)."
+            },
+            {
+              "name": "contact_numbers",
+              "source": "request",
+              "sourceRef": "$request.contact_numbers",
+              "required": false,
+              "type": "string[]",
+              "notes": "One or more, in registered mobile format. Digits given in Eastern Arabic numerals are normalised in script only."
+            },
+            {
+              "name": "guardian_name",
+              "source": "request",
+              "sourceRef": "$request.guardian_name",
+              "required": false,
+              "type": "string",
+              "notes": "2 to 120 characters."
+            },
+            {
+              "name": "guardian_contact",
+              "source": "request",
+              "sourceRef": "$request.guardian_contact",
+              "required": false,
+              "type": "string",
+              "notes": "Registered mobile format. This is the number the guardian signs in and receives messages on, not a display value (BR-6, A5) — so it is sent only where the request states it changed, never alongside another correction as a tidy-up."
+            },
+            {
+              "name": "guardian_email",
+              "source": "request",
+              "sourceRef": "$request.guardian_email",
+              "required": false,
+              "type": "string",
+              "notes": "Valid address."
+            },
+            {
+              "name": "previous_institution",
+              "source": "request",
+              "sourceRef": "$request.previous_institution",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 150 characters."
+            },
+            {
+              "name": "group",
+              "source": "request",
+              "sourceRef": "$request.group",
+              "required": false,
+              "type": "string",
+              "notes": "Academic group, where the class is subject wise."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What changed, and what it was.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The record corrected."
+              },
+              {
+                "name": "changed_fields",
+                "type": "object[]",
+                "description": "field, previous_value, new_value — the same triple written to the audit log (BR-3)."
+              },
+              {
+                "name": "guardian_signin_changed",
+                "type": "boolean",
+                "description": "True where the guardian's contact changed, and so their sign-in contact with it (BR-6)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status of the SMS to the new number. Queued until the provider says otherwise."
+              },
+              {
+                "name": "propagated",
+                "type": "boolean",
+                "description": "The corrected values are now visible on registers, invoices and result sheets (BR-2, AC-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "IDENTITY_FIELD_REFUSED",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "An identity field was included and the role may not change it.",
+              "written": "Nothing. No field is applied.",
+              "notWritten": "No partial update.",
+              "note": "Message names School Admin as the role that can. The whole call is refused, not the identity field alone — so do not assume the other corrections went through."
+            },
+            {
+              "code": "REQUIRED_FIELD_EMPTY",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "A required field was sent empty.",
+              "written": "Nothing.",
+              "notWritten": "Not applied.",
+              "note": "Message: \"This field cannot be left empty.\" A field is corrected or left alone; it is never cleared."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "A Teacher attempted to change any field.",
+              "written": "Nothing.",
+              "notWritten": "Not applied.",
+              "note": "Message: \"Teachers can read student records but not change them.\" In practice the capability is absent from a Teacher's allow-list."
+            },
+            {
+              "code": "NOT_IN_SCOPE",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The student is outside the acting user's row scope.",
+              "written": "Nothing.",
+              "notWritten": "Not applied."
+            },
+            {
+              "code": "DEACTIVATED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The record was deactivated since it was opened.",
+              "written": "Nothing.",
+              "notWritten": "Not applied."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Send only the fields the request actually changes. Every field sent is written to the audit log with a previous and a new value (BR-3), so resupplying an unchanged address records a correction nobody made and buries the real ones.",
+          "derivedFrom": [
+            "BR-3",
+            "AC-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never include an identity field here. Student ID, roll number, identity number and date of birth are School Admin's alone and need a written reason (BR-4, BR-5); including one refuses the whole call, so the ordinary corrections alongside it are lost too (E1).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5",
+            "E1",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never send guardian_contact unless the request states it changed. It is the number the family signs in on (BR-6), and a number picked up in passing — from a message, from another child's record — locks them out of the portal and redirects every message about their child.",
+          "derivedFrom": [
+            "BR-6",
+            "A5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never change class or section here. There are no parameters for them: placement is its own act, so a child is never moved between sections as a side effect of correcting an address (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never clear a field to remove a value. A required field cannot be empty (E4), and an optional one left blank is a fact about the record rather than a correction to make.",
+          "derivedFrom": [
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Pass names and numbers exactly as the request gives them. The corrected name appears on registers, invoices and result sheets without anyone editing those (BR-2, AC-8), so a spelling tidied up here is tidied up everywhere.",
+          "derivedFrom": [
+            "BR-2",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never re-emit the update with the refused field removed. E1 refusing an identity field is the system saying who may change it; stripping it out and retrying applies half of what was asked while reporting a success.",
+          "derivedFrom": [
+            "E1",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "A change reported by a guardian is entered by the school user in whose session the plan runs. That is BR-10 working, not a workaround — but the plan carries what the guardian said, not what the planner thinks they meant.",
+          "derivedFrom": [
+            "BR-10",
+            "A2",
+            "A3"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no undo. A wrong correction is corrected again, and both changes stay in the audit log with their previous values (BR-3) — which is what makes the sequence readable afterwards. Where the guardian's contact was changed in error, correcting it back also moves their sign-in contact a second time, and the family receives a second SMS. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ka address change kar do — 14-B Model Town",
+            "lang": "ur-Latn",
+            "gloss": "change Ayesha's address — 14-B Model Town"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.update",
+              "inputs": {
+                "student_id": "$request.student_phrase → \"Ayesha\"",
+                "address": "14-B Model Town",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One field, because one field changed. Nothing else is resupplied (PR-1)."
+            }
+          ],
+          "outcome": "The address is corrected, the audit log holds the previous address, the new one, the user and the time (AC-2), and the correction appears on the class register and on invoices without anyone editing those (BR-2)."
+        },
+        {
+          "request": {
+            "text": "guardian ka number badal gaya hai — ab 03211234567 hai",
+            "lang": "ur-Latn",
+            "gloss": "the guardian's number has changed — it is 03211234567 now"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.update",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "guardian_contact": "03211234567",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Sent because the request states it changed (PR-3). This is not an ordinary field."
+            }
+          ],
+          "outcome": "The number is changed and guardian_signin_changed comes back true. Report that explicitly: the family signs in on the new number from now on and every message about their child goes there (BR-6). An SMS goes to the new number confirming it."
+        },
+        {
+          "request": {
+            "text": "date of birth galat hai aur address bhi change karna hai",
+            "lang": "ur-Latn",
+            "gloss": "the date of birth is wrong and the address needs changing too"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.update",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "address": "$request.address",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the address is sent. The date of birth is an identity field and belongs to a different capability with a different role and a written reason — including it here would refuse the whole call (PR-2)."
+            }
+          ],
+          "outcome": "The address is corrected. Report that the date of birth was not changed and that it needs a School Admin and a reason — do not report a clean success, and do not silently drop the half that was asked for."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-01-PC-3",
+      "intent": {
+        "name": "student.identity.update",
+        "summary": "Change one identity field on a student record — student ID, roll number, identity number or date of birth — with the written reason it required. School Admin only, one field at a time.",
+        "routesHere": [
+          "change this student's date of birth to 14 March 2016 — the B-Form says so",
+          {
+            "text": "date of birth theek kar do, B-form pe 14 March 2016 likha hai",
+            "lang": "ur-Latn",
+            "gloss": "correct the date of birth, the B-Form says 14 March 2016"
+          },
+          {
+            "text": "B-form number update karna hai",
+            "lang": "ur-Latn",
+            "gloss": "the B-Form number needs updating"
+          },
+          {
+            "text": "roll number galat assign hua tha, theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "the roll number was assigned wrongly, correct it"
+          },
+          "correct the identity number on this record — it was typed wrong at admission"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "address change kar do",
+              "lang": "ur-Latn",
+              "gloss": "change the address"
+            },
+            "goesTo": "student.update — UC-03-01-PC-2",
+            "note": "Ordinary fields need no reason and are open to Staff and Accounts."
+          },
+          {
+            "request": {
+              "text": "naam theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the name"
+            },
+            "goesTo": "student.update — UC-03-01-PC-2",
+            "note": "The name is not an identity field. Student ID, roll number, identity number and date of birth are (BR-4)."
+          },
+          {
+            "request": {
+              "text": "student ID badal do kyunki naya session hai",
+              "lang": "ur-Latn",
+              "gloss": "change the student ID because it is a new session"
+            },
+            "goesTo": "Not a correction.",
+            "note": "A student ID is issued once and never reused (UC-02-07 BR-6). Changing it because of a session is not what this capability is for."
+          },
+          {
+            "request": {
+              "text": "do students ke roll number aapas mein badal do",
+              "lang": "ur-Latn",
+              "gloss": "swap two students' roll numbers"
+            },
+            "goesTo": "Two separate changes, each with its own reason.",
+            "note": "There is no swap. Each is a change to one field on one record, and each has to be defensible on its own."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.identity.update",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "field": "$request.field",
+              "new_value": "$request.new_value",
+              "change_reason": "$request.change_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step and one field. The reason is required because this is the kind of change that has to be defensible afterwards (BR-5), and the change ripples through fee, examination and reporting where those modules key off the value (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. The acting role, the reason and whether the new value is already held by another active student are all enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the new value, the audit entry carrying the previous one, the reason and the propagation together or not at all. The change then ripples wherever other modules key off that value — fee records, examination entries, reporting — which is why BR-4 restricts it to one role and BR-5 requires a reason. Nothing here is reversible in the ordinary sense: correcting it back is another identity change, with another reason."
+      },
+      "operations": [
+        {
+          "name": "student.identity.update",
+          "method": "PATCH",
+          "path": "/api/v1/students/{student_id}/identity",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "student_id + field + new_value, so a repeat does not record a second change from a value to itself",
+          "purpose": "Change one identity field with a written reason, recording the previous value and propagating the change to every module that keys off it.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student matches within the actor's row scope. A student outside that scope is indistinguishable from one that does not exist (E6).",
+                "onAmbiguous": "Ask, naming the candidates with student ID, class and section. Two children of the same name is the ordinary case, and picking the likelier one puts a correction on the wrong record."
+              },
+              "notes": "The student, resolved from how the actor named them — a student ID, a roll number, or the child's name. Passed exactly as given: a system-issued identifier is never re-spelled and a name is never transliterated, because the record holds the spelling it was registered with."
+            },
+            {
+              "name": "field",
+              "source": "request",
+              "sourceRef": "$request.field",
+              "required": true,
+              "type": "field name, one of: student_id | roll_number | identity_number | date_of_birth",
+              "notes": "One field per call. The four that other modules key off, and the four a Staff user may not touch (BR-4)."
+            },
+            {
+              "name": "new_value",
+              "source": "request",
+              "sourceRef": "$request.new_value",
+              "required": true,
+              "type": "string",
+              "notes": "The corrected value, passed exactly as given. A date is sent as the request states it and never re-derived from an age or a class; an identity number is 13 digits and is never reconstructed from a partial one."
+            },
+            {
+              "name": "change_reason",
+              "source": "request",
+              "sourceRef": "$request.change_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters. Required (BR-5, E2). The actor's own words — this is the change that has to be defensible afterwards, and the reason is what defends it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The change, and what it replaced.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The record changed."
+              },
+              {
+                "name": "field",
+                "type": "string",
+                "description": "Which identity field."
+              },
+              {
+                "name": "previous_value",
+                "type": "string",
+                "description": "Kept in the audit log, not overwritten (BR-3)."
+              },
+              {
+                "name": "new_value",
+                "type": "string",
+                "description": "The value now held."
+              },
+              {
+                "name": "changed_by",
+                "type": "string",
+                "description": "The acting School Admin."
+              },
+              {
+                "name": "change_reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "propagated_to",
+                "type": "string[]",
+                "description": "The modules the change reached — fee, examination, attendance, reporting (BR-4)."
+              },
+              {
+                "name": "notified",
+                "type": "string",
+                "description": "Delivery status of the in-app notice that an identity field changed."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user is not a School Admin.",
+              "written": "Nothing.",
+              "notWritten": "Not changed.",
+              "note": "Message names School Admin as the role that can (AC-3). In practice the capability is absent from a Staff or Accounts allow-list."
+            },
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "An identity field was changed with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not changed.",
+              "note": "Message: \"Give a reason for changing this field.\" Ask for it; never compose one (AC-4)."
+            },
+            {
+              "code": "IDENTITY_NUMBER_IN_USE",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The new identity number already belongs to another active student.",
+              "written": "Nothing.",
+              "notWritten": "Not changed.",
+              "note": "The message names the existing record. Two active students cannot share one identity number, and this usually means the number was read off the wrong document."
+            },
+            {
+              "code": "NOT_IN_SCOPE",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The student is outside the acting user's row scope.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            },
+            {
+              "code": "DEACTIVATED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The record was deactivated since it was opened.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. BR-5 requires one because this is the change that has to be defensible afterwards, and a reason a planner wrote defends nothing. E2 refusing the change without one is the system insisting a person supply it.",
+          "derivedFrom": [
+            "BR-5",
+            "E2",
+            "AC-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "One field per call, and only the field the request names. Four values that other modules key off do not get corrected together on a single explanation — each change ripples separately and each needs its own reason (BR-4).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Pass the new value exactly as given. Never re-derive a date of birth from an age or a class, never reconstruct an identity number from a partial one, and never reformat either. The value comes off a document the actor is holding.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never treat IDENTITY_NUMBER_IN_USE as an obstacle. Two active students cannot share one identity number, and the API naming the existing record is telling the actor something worth knowing — usually that the number was read off the wrong document.",
+          "derivedFrom": [
+            "E3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never plan this alongside an ordinary correction. student.update refuses the whole call when an identity field is included (E1), and this capability changes one field only. They are two plans, and the actor is told about both.",
+          "derivedFrom": [
+            "BR-4",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never plan an identity change for a set. Each is a defended correction to one child's record that ripples into fee and examination records, and a batch defends none of them.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no undo. Correcting the value back is another identity change with another reason, and both stay in the audit log with their previous values (BR-3). The ripple into fee, examination and reporting has already happened either way. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ki date of birth theek kar do — B-form pe 14 March 2016 hai, admission pe galat likhi gayi thi",
+            "lang": "ur-Latn",
+            "gloss": "correct Ayesha's date of birth — the B-Form says 14 March 2016, it was recorded wrongly at admission"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.identity.update",
+              "inputs": {
+                "student_id": "$request.student_phrase → \"Ayesha\"",
+                "field": "date_of_birth",
+                "new_value": "2016-03-14",
+                "change_reason": "Recorded wrongly at admission; the B-Form says 14 March 2016.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The date comes from the document the actor is reading, not from anything derived (PR-3). The reason is theirs."
+            }
+          ],
+          "outcome": "The date of birth is corrected, the previous value stays in the audit log with the reason and the user, and the change propagates to the modules that key off it. Report which those were — propagated_to says so."
+        },
+        {
+          "request": {
+            "text": "is bache ka B-form number theek karna hai, 3520298765432 hai",
+            "lang": "ur-Latn",
+            "gloss": "this child's B-Form number needs correcting, it is 3520298765432"
+          },
+          "context": "School Admin, Johar Town branch, where that number already belongs to another active student.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.identity.update",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "field": "identity_number",
+                "new_value": "3520298765432",
+                "change_reason": "$request.change_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged; it does not check the number beforehand. The API returns IDENTITY_NUMBER_IN_USE (E3)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the number is already held by the named student — which usually means it was read off a sibling's document, and is worth checking before anything else (PR-4)."
+        },
+        {
+          "request": {
+            "text": "date of birth theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "correct the date of birth"
+          },
+          "context": "School Admin, Johar Town branch, with no reason given in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.identity.update",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "field": "date_of_birth",
+                "new_value": "$request.new_value",
+                "change_reason": "$request.change_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: change_reason is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the corrected date is and why it is being changed. This is the ordinary case — BR-5 exists so the reason comes from a person."
+        }
+      ]
+    }
+  ]
+}

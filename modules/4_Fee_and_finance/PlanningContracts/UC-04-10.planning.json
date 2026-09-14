@@ -1,0 +1,919 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-10",
+    "name": "Credit a charge that was wrong but has already been paid, and hold the money against the household",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-10.json",
+    "featureRef": "4.10 Crediting a wrong charge already paid"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-10-PC-1",
+      "intent": {
+        "name": "fee.credit.raise",
+        "summary": "Propose crediting a charge that was wrong but has already been paid, holding the money against the household rather than returning it. One step, and it credits nothing on its own.",
+        "routesHere": [
+          "raise a credit — we charged this family twice and they paid both",
+          {
+            "text": "ye charge galat tha lekin family paisa de chuki hai, credit karo",
+            "lang": "ur-Latn",
+            "gloss": "this charge was wrong but the family has already paid, credit it"
+          },
+          {
+            "text": "do dafa bill bana tha aur dono jama ho gaye",
+            "lang": "ur-Latn",
+            "gloss": "the bill was raised twice and both were paid"
+          },
+          {
+            "text": "concession lagni thi lekin nahi lagi, ab paisa wapas karna hai",
+            "lang": "ur-Latn",
+            "gloss": "the concession should have applied but did not, now the money has to go back"
+          },
+          "credit 1,500 of what they paid — only part of the charge was wrong"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "paisa abhi tak nahi mila",
+              "lang": "ur-Latn",
+              "gloss": "no money has come in yet"
+            },
+            "goesTo": "fee.cancellation.raise — UC-04-08",
+            "note": "An unpaid wrong charge is cancelled instead; using a credit for it would create a liability against money the school never took (BR-2, E1)."
+          },
+          {
+            "request": {
+              "text": "family ko cash wapas karna hai",
+              "lang": "ur-Latn",
+              "gloss": "the family wants the money back in cash"
+            },
+            "goesTo": "fee.refund.raise — UC-04-11",
+            "note": "A credit is not a refund. Money leaves the school only through the refund use case, which has its own approval (BR-10, E9)."
+          },
+          {
+            "request": {
+              "text": "ye baqaya wasool nahi hoga",
+              "lang": "ur-Latn",
+              "gloss": "this debt will not be recovered"
+            },
+            "goesTo": "fee.writeoff.propose — UC-04-09"
+          },
+          {
+            "request": {
+              "text": "agle bill mein kam kar dena",
+              "lang": "ur-Latn",
+              "gloss": "just reduce the next bill"
+            },
+            "goesTo": "fee.credit.raise, which does exactly that",
+            "note": "An approved credit is applied automatically to the next invoice for any child in the household (BR-8) — it is not a note to remember."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.credit.raise",
+            "inputs": {
+              "invoice_id": "$request.invoice_phrase",
+              "amount": "$request.amount",
+              "reason": "$request.reason",
+              "description": "$request.description",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, producing a proposal at Awaiting approval. Nothing posts, no credit is held and the family is told nothing until a School Admin approves it (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report. No payment on the invoice, an amount above what was received, a missing description, a student with no family code and an invoice already settled another way are all enforced by the API and arrive as errors.",
+        "atomicity": "One write: the proposal with its reason, its description and the family code it would credit, together with the audit entry or not at all. The invoice is untouched, the original payment is untouched, nothing posts to the ledger and no credit balance exists. Approving it is a separate act by a different person."
+      },
+      "operations": [
+        {
+          "name": "fee.credit.raise",
+          "method": "POST",
+          "path": "/api/v1/fee-credits",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "invoice_id + amount, since one wrong charge carries one open credit proposal",
+          "purpose": "Raise a credit proposal against an invoice money has been received on, for the whole amount paid or part of it.",
+          "parameters": [
+            {
+              "name": "invoice_id",
+              "source": "resolved",
+              "sourceRef": "$request.invoice_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "invoice",
+                "fromPhrase": "$request.invoice_phrase",
+                "onNoMatch": "Refuse. No paid invoice matches.",
+                "onAmbiguous": "Ask, naming the candidates with student, period, billed and received."
+              },
+              "notes": "An issued invoice against which money has been received (BR-2, E1)."
+            },
+            {
+              "name": "amount",
+              "source": "request",
+              "sourceRef": "$request.amount",
+              "required": true,
+              "type": "money",
+              "notes": "Greater than zero and not more than what was actually received against the invoice (BR-6, E2). May be part of it, where only part of the charge was wrong (BR-11). Exactly the figure the actor states — crediting more than was paid would hand the family money the school never took."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "enum: Wrong amount charged | Charged to the wrong student | Duplicate charge | Concession not applied | Charge should not have been raised | Other",
+              "notes": "Why the charge was wrong (BR-4). Read from what the actor stated, never chosen to fit."
+            },
+            {
+              "name": "description",
+              "source": "request",
+              "sourceRef": "$request.description",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters. What actually went wrong (BR-4, E3). The actor's own words — money sitting on a household account has to be explainable years later."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The proposal as raised.",
+            "fields": [
+              {
+                "name": "credit_id",
+                "type": "string",
+                "description": "The proposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. No credit is held yet."
+              },
+              {
+                "name": "amount",
+                "type": "string",
+                "description": "What would be credited."
+              },
+              {
+                "name": "amount_received",
+                "type": "string",
+                "description": "What was actually paid against the invoice, for comparison (BR-6)."
+              },
+              {
+                "name": "family_code",
+                "type": "string",
+                "description": "The household the credit would be held against, taken from the student and never chosen (BR-3)."
+              },
+              {
+                "name": "credit_balance_after",
+                "type": "string",
+                "description": "What the household would hold once approved."
+              },
+              {
+                "name": "children_in_household",
+                "type": "object[]",
+                "description": "Every child the credit would reduce a bill for — a parent expects an overpayment for one child to count for another (BR-3)."
+              },
+              {
+                "name": "raised_by",
+                "type": "string",
+                "description": "The acting user, who may not also approve it (BR-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PAYMENT_RECEIVED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "No money has been received against the invoice.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "Message points at cancellation instead. Crediting an unpaid charge creates a liability against money the school never took (BR-2)."
+            },
+            {
+              "code": "AMOUNT_EXCEEDS_RECEIVED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The amount is more than what was received.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "The message names what was received. Never reduce the figure to fit — the difference is worth checking (BR-6)."
+            },
+            {
+              "code": "DESCRIPTION_REQUIRED",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "No reason or description was given.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "Money held on a household account has to be explainable years later (BR-4). Ask; never compose one."
+            },
+            {
+              "code": "ALREADY_SETTLED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The invoice has already been cancelled, credited or written off.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "The message names which and when (BR-13)."
+            },
+            {
+              "code": "NO_FAMILY_CODE",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The student belongs to no family code.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "The credit is held against the household, so there has to be one. Linking the student is UC-03-01, a separate act."
+            },
+            {
+              "code": "REFUND_REQUESTED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "A cash refund was requested instead of a credit.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "This raises a credit against the household; money leaves the school only through UC-04-11 (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the description. Money sitting on a household account has to be explainable years later (BR-4), and a description a planner wrote explains what it guessed.",
+          "derivedFrom": [
+            "BR-4",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply or round the amount. It may be all of what was paid or part of it (BR-11), and crediting more than was received hands the family money the school never took (BR-6). E2 refusing one is not a prompt to trim it.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-11",
+            "E2",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never use a credit where no money was received. E1 is BR-2 working — an unpaid wrong charge is cancelled, and crediting it creates a liability against money that never arrived.",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never choose the family code. It is taken from the student and never chosen (BR-3), and a credit held against the wrong household reduces the wrong family's next bill.",
+          "derivedFrom": [
+            "BR-3",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain the approval. A credit is raised by one person and approved by another, because money returned to a household is not something one hand decides alone (BR-1).",
+          "derivedFrom": [
+            "BR-1",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never offer a cash refund instead. A credit is not a refund; money leaves the school only through UC-04-11, which has its own approval (BR-10, E9).",
+          "derivedFrom": [
+            "BR-10",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A proposal is approved or returned by the School Admin; nothing here withdraws one. Nothing has posted, no credit is held and the family has been told nothing."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is family ka do dafa bill bana tha aur dono jama ho gaye — 5000 credit karo",
+            "lang": "ur-Latn",
+            "gloss": "this family was billed twice and paid both — credit 5000"
+          },
+          "context": "Accounts, Johar Town branch, on the duplicate invoice showing PKR 5,000 received.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.credit.raise",
+              "inputs": {
+                "invoice_id": "$request.invoice_phrase → the duplicate invoice",
+                "amount": 5000,
+                "reason": "Duplicate charge",
+                "description": "September tuition was billed twice and the family paid both invoices.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The amount is the actor's figure and the family code comes from the student, not from the request (PR-4)."
+            }
+          ],
+          "outcome": "A proposal at Awaiting approval for PKR 5,000 against family code FAM-000412, showing both children whose next bill it would reduce. Nothing is held yet and the original payment is untouched."
+        },
+        {
+          "request": {
+            "text": "concession lagni chahiye thi lekin nahi lagi — 1500 credit kar do",
+            "lang": "ur-Latn",
+            "gloss": "the concession should have applied but did not — credit 1500"
+          },
+          "context": "Accounts, Johar Town branch, on an invoice showing PKR 5,000 received.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.credit.raise",
+              "inputs": {
+                "invoice_id": "$request.invoice_phrase",
+                "amount": 1500,
+                "reason": "Concession not applied",
+                "description": "The approved 30% concession was not applied when the September invoice was raised.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A partial credit, which BR-11 permits — only part of the charge was wrong."
+            }
+          ],
+          "outcome": "A proposal for PKR 1,500 against an invoice showing PKR 5,000 received. The payment stays exactly as it is (BR-7) — the money did arrive."
+        },
+        {
+          "request": {
+            "text": "ye charge galat tha, cash wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "this charge was wrong, give the cash back"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.credit.raise",
+              "inputs": {
+                "invoice_id": "$request.invoice_phrase",
+                "amount": "$request.amount",
+                "reason": "$request.reason",
+                "description": "$request.description",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as a credit. The API returns REFUND_REQUESTED (E9)."
+            }
+          ],
+          "outcome": "Nothing is raised. Report that this holds the money against the household and reduces their next bill; returning cash is a refund under UC-04-11 with its own approval, and is normally only for a family leaving the school (PR-6)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-10-PC-2",
+      "intent": {
+        "name": "fee.credit.approve",
+        "summary": "Approve a credit, which posts the entry and holds the money against the household for its next bill. School Admin only, one step.",
+        "routesHere": [
+          "approve the credit on this invoice",
+          {
+            "text": "credit approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the credit"
+          },
+          {
+            "text": "ye credit manzoor kar do, family ka paisa hai",
+            "lang": "ur-Latn",
+            "gloss": "approve this credit, it is the family's money"
+          },
+          "sign off the credit Accounts raised"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "credit wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the credit back"
+            },
+            "goesTo": "fee.credit.return — UC-04-10-PC-3"
+          },
+          {
+            "request": {
+              "text": "credit raise karo",
+              "lang": "ur-Latn",
+              "gloss": "raise a credit"
+            },
+            "goesTo": "fee.credit.raise — UC-04-10-PC-1"
+          },
+          {
+            "request": {
+              "text": "paisa cash mein wapas kar do",
+              "lang": "ur-Latn",
+              "gloss": "give the money back in cash"
+            },
+            "goesTo": "fee.refund.raise — UC-04-11",
+            "note": "A credit is not a refund (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.credit.approve",
+            "inputs": {
+              "credit_id": "$request.credit_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The entry posts, the credit is held against the family code and the family is told their next bill will be smaller (BR-12)."
+          }
+        ],
+        "onFailure": "Stop and report. The acting role and the ledger posting are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the approval, the posting, the credit balance against the household and the audit entry together or not at all (E7). The invoice is never edited — its status moves to Credited and its lines are left exactly as they were (BR-5). The original payment stays in place and is never reversed, because the money did arrive and pretending otherwise breaks reconciliation against the bank (BR-7). The posting reduces income and raises a liability; it is never an expense, because the school collected the money rather than spending it (BR-9). The credit then sits until it is used and applies automatically to the next invoice for any child in the household (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "fee.credit.approve",
+          "method": "POST",
+          "path": "/api/v1/fee-credits/{credit_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "credit_id, since a proposal carries one approval and a repeat must not hold the amount twice",
+          "purpose": "Approve a credit, post the entry, hold the balance against the family code and tell the family.",
+          "parameters": [
+            {
+              "name": "credit_id",
+              "source": "resolved",
+              "sourceRef": "$request.credit_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "credit_note",
+                "fromPhrase": "$request.credit_phrase",
+                "onNoMatch": "Refuse. No credit note matches awaiting a decision.",
+                "onAmbiguous": "Ask, naming the candidates with student, invoice, amount and who raised it."
+              },
+              "notes": "The credit note, resolved from how the actor named it — the reference, or the student and invoice."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The credit as held.",
+            "fields": [
+              {
+                "name": "credit_id",
+                "type": "string",
+                "description": "The approved credit."
+              },
+              {
+                "name": "amount",
+                "type": "string",
+                "description": "Credited."
+              },
+              {
+                "name": "family_code",
+                "type": "string",
+                "description": "The household holding it (BR-3)."
+              },
+              {
+                "name": "credit_balance",
+                "type": "string",
+                "description": "What the household now holds."
+              },
+              {
+                "name": "invoice_status",
+                "type": "string",
+                "description": "Credited. Its lines are unchanged (BR-5)."
+              },
+              {
+                "name": "original_payment_status",
+                "type": "string",
+                "description": "Unchanged. The money did arrive (BR-7)."
+              },
+              {
+                "name": "posted_as",
+                "type": "string",
+                "description": "Reduces income and raises a liability — never an expense (BR-9)."
+              },
+              {
+                "name": "children_in_household",
+                "type": "object[]",
+                "description": "Whose next invoice the credit will reduce (BR-8)."
+              },
+              {
+                "name": "family_notified",
+                "type": "string",
+                "description": "Delivery status. The family is told to expect a smaller bill rather than query it (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to approve their own credit.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Money returned to a household is not something one hand decides alone (BR-1)."
+            },
+            {
+              "code": "POSTING_FAILED",
+              "mapsTo": "E7",
+              "httpStatus": 500,
+              "meaning": "The ledger posting failed.",
+              "written": "Nothing. No credit is held.",
+              "notWritten": "All of it.",
+              "note": "Message: \"The credit could not be posted. Nothing has changed.\""
+            },
+            {
+              "code": "CREDIT_CONTENTION",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "Two invoices for the household drew on the credit at once.",
+              "written": "The credit is drawn once.",
+              "notWritten": "No double application.",
+              "note": "Re-read the balance rather than retrying blind."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a credit the acting user raised. E4 is BR-1 working — money returned to a household is not decided by one hand.",
+          "derivedFrom": [
+            "BR-1",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report which children the credit will reduce a bill for. It is held against the household, not the student (BR-3), and a parent expects an overpayment for one child to count for another — saying so is how they know what to expect.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe the original payment as reversed. It stays in place because the money did arrive, and pretending otherwise breaks reconciliation against the bank (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never offer to return the money. An approved credit is applied to the next invoice and is not returned in cash (BR-8); a refund is UC-04-11 and normally only for a family leaving.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report that the family has been told. They are expecting a smaller bill rather than querying it (BR-12), and a failed message means they will query it.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A credit is not reversed. The entry stays and the balance is either used against future invoices or, where the family leaves with it unused, returned through fee.refund.raise under UC-04-11 — a separate approval by the Principal. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "duplicate charge wala credit approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the credit for the duplicate charge"
+          },
+          "context": "School Admin, Johar Town branch, on a PKR 5,000 proposal against family code FAM-000412.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.credit.approve",
+              "inputs": {
+                "credit_id": "$request.credit_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "PKR 5,000 is held against FAM-000412 and will reduce the next invoice for either child in the household (BR-8). The invoice reads Credited with its lines unchanged, and the original payment is untouched. The family is told to expect a smaller bill."
+        },
+        {
+          "request": {
+            "text": "1500 wala credit approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the 1500 credit"
+          },
+          "context": "School Admin, Johar Town branch, on a partial credit.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.credit.approve",
+              "inputs": {
+                "credit_id": "$request.credit_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "PKR 1,500 is held against the household. The invoice shows PKR 5,000 received and PKR 1,500 credited — both true, and both stay in the books (BR-5, BR-7)."
+        },
+        {
+          "request": {
+            "text": "main ne raise ki thi, khud approve kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I raised it, I'll approve it myself"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.credit.approve",
+              "inputs": {
+                "credit_id": "$request.credit_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "In practice approve is absent from an Accounts allow-list."
+            }
+          ],
+          "outcome": "Nothing is approved. Report that a School Admin has to approve it — money going back to a household is deliberately a two-person decision (PR-1)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-10-PC-3",
+      "intent": {
+        "name": "fee.credit.return",
+        "summary": "Send a credit proposal back to Accounts with why it was not approved. School Admin only, one step.",
+        "routesHere": [
+          "return this credit — no money was received against that invoice",
+          {
+            "text": "credit wapas bhej do, wajah saaf nahi",
+            "lang": "ur-Latn",
+            "gloss": "send the credit back, the reason is not clear"
+          },
+          {
+            "text": "ye credit nahi banta, wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "this does not warrant a credit, send it back"
+          },
+          "send it back, the amount is more than they paid"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "credit approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the credit"
+            },
+            "goesTo": "fee.credit.approve — UC-04-10-PC-2"
+          },
+          {
+            "request": {
+              "text": "ye cancellation hona chahiye",
+              "lang": "ur-Latn",
+              "gloss": "this should be a cancellation"
+            },
+            "goesTo": "fee.cancellation.raise — UC-04-08",
+            "note": "Returning says so; raising it is Accounts' work in their own session."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.credit.return",
+            "inputs": {
+              "credit_id": "$request.credit_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing posts, no credit is held and the family is told nothing."
+          }
+        ],
+        "onFailure": "Stop and report. The reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the status change, the reason and the audit entry together or not at all. The invoice, the payment and the household's balance are all untouched."
+      },
+      "operations": [
+        {
+          "name": "fee.credit.return",
+          "method": "POST",
+          "path": "/api/v1/fee-credits/{credit_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "credit_id + return_reason",
+          "purpose": "Send a credit proposal back to Accounts with the reason it was not approved.",
+          "parameters": [
+            {
+              "name": "credit_id",
+              "source": "resolved",
+              "sourceRef": "$request.credit_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "credit_note",
+                "fromPhrase": "$request.credit_phrase",
+                "onNoMatch": "Refuse. No credit note matches awaiting a decision.",
+                "onAmbiguous": "Ask, naming the candidates with student, invoice, amount and who raised it."
+              },
+              "notes": "The credit note, resolved from how the actor named it — the reference, or the student and invoice."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required. The approver's own words — usually that the instrument is wrong, or the amount does not match what was received."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The proposal as returned.",
+            "fields": [
+              {
+                "name": "credit_id",
+                "type": "string",
+                "description": "The proposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "As given, shown to Accounts."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The acting School Admin."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            },
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The acting user is not a School Admin.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the return reason. Often the point is that the instrument is wrong — a cancellation rather than a credit — and only the approver can say that.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain a cancellation onto a return. Where no money was received the charge should be cancelled, and that is Accounts' work with its own approval (BR-2).",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never return a proposal to defer the decision. The family's money is sitting with the school either way.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not undone. Accounts correct the proposal and raise it again, which is a fresh proposal and a fresh decision."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye credit wapas bhej do — us invoice pe to koi payment hi nahi hui",
+            "lang": "ur-Latn",
+            "gloss": "send this credit back — no payment was made against that invoice"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.credit.return",
+              "inputs": {
+                "credit_id": "$request.credit_phrase",
+                "return_reason": "No payment has been received against this invoice, so it should be a cancellation rather than a credit.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned with the fault named. Raising the cancellation is Accounts' next act under UC-04-08 (PR-2)."
+        },
+        {
+          "request": {
+            "text": "credit ki raqam zyada hai, wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "the credit amount is too high, send it back"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.credit.return",
+              "inputs": {
+                "credit_id": "$request.credit_phrase",
+                "return_reason": "The amount exceeds what was actually received against the invoice.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned. The household holds nothing and the invoice is unchanged."
+        },
+        {
+          "request": {
+            "text": "credit wapas bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the credit back"
+          },
+          "context": "School Admin, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.credit.return",
+              "inputs": {
+                "credit_id": "$request.credit_phrase",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what is wrong with it."
+        }
+      ]
+    }
+  ]
+}

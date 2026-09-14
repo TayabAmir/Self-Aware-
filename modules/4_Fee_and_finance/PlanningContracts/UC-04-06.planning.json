@@ -1,0 +1,428 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-06",
+    "name": "Show who has not paid and how much is outstanding",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-06.json",
+    "featureRef": "4.6 Overdue-fee tracking"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-06-PC-1",
+      "intent": {
+        "name": "fee.overdue.list",
+        "summary": "Show who has not paid and how much, aged from the due date, for a class, a section, one student or the whole school. One step, and it contacts nobody.",
+        "routesHere": [
+          "show me the overdue list for Grade 4",
+          {
+            "text": "kis kis ne fees nahi di?",
+            "lang": "ur-Latn",
+            "gloss": "who has not paid the fees?"
+          },
+          {
+            "text": "Grade 4 ka baqaya dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show Grade 4's outstanding"
+          },
+          {
+            "text": "ye family kitna deti hai?",
+            "lang": "ur-Latn",
+            "gloss": "how much does this family owe?"
+          },
+          {
+            "text": "teen mahine se zyada purana baqaya kitna hai?",
+            "lang": "ur-Latn",
+            "gloss": "how much is outstanding for more than three months?"
+          },
+          "what's the total outstanding across the school"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "in sab ko reminder bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send them all a reminder"
+            },
+            "goesTo": "fee.reminder.send — UC-04-07",
+            "note": "Running the list creates nothing, changes nothing and sends nothing. Contacting a family is a separate, deliberate act (BR-10)."
+          },
+          {
+            "request": {
+              "text": "ye debt maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "write this debt off"
+            },
+            "goesTo": "fee.writeoff.propose — UC-04-09"
+          },
+          {
+            "request": {
+              "text": "bill kitna banega?",
+              "lang": "ur-Latn",
+              "gloss": "how much will the bill come to?"
+            },
+            "goesTo": "fee.invoice.preview — UC-04-02-PC-1",
+            "note": "A preview is what would be billed; this is what was billed and not paid."
+          },
+          {
+            "request": {
+              "text": "in ka installment plan bana do",
+              "lang": "ur-Latn",
+              "gloss": "set up an installment plan for them"
+            },
+            "goesTo": "fee.plan.request — UC-04-14",
+            "note": "A student meeting an approved plan is not overdue while the plan is being met (BR-2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.overdue.list",
+            "inputs": {
+              "scope": "$request.scope",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. Every figure is calculated as billed less paid at the moment the list is run (BR-4, BR-5) — the plan supplies no amount and no age."
+          }
+        ],
+        "onFailure": "Stop and report. An empty result is an answer, not a failure (E1). Row scope is enforced by the API and arrives as an error.",
+        "atomicity": "A read. Nothing is created, changed or sent (BR-10). The figures reflect every payment recorded up to the moment it runs, so a family who paid this morning is not on the afternoon list (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "fee.overdue.list",
+          "method": "GET",
+          "path": "/api/v1/fee-overdue",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return unpaid invoices past their due date for a scope, with each debt's age, its remaining balance and the total.",
+          "parameters": [
+            {
+              "name": "scope",
+              "source": "request",
+              "sourceRef": "$request.scope",
+              "required": true,
+              "type": "enum: School-wide | Class | Section | Student",
+              "notes": "What the list covers. Staff may run a single student's position at the counter but not the school-wide list — who owes what across the school is a management figure (BR-9, E4)."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No active class of that name.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the scope is Class."
+            },
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No such active section.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the scope is Section."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student matches in scope.",
+                "onAmbiguous": "Ask, naming the candidates with class and section."
+              },
+              "notes": "Required where the scope is Student."
+            },
+            {
+              "name": "age_band",
+              "source": "request",
+              "sourceRef": "$request.age_band",
+              "required": false,
+              "type": "enum: 1 to 30 days | 31 to 60 days | 61 to 90 days | Over 90 days",
+              "notes": "Only where the request narrows by age. The age of a debt decides how hard it is to recover and what the school does about it (BR-3)."
+            },
+            {
+              "name": "minimum_amount",
+              "source": "request",
+              "sourceRef": "$request.minimum_amount",
+              "required": false,
+              "type": "money",
+              "notes": "Hides debts below a threshold. Only where the request states one — a threshold invented here hides real debt."
+            },
+            {
+              "name": "include_students_on_a_plan",
+              "source": "request",
+              "sourceRef": "$request.include_students_on_a_plan",
+              "required": false,
+              "type": "boolean",
+              "notes": "Off by default. A plan being met is not overdue; only a missed installment brings a family onto the list (BR-2, BR-4 of this use case). Never set true to make a list longer."
+            },
+            {
+              "name": "academic_session_id",
+              "source": "resolved",
+              "sourceRef": "$request.session_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "academic_session",
+                "fromPhrase": "$request.session_phrase",
+                "onNoMatch": "Refuse. No such academic session.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Only where the request names a past session. Debts outlive the session that created them and recovery work continues (BR-7). Omitted, it defaults to the open one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who owes what, and for how long.",
+            "fields": [
+              {
+                "name": "rows",
+                "type": "object[]",
+                "description": "student, class, section, invoice_number, billed, paid, amount_outstanding, days_overdue, age_band."
+              },
+              {
+                "name": "total_outstanding",
+                "type": "string",
+                "description": "The sum for the scope — the figure the school's position is read from."
+              },
+              {
+                "name": "row_count",
+                "type": "integer",
+                "description": "How many debts."
+              },
+              {
+                "name": "excluded_on_plan",
+                "type": "integer",
+                "description": "Families meeting an approved plan, kept off the list (BR-2)."
+              },
+              {
+                "name": "run_at",
+                "type": "datetime",
+                "description": "When it was run. A list run during an invoice batch is stamped so the two are not confused (E5)."
+              },
+              {
+                "name": "scope_note",
+                "type": "string",
+                "description": "What the list covers, in words. Reported with the total."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_OVERDUE",
+              "mapsTo": "E1",
+              "httpStatus": 200,
+              "meaning": "No invoice in the scope is overdue.",
+              "written": "Nothing.",
+              "notWritten": "Nothing.",
+              "treatedAsSuccess": true,
+              "note": "Message: \"No overdue fees for this class and period.\" An answer, not a failure — and a good one."
+            },
+            {
+              "code": "NO_SESSION_SELECTED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No academic session is open and none was named.",
+              "written": "Nothing.",
+              "notWritten": "Nothing."
+            },
+            {
+              "code": "TOO_MANY_ROWS",
+              "mapsTo": "E3",
+              "httpStatus": 200,
+              "meaning": "The list exceeds the display threshold.",
+              "written": "Nothing.",
+              "notWritten": "Nothing.",
+              "treatedAsSuccess": true,
+              "note": "Narrow by class, age band or minimum amount. Narrowing is the actor's choice, not the planner's."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "A Staff user attempted the school-wide list.",
+              "written": "Nothing.",
+              "notWritten": "Nothing.",
+              "note": "Staff see one student's position at the counter (BR-9). In practice the scope is constrained by the allow-list."
+            },
+            {
+              "code": "RUN_DURING_BATCH",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "The list was run while an invoice batch was being issued.",
+              "written": "Nothing.",
+              "notWritten": "Nothing.",
+              "treatedAsSuccess": true,
+              "note": "The result is stamped with the time and the batch. Report both — the figure is a moment, not a fact."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply an amount or an age. Both are calculated as billed less paid and due date to today (BR-3, BR-4); a figure held anywhere else drifts from the ledger, which is exactly what BR-4 forbids.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never set include_students_on_a_plan to widen a list. A family paying as agreed must not be chased (BR-2), and a longer list is not a better one.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain a reminder onto the list. Running it sends nothing (BR-10), and who gets chased is a decision somebody takes after reading it.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the run time with the total, and say so where the list ran during an invoice batch. The figure is a position at a moment, and BR-5 means it moves as payments come in.",
+          "derivedFrom": [
+            "BR-5",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never treat an empty list as a failure. No overdue fees is the answer the school wants (E1).",
+          "derivedFrom": [
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report a partially paid invoice at its remaining balance, never its billed amount. BR-6 is the difference between chasing a family for what they still owe and chasing them for what they have already partly paid.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id and session_id come from $session unless the request names a past session for recovery work (BR-7).",
+          "derivedFrom": [
+            "BR-7",
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 4 mein kis kis ne fees nahi di?",
+            "lang": "ur-Latn",
+            "gloss": "who in Grade 4 has not paid?"
+          },
+          "context": "Accounts, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.overdue.list",
+              "inputs": {
+                "scope": "Class",
+                "class_id": "$request.class_phrase → \"Grade 4\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "No amount, no age band and no plan flag are supplied — the defaults are the safe ones (PR-2)."
+            }
+          ],
+          "outcome": "Nine families with a total of PKR 41,500, each with days overdue and an age band. Two families meeting an installment plan are excluded and counted separately (BR-2). Report the run time with the total."
+        },
+        {
+          "request": {
+            "text": "ye family counter pe khari hai, unka baqaya batao",
+            "lang": "ur-Latn",
+            "gloss": "this family is at the counter, tell me what they owe"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.overdue.list",
+              "inputs": {
+                "scope": "Student",
+                "student_id": "$request.student_phrase",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Staff may run one student's position but not the school-wide list (BR-9, PR-7)."
+            }
+          ],
+          "outcome": "One row with the outstanding balance and how long it has been due. Where the invoice is partly paid, the remaining balance is what is reported — not the billed amount (PR-6)."
+        },
+        {
+          "request": {
+            "text": "teen mahine se zyada purana baqaya dikhao, pichle saal ka bhi",
+            "lang": "ur-Latn",
+            "gloss": "show the outstanding older than three months, including last year's"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.overdue.list",
+              "inputs": {
+                "scope": "School-wide",
+                "age_band": "Over 90 days",
+                "academic_session_id": "$request.session_phrase → \"2024-25\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "A past session is named in the request, which is permitted — debts outlive the session that created them (BR-7)."
+            }
+          ],
+          "outcome": "The oldest debts across the school for that session, with their ages. These are the write-off candidates, but nothing here proposes one — that is UC-04-09 and a separate decision."
+        }
+      ]
+    }
+  ]
+}

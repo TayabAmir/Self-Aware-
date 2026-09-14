@@ -1,0 +1,1187 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-25-04",
+    "name": "Require a second verification step at sign-in, so a stolen password alone is not enough",
+    "module": "Security",
+    "file": "../UseCases/UC-25-04.json",
+    "featureRef": "25.4 Multi-factor authentication"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-25-04-PC-1",
+      "intent": {
+        "name": "mfa.enforce",
+        "summary": "Require a second factor on a role or on a named person, so they cannot turn it off.",
+        "routesHere": [
+          "enforce multi-factor authentication on the Accounts role",
+          {
+            "text": "Accounts role par two-factor lazmi kar dein",
+            "lang": "ur-Latn",
+            "gloss": "make two-factor compulsory for the Accounts role"
+          },
+          {
+            "text": "is user par second factor lagu kar dein",
+            "lang": "ur-Latn",
+            "gloss": "enforce the second factor on this user"
+          },
+          {
+            "text": "jinke paas paise ka access hai un par MFA lagayein",
+            "lang": "ur-Latn",
+            "gloss": "enforce MFA on the people with money access"
+          },
+          "turn on MFA for the Super Admin accounts"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mere liye second factor enrol kar dein",
+              "lang": "ur-Latn",
+              "gloss": "enrol the second factor for me"
+            },
+            "goesTo": "Not offered.",
+            "note": "The user enrols their own second factor and **nobody enrols one on their behalf** (BR-3). Enrolment matches a confirming code against an authenticator, and a code is a credential — it never travels through a plan (E2)."
+          },
+          {
+            "request": {
+              "text": "mera factor kho gaya hai, reset kar dein",
+              "lang": "ur-Latn",
+              "gloss": "I have lost my factor, reset it"
+            },
+            "goesTo": "mfa.factor.recover — this use case, and only the Super Admin can do it.",
+            "note": "Nobody else can reset another person's factor, and the Super Admin records why (BR-6, E6, E7)."
+          },
+          {
+            "request": {
+              "text": "sab par lagu kar dein, guardians par bhi",
+              "lang": "ur-Latn",
+              "gloss": "enforce it on everybody, guardians included"
+            },
+            "goesTo": "Possible, and say what it costs.",
+            "note": "Whether a second factor is sensible for guardians and students, or only for staff, is an open question this use case raises and does not answer — enforcing it on families would be a support burden (OQ-2)."
+          },
+          {
+            "request": {
+              "text": "password policy sakht kar dein",
+              "lang": "ur-Latn",
+              "gloss": "tighten the password policy"
+            },
+            "goesTo": "password.policy.set — UC-25-05.",
+            "note": "A second factor and a password policy are separate controls. This one exists because a stolen password alone should not be enough (BR-5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "mfa.enforce",
+            "inputs": {
+              "enforced_on": "$request.enforced_on",
+              "target_id": "$request.target_phrase"
+            },
+            "note": "One step. Anybody it now covers who has not enrolled is **held at enrolment on their next sign-in** and reaches nothing else until they have (BR-8, E5)."
+          }
+        ],
+        "onFailure": "Stop and report. A role or person nobody matches is asked about rather than guessed — enforcing on the wrong role locks out people who were never meant to be covered.",
+        "atomicity": "One write. Nobody is signed out, and **nobody is enrolled by this**: the next time each covered person signs in they are held at enrolment until they enrol their own factor (BR-3, BR-8, E5)."
+      },
+      "operations": [
+        {
+          "name": "mfa.enforce",
+          "method": "POST",
+          "path": "/api/v1/mfa/enforcement",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "target + kind, since a role or a person carries one enforcement",
+          "purpose": "Enforce multi-factor authentication on a role or a named individual.",
+          "parameters": [
+            {
+              "name": "enforced_on",
+              "source": "request",
+              "sourceRef": "$request.enforced_on",
+              "required": true,
+              "type": "enum: Role|Individual",
+              "notes": "Whether this covers a role or a named individual (BR-1). A role covers everybody who holds it now and everybody who ever holds it."
+            },
+            {
+              "name": "target_id",
+              "source": "resolved",
+              "sourceRef": "$request.target_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "mfa_target",
+                "fromPhrase": "$request.target_phrase",
+                "onNoMatch": "Refuse. No role or user matches. Whether this is a role or an individual changes who it covers, so a near match is not accepted.",
+                "onAmbiguous": "Ask, saying which candidates are roles and which are people, and how many users each role covers."
+              },
+              "notes": "The role or the person. Never widened — enforcing on a role covers people the request never named."
+            }
+          ],
+          "returns": {
+            "description": "Who is now covered, and what happens to them next.",
+            "fields": [
+              {
+                "name": "enforcement_id",
+                "type": "string",
+                "description": "The enforcement."
+              },
+              {
+                "name": "covers",
+                "type": "integer",
+                "description": "How many people. A role covers everybody holding it now **and everybody who ever holds it** (BR-1)."
+              },
+              {
+                "name": "already_enrolled",
+                "type": "integer",
+                "description": "Those who had already enrolled a factor. Nothing changes for them at sign-in (BR-2)."
+              },
+              {
+                "name": "held_at_enrolment",
+                "type": "object[]",
+                "description": "Those with no factor. On their next sign-in they are held at enrolment and reach nothing else until they have one (BR-8, E5)."
+              },
+              {
+                "name": "cannot_turn_it_off",
+                "type": "boolean",
+                "description": "True. Where it is enforced, the user cannot disable it (BR-1, E1)."
+              },
+              {
+                "name": "no_contact_number",
+                "type": "object[]",
+                "description": "Covered people with no contact number recorded. They cannot enrol by SMS at all, and enrolment is the only way past the sign-in they are now held at (E9)."
+              },
+              {
+                "name": "includes_super_admin",
+                "type": "boolean",
+                "description": "Whether this covers the Super Admin. **Only the Super Admin recovers a lost factor**, so a Super Admin who loses theirs has nobody to recover it — the use case raises this and does not answer it (BR-6, OQ-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "USER_CANNOT_DISABLE",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "A covered user attempted to turn it off.",
+              "written": "Nothing.",
+              "notWritten": "It stays enforced.",
+              "note": "Where it is enforced, the user cannot turn it off (BR-1)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say exactly who it covers and never widen it. Enforcing on a role covers everybody holding it now and everybody who ever holds it — a request naming one person is not a request about their role (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the covered people with no enrolled factor. On their next sign-in they are held at enrolment and reach nothing else, and for somebody who signs in once a term that is a lockout they discover at the worst moment (BR-8, E5).",
+          "derivedFrom": [
+            "BR-8",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name anybody covered with no contact number recorded. The SMS method cannot be enrolled without one, and enrolment is the only way past the sign-in they are now held at (E9).",
+          "derivedFrom": [
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say if this covers the Super Admin. Only the Super Admin recovers a lost factor, so a Super Admin who loses theirs has nobody — it is the case that locks the school out and the use case raises it unanswered (BR-6, OQ-3).",
+          "derivedFrom": [
+            "BR-6",
+            "OQ-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never enrol anybody. The user enrols their own factor and nobody does it on their behalf — a confirming code is a credential and never travels through a plan (BR-3, E2).",
+          "derivedFrom": [
+            "BR-3",
+            "E2"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "mfa.enforcement.remove",
+        "statement": "The enforcement is lifted — and **removing it does not remove an enrolled factor**. The user keeps it unless they disable it themselves, which they can only do once it is no longer enforced (BR-9, BR-2)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Accounts role par two-factor lazmi kar dein",
+            "lang": "ur-Latn",
+            "gloss": "make two-factor compulsory for the Accounts role"
+          },
+          "context": "Super Admin, 6 people hold the Accounts role, 2 already enrolled.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "mfa.enforce",
+              "inputs": {
+                "enforced_on": "Role",
+                "target_id": "$request.target_phrase → Accounts"
+              },
+              "note": "A role, so everybody who ever holds it (PR-1)."
+            }
+          ],
+          "outcome": "Enforced on all six, and on anybody who holds the role in future. Four have no factor: on their next sign-in they are held at enrolment and reach nothing else until they enrol — and one of the four has no contact number on record, so the SMS method is not available to them at all. None of them can turn it off now."
+        },
+        {
+          "request": {
+            "text": "Super Admin ke account par bhi MFA lagayein",
+            "lang": "ur-Latn",
+            "gloss": "enforce MFA on the Super Admin account too"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "mfa.enforce",
+              "inputs": {
+                "enforced_on": "Individual",
+                "target_id": "$request.target_phrase → the Super Admin"
+              },
+              "note": "Possible, and worth stopping over first (PR-4)."
+            }
+          ],
+          "outcome": "Before enforcing: only the Super Admin can recover a lost second factor, and this is the Super Admin's own. If that handset is lost there is nobody to reset it, no recovery codes are modelled, and the school is locked out of the account that administers everything. The specification raises this exact case and does not answer it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-25-04-PC-2",
+      "intent": {
+        "name": "mfa.enforcement.remove",
+        "summary": "Stop requiring a second factor on a role or a person. Their enrolled factor stays.",
+        "routesHere": [
+          "stop enforcing MFA on the Coordinator role",
+          {
+            "text": "Coordinator role se MFA ki pabandi hata dein",
+            "lang": "ur-Latn",
+            "gloss": "remove the MFA requirement from the Coordinator role"
+          },
+          {
+            "text": "is user par ab lazmi nahi rakhna",
+            "lang": "ur-Latn",
+            "gloss": "we no longer want it compulsory for this user"
+          },
+          "lift the enforcement from the teaching staff"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "factor bhi hata dein",
+              "lang": "ur-Latn",
+              "gloss": "remove the factor as well"
+            },
+            "goesTo": "Not offered.",
+            "note": "Removing enforcement does not remove an enrolled factor. The user keeps it unless they disable it themselves (BR-9, BR-2)."
+          },
+          {
+            "request": {
+              "text": "factor reset kar dein, kho gaya hai",
+              "lang": "ur-Latn",
+              "gloss": "reset the factor, it is lost"
+            },
+            "goesTo": "mfa.factor.recover — this use case.",
+            "note": "A lost factor is recovered by the Super Admin with a reason, and the recovery **resets** it rather than bypassing it — the user enrols again (BR-6, BR-11, E8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "mfa.enforcement.remove",
+            "inputs": {
+              "enforcement_id": "$request.enforcement_phrase"
+            },
+            "note": "One step. Nothing about anybody's enrolled factor changes (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write. **Every enrolled factor stays enrolled** — the users keep them and go on being asked at sign-in unless each disables it for themselves, which they can now do (BR-2, BR-9)."
+      },
+      "operations": [
+        {
+          "name": "mfa.enforcement.remove",
+          "method": "DELETE",
+          "path": "/api/v1/mfa/enforcement/{enforcement_id}",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "enforcement_id, since an enforcement is lifted once",
+          "purpose": "Lift a multi-factor enforcement from a role or an individual.",
+          "parameters": [
+            {
+              "name": "enforcement_id",
+              "source": "resolved",
+              "sourceRef": "$request.enforcement_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "mfa_enforcement",
+                "fromPhrase": "$request.enforcement_phrase",
+                "onNoMatch": "Refuse. No enforcement matches that role or person.",
+                "onAmbiguous": "Ask, naming the enforcements in place with what each covers and how many people."
+              },
+              "notes": "The enforcement being lifted, named by the role or person it covers."
+            }
+          ],
+          "returns": {
+            "description": "Who is no longer required, and what they still have.",
+            "fields": [
+              {
+                "name": "enforcement_id",
+                "type": "string",
+                "description": "The enforcement, now lifted."
+              },
+              {
+                "name": "covered",
+                "type": "integer",
+                "description": "How many people it covered."
+              },
+              {
+                "name": "still_enrolled",
+                "type": "integer",
+                "description": "How many keep an enrolled factor. **Removing enforcement removes nothing** — they are still asked at sign-in until each disables it themselves (BR-9, BR-2)."
+              },
+              {
+                "name": "can_now_disable",
+                "type": "boolean",
+                "description": "True. What they could not turn off, they now can (BR-1, BR-2, E1)."
+              },
+              {
+                "name": "held_at_enrolment_released",
+                "type": "object[]",
+                "description": "People who were being held at enrolment and no longer are. They can now sign in without a factor (BR-8)."
+              },
+              {
+                "name": "still_covered_by_role",
+                "type": "object[]",
+                "description": "People who also hold another role that is still enforced. Lifting one enforcement does not lift another (BR-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "USER_CANNOT_DISABLE",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "A user attempted to disable a factor still enforced by another route.",
+              "written": "Nothing.",
+              "notWritten": "It stays enforced.",
+              "note": "Where it is enforced by any route, the user cannot turn it off (BR-1)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that nothing was removed. Every enrolled factor stays and every one of those users is still asked at sign-in — lifting enforcement changes only whether they may turn it off (BR-9, BR-2).",
+          "derivedFrom": [
+            "BR-9",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the people who were being held at enrolment. They can now sign in without a factor at all, which is the real effect and it is not obvious from the words \"remove enforcement\" (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name anybody still covered by another enforcement. Somebody holding two roles, one of them still enforced, is unaffected by this (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say what the school is giving up. This is the control that means a stolen password alone is not enough, and lifting it puts those accounts back to a password on its own (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "mfa.enforce",
+        "statement": "It is enforced again. Anybody who kept their factor is unaffected; anybody who disabled theirs in between is held at enrolment on their next sign-in (BR-8, BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Coordinator role se MFA ki pabandi hata dein",
+            "lang": "ur-Latn",
+            "gloss": "remove the MFA requirement from the Coordinator role"
+          },
+          "context": "Super Admin, 9 coordinators, 9 enrolled.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "mfa.enforcement.remove",
+              "inputs": {
+                "enforcement_id": "$request.enforcement_phrase → the Coordinator enforcement"
+              },
+              "note": "Nothing about their factors changes (PR-1)."
+            }
+          ],
+          "outcome": "Lifted. All nine keep their enrolled factors and will still be asked for one at sign-in — what has changed is that each of them can now turn it off. Two of the nine also hold the Accounts role, which is still enforced, so they cannot. Say plainly what is being given up: for the other seven, a stolen password will be enough as soon as they disable it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-25-04-PC-3",
+      "intent": {
+        "name": "mfa.self.setting.set",
+        "summary": "Turn a second factor on or off for your own account, where it is not enforced on you.",
+        "routesHere": [
+          "turn on two-factor authentication for my account",
+          {
+            "text": "mere account par two-factor on kar dein",
+            "lang": "ur-Latn",
+            "gloss": "turn on two-factor for my account"
+          },
+          {
+            "text": "mujhe ab second factor nahi chahiye, band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "I no longer want the second factor, turn it off"
+          },
+          {
+            "text": "kya main apne liye MFA laga sakta hoon?",
+            "lang": "ur-Latn",
+            "gloss": "can I turn on MFA for myself?"
+          },
+          "disable my second factor"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mera factor enrol kar dein",
+              "lang": "ur-Latn",
+              "gloss": "enrol my factor for me"
+            },
+            "goesTo": "Not offered.",
+            "note": "The user enrols their own second factor and nobody enrols one on their behalf. Enrolment matches a confirming code against an authenticator, and a code is a credential — it never travels through a plan (BR-3, E2)."
+          },
+          {
+            "request": {
+              "text": "kisi aur ke liye on kar dein",
+              "lang": "ur-Latn",
+              "gloss": "turn it on for somebody else"
+            },
+            "goesTo": "Not offered.",
+            "note": "This is a person's own profile setting. Requiring it of somebody else is an enforcement, and only the Super Admin does that (BR-1, BR-2)."
+          },
+          {
+            "request": {
+              "text": "mera factor kho gaya hai",
+              "lang": "ur-Latn",
+              "gloss": "I have lost my factor"
+            },
+            "goesTo": "mfa.factor.recover — this use case.",
+            "note": "Only the Super Admin can reset a lost factor, and they record why (BR-6, E6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "mfa.self.setting.set",
+            "inputs": {
+              "enabled": "$request.enabled"
+            },
+            "note": "One step, and only where it is not enforced. Turning it **on** leads to enrolment, which is the user's own act at their own screen (BR-2, BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. Where a second factor is enforced on the user's role or on them, turning it off is refused outright (E1).",
+        "atomicity": "One write on the user's own account. **Enabling does not enrol anything** — the user still has to enrol a factor themselves, and until they do a password alone still signs them in (BR-3)."
+      },
+      "operations": [
+        {
+          "name": "mfa.self.setting.set",
+          "method": "PATCH",
+          "path": "/api/v1/mfa/self",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "the acting user's account, since this is one setting and a repeat is the same state",
+          "purpose": "Turn a second factor on or off for the acting user's own account.",
+          "parameters": [
+            {
+              "name": "enabled",
+              "source": "request",
+              "sourceRef": "$request.enabled",
+              "required": true,
+              "type": "boolean",
+              "notes": "On or off, for this account only. **Available only where the Super Admin has not enforced it** — where it is enforced, turning it off is refused (BR-1, BR-2, E1)."
+            }
+          ],
+          "returns": {
+            "description": "What changed on the account, and what has not.",
+            "fields": [
+              {
+                "name": "enabled",
+                "type": "boolean",
+                "description": "Whether a second factor now applies to this account."
+              },
+              {
+                "name": "enrolled",
+                "type": "boolean",
+                "description": "Whether a factor is actually enrolled. Enabling does not enrol one — until the user enrols, a password alone still signs them in (BR-3, BR-5)."
+              },
+              {
+                "name": "next_step",
+                "type": "string",
+                "description": "Where enabling: enrol a factor, which is the user's own act at their own screen and matches a confirming code (BR-3, E2)."
+              },
+              {
+                "name": "methods",
+                "type": "string[]",
+                "description": "An authenticator application, or SMS to the recorded number. SMS cannot be enrolled where no contact number is recorded (E9)."
+              },
+              {
+                "name": "enforced",
+                "type": "boolean",
+                "description": "Whether it is enforced on this user's role or on them. Where true, this setting is not theirs to change (BR-1, E1)."
+              },
+              {
+                "name": "factor_kept_on_disable",
+                "type": "boolean",
+                "description": "Disabling turns the requirement off for this account; a factor already enrolled is the user's own to remove (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ENFORCED",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The user attempted to disable a factor enforced on them.",
+              "written": "Nothing.",
+              "notWritten": "It stays on.",
+              "note": "Multi-factor is required for their role and cannot be turned off (BR-1)."
+            },
+            {
+              "code": "NO_CONTACT_NUMBER",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The SMS method was chosen and no number is recorded.",
+              "written": "Nothing.",
+              "notWritten": "No factor can be enrolled by that method.",
+              "note": "No contact number is recorded against the record (E9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never act on another account. This is the acting user's own profile setting; requiring a factor of somebody else is an enforcement and belongs to the Super Admin (BR-1, BR-2).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that enabling has not enrolled anything. Until the user enrols a factor themselves, a password alone still signs them in — which is the exact gap this control exists to close (BR-3, BR-5).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never carry a confirming code. Enrolment matches a code against an authenticator and a code is a credential — it never travels through a plan, and nobody enrols on anybody's behalf (BR-3, E2).",
+          "derivedFrom": [
+            "BR-3",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say plainly what disabling gives up. A password on its own becomes enough again, and that is the whole point of the second step (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Where it is enforced, say so rather than reporting a failure. It is required for their role and is not theirs to change — the refusal is the design (BR-1, E1).",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "mfa.self.setting.set",
+        "statement": "It is turned back on or off, where it is not enforced. Where it is, only the Super Admin's enforcement decides (BR-1, BR-2)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mere account par two-factor on kar dein",
+            "lang": "ur-Latn",
+            "gloss": "turn on two-factor for my account"
+          },
+          "context": "A teacher, not covered by any enforcement.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "mfa.self.setting.set",
+              "inputs": {
+                "enabled": "true"
+              },
+              "note": "On for this account only (PR-1)."
+            }
+          ],
+          "outcome": "Turned on — and say the part that matters: nothing is enrolled yet. Until you enrol a factor at your own screen, a password alone still signs you in. Enrolment is yours to do; nobody can do it for you, and nothing here will ask you for a code."
+        },
+        {
+          "request": {
+            "text": "mujhe ab second factor nahi chahiye, band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "I no longer want the second factor, turn it off"
+          },
+          "context": "A member of the Accounts team, covered by an enforcement on their role.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "mfa.self.setting.set",
+              "inputs": {
+                "enabled": "false"
+              },
+              "note": "Refused (PR-5)."
+            }
+          ],
+          "outcome": "It cannot be turned off: a second factor is required for the Accounts role, so it is not your setting to change. Only the Super Admin can lift that, and it is on the role because a stolen password alone should not reach the school's money."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-25-04-PC-4",
+      "intent": {
+        "name": "mfa.factor.recover",
+        "summary": "Reset somebody's lost second factor, with the reason recorded. It resets rather than bypasses.",
+        "routesHere": [
+          "reset Imran's second factor, he lost his handset",
+          {
+            "text": "Imran ka second factor reset kar dein, unka phone kho gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "reset Imran's second factor, their phone is lost"
+          },
+          {
+            "text": "ye user andar nahi aa pa rahe, factor recover kar dein",
+            "lang": "ur-Latn",
+            "gloss": "this user cannot get in, recover their factor"
+          },
+          "clear the lost authenticator on this account"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "factor bypass kar dein, jaldi hai",
+              "lang": "ur-Latn",
+              "gloss": "bypass the factor, it is urgent"
+            },
+            "goesTo": "Not offered.",
+            "note": "A recovery **resets** the factor rather than bypassing it. The user enrols again, and there is no route that lets somebody in without one (BR-11, E8)."
+          },
+          {
+            "request": {
+              "text": "main School Admin hoon, main kar deta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I am the School Admin, I will do it"
+            },
+            "goesTo": "Refused.",
+            "note": "Nobody else can reset another person's factor. Only the Super Admin, and they record why (BR-6, E6)."
+          },
+          {
+            "request": {
+              "text": "naya password bhej dein",
+              "lang": "ur-Latn",
+              "gloss": "send them a new password"
+            },
+            "goesTo": "account.temporary.password.resend — UC-25-05.",
+            "note": "A lost factor and a forgotten password are different problems with different routes, and nobody issues a password to anybody (UC-25-05 BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "mfa.factor.recover",
+            "inputs": {
+              "user_id": "$request.user_phrase",
+              "recovery_reason": "$request.recovery_reason"
+            },
+            "note": "One step. The factor is reset and the user **enrols again** — nothing lets them in without one (BR-11, E8)."
+          }
+        ],
+        "onFailure": "Stop and report. A recovery with no reason is not recorded, and by anybody other than the Super Admin it is refused (E6, E7).",
+        "atomicity": "One write. The enrolled factor is cleared and the user is back at enrolment: on their next sign-in they are held there until they enrol again, exactly as somebody newly covered would be (BR-8, BR-11)."
+      },
+      "operations": [
+        {
+          "name": "mfa.factor.recover",
+          "method": "POST",
+          "path": "/api/v1/mfa/{user_id}/recover",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "user_id + the day, so a factor is not reset twice for one lost handset",
+          "purpose": "Reset a user's lost second factor, with the reason recorded.",
+          "parameters": [
+            {
+              "name": "user_id",
+              "source": "resolved",
+              "sourceRef": "$request.user_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.user_phrase",
+                "onNoMatch": "Refuse. No user account matches.",
+                "onAmbiguous": "Ask, showing each candidate with their identifier and role, and whether a factor is enrolled — somebody with none enrolled has nothing to recover."
+              },
+              "notes": "The person whose factor is being reset. Confirmed carefully — resetting the wrong person's factor locks somebody out and clears somebody else's protection at once."
+            },
+            {
+              "name": "recovery_reason",
+              "source": "request",
+              "sourceRef": "$request.recovery_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters, the Super Admin's own. Required (BR-6, E7) — a reset is the one route that clears somebody's protection, and it should say how their identity was confirmed."
+            }
+          ],
+          "returns": {
+            "description": "What was cleared and what happens next.",
+            "fields": [
+              {
+                "name": "user",
+                "type": "string",
+                "description": "Whose factor was reset."
+              },
+              {
+                "name": "recovery_reason",
+                "type": "string",
+                "description": "Why, and how their identity was confirmed, in the Super Admin's words (BR-6)."
+              },
+              {
+                "name": "recovered_by",
+                "type": "string",
+                "description": "The Super Admin. Nobody else can (BR-6, E6)."
+              },
+              {
+                "name": "reset_not_bypassed",
+                "type": "boolean",
+                "description": "True, always. The user enrols again and nothing lets them in without a factor (BR-11, E8)."
+              },
+              {
+                "name": "held_at_enrolment",
+                "type": "boolean",
+                "description": "True where a factor is enforced on them. On their next sign-in they enrol before reaching anything else (BR-8, E5)."
+              },
+              {
+                "name": "audit",
+                "type": "string",
+                "description": "The recovery is on the audit trail, with the reason (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_SUPER_ADMIN",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "Somebody other than the Super Admin attempted the recovery.",
+              "written": "Nothing.",
+              "notWritten": "The factor is unchanged.",
+              "note": "Only the Super Admin can recover a second factor (BR-6)."
+            },
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A recovery was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "The factor is unchanged (BR-6)."
+            },
+            {
+              "code": "BYPASS_ATTEMPTED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "A recovery was attempted that bypasses the factor rather than resetting it.",
+              "written": "Nothing.",
+              "notWritten": "There is no such route.",
+              "note": "The user enrols again (BR-11)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Confirm the person before resetting. This clears somebody's second factor, and the wrong name locks one person out and strips another's protection in the same act (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never write the reason. It is the record of how this person's identity was confirmed before their protection was cleared, and \"lost phone\" is not that (BR-6, E7).",
+          "derivedFrom": [
+            "BR-6",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that it resets rather than bypasses. The user enrols again on their next sign-in, and nobody is let in without a factor at any point (BR-11, E8).",
+          "derivedFrom": [
+            "BR-11",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never attempt it for anybody but the Super Admin. Nobody else can reset another person's factor — and where the account is the Super Admin's own there is nobody at all, which the use case raises and leaves open (BR-6, E6, OQ-3).",
+          "derivedFrom": [
+            "BR-6",
+            "E6",
+            "OQ-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never offer recovery codes. No fallback is modelled — a lost handset requires the Super Admin, every time (OQ-4).",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A reset factor is not un-reset. The user enrols a new one, and both the recovery and the enrolment are on the audit trail (BR-7, BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Imran ka second factor reset kar dein, unka phone kho gaya hai aur unhon ne daftar aa kar shanakht karwa li hai",
+            "lang": "ur-Latn",
+            "gloss": "reset Imran's second factor, their phone is lost and they confirmed their identity at the office"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "mfa.factor.recover",
+              "inputs": {
+                "user_id": "$request.user_phrase → Imran Sultan",
+                "recovery_reason": "as they gave it — handset lost and replaced, identity confirmed at the office"
+              },
+              "note": "Their words, including how identity was confirmed (PR-2)."
+            }
+          ],
+          "outcome": "Reset. He is not let in by this: on his next sign-in he is held at enrolment and sets up a new factor before reaching anything else. The reason is on the audit trail with the recovery, which is what somebody reviewing this later actually reads."
+        },
+        {
+          "request": {
+            "text": "main School Admin hoon, is teacher ka factor reset kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I am the School Admin, I will reset this teacher's factor"
+          },
+          "context": "School Admin at a branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "mfa.factor.recover",
+              "inputs": {
+                "user_id": "$request.user_phrase → the teacher",
+                "recovery_reason": "as given"
+              },
+              "note": "Refused on the seat (PR-4)."
+            }
+          ],
+          "outcome": "Only the Super Admin can reset a second factor — nobody else, at any branch. That is deliberate: the reset is the one route that clears somebody's protection, so it sits in one pair of hands with a recorded reason. The teacher's request goes to the Super Admin."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-25-04-PC-5",
+      "intent": {
+        "name": "mfa.status.read",
+        "summary": "See who is required to hold a second factor, who actually has one, and who is about to be locked out.",
+        "routesHere": [
+          "who has multi-factor authentication enabled?",
+          {
+            "text": "kis kis ke paas two-factor laga hua hai?",
+            "lang": "ur-Latn",
+            "gloss": "who has two-factor set up?"
+          },
+          {
+            "text": "kis par lazmi hai lekin abhi tak enrol nahi kiya?",
+            "lang": "ur-Latn",
+            "gloss": "who is it compulsory for but has not enrolled yet?"
+          },
+          {
+            "text": "Accounts role par MFA lagu hai ya nahi?",
+            "lang": "ur-Latn",
+            "gloss": "is MFA enforced on the Accounts role or not?"
+          },
+          "list the accounts with money access and no second factor"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mera factor enrol kar dein",
+              "lang": "ur-Latn",
+              "gloss": "enrol my factor"
+            },
+            "goesTo": "Not offered.",
+            "note": "The user enrols their own factor and nobody enrols one on their behalf (BR-3)."
+          },
+          {
+            "request": {
+              "text": "password kis kis ka kamzor hai?",
+              "lang": "ur-Latn",
+              "gloss": "whose passwords are weak?"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nobody ever knows anybody's password, the Super Admin included. There is no screen that displays one and no route that retrieves one (UC-25-05 BR-7)."
+          },
+          {
+            "request": {
+              "text": "in par MFA lagu kar dein",
+              "lang": "ur-Latn",
+              "gloss": "enforce MFA on them"
+            },
+            "goesTo": "mfa.enforce — this use case.",
+            "note": "Reading who is covered and requiring it of somebody are separate acts."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "mfa.status.read",
+            "inputs": {
+              "enforced_on": "$request.enforced_on",
+              "target_phrase": "$request.target_phrase"
+            },
+            "note": "One read. Nothing is enforced, enrolled or reset by looking."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written, and no code, secret or factor is returned by it — only whether one exists."
+      },
+      "operations": [
+        {
+          "name": "mfa.status.read",
+          "method": "GET",
+          "path": "/api/v1/mfa/status",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return who multi-factor applies to and who has enrolled.",
+          "parameters": [
+            {
+              "name": "enforced_on",
+              "source": "request",
+              "sourceRef": "$request.enforced_on",
+              "required": false,
+              "type": "enum: Role|Individual",
+              "notes": "Where the question is about enforcements on roles rather than on individuals (BR-1)."
+            },
+            {
+              "name": "target_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.target_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "mfa_target",
+                "fromPhrase": "$request.target_phrase",
+                "onNoMatch": "Refuse. No role or user matches.",
+                "onAmbiguous": "Ask, saying which candidates are roles and which are people."
+              },
+              "notes": "Where the question is about one role or one person."
+            }
+          ],
+          "returns": {
+            "description": "Who is covered, who is protected, and who is neither.",
+            "fields": [
+              {
+                "name": "enforcements",
+                "type": "object[]",
+                "description": "What is enforced, on which roles and which individuals, and how many people each covers (BR-1)."
+              },
+              {
+                "name": "enrolled",
+                "type": "integer",
+                "description": "People with a factor actually enrolled. **This is the only number that means anything is protected** (BR-3, BR-5)."
+              },
+              {
+                "name": "enforced_not_enrolled",
+                "type": "object[]",
+                "description": "Covered and with no factor. Each is held at enrolment on their next sign-in and reaches nothing else until they enrol — for somebody who signs in rarely, that is a lockout waiting to happen (BR-8, E5)."
+              },
+              {
+                "name": "enabled_not_enrolled",
+                "type": "object[]",
+                "description": "People who turned it on for themselves and never enrolled. A password alone still signs them in, and the setting says otherwise (BR-2, BR-3)."
+              },
+              {
+                "name": "no_contact_number",
+                "type": "object[]",
+                "description": "Covered people with no contact number recorded, who cannot enrol by SMS at all (E9)."
+              },
+              {
+                "name": "enrolled_but_not_required",
+                "type": "integer",
+                "description": "People who keep a factor nobody requires — including anybody whose enforcement was lifted, since removing enforcement removes nothing (BR-9)."
+              },
+              {
+                "name": "super_admin_covered",
+                "type": "boolean",
+                "description": "Whether the Super Admin holds a factor. **Only the Super Admin recovers a lost factor**, so theirs is the one nobody can reset (BR-6, OQ-3)."
+              },
+              {
+                "name": "no_recovery_codes",
+                "type": "boolean",
+                "description": "True, always. No fallback is modelled — a lost handset requires the Super Admin every time (OQ-4)."
+              },
+              {
+                "name": "remembered_devices",
+                "type": "boolean",
+                "description": "False. A factor is required at every sign-in as modelled; whether it could be remembered on a trusted device is unanswered (OQ-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the multi-factor configuration.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned.",
+              "note": "Enforcement and recovery are the Super Admin's (BR-1, BR-6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Count the enrolled, not the enforced. Enforcement covers people; only enrolment protects an account, and a role enforced last week with nobody enrolled is exactly as exposed as it was before (BR-3, BR-5).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the people covered with no factor. Each is held at enrolment on their next sign-in, and somebody who signs in once a term will meet that at the worst possible moment (BR-8, E5).",
+          "derivedFrom": [
+            "BR-8",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name the people who turned it on for themselves and never enrolled. Their profile says protected and a password alone still signs them in (BR-2, BR-3).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say whether the Super Admin holds a factor. Only the Super Admin recovers a lost one, so that account has no route back and no recovery codes exist — the use case raises it and answers neither (BR-6, OQ-3, OQ-4).",
+          "derivedFrom": [
+            "BR-6",
+            "OQ-3",
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never return anything about a factor beyond whether one exists. No secret, no code and no method detail belongs in an answer (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "kis par MFA lazmi hai lekin abhi tak enrol nahi kiya?",
+            "lang": "ur-Latn",
+            "gloss": "who is MFA compulsory for but has not enrolled yet?"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "mfa.status.read",
+              "inputs": {
+                "enforced_on": "omitted",
+                "target_phrase": "omitted"
+              },
+              "note": "One read (PR-2)."
+            }
+          ],
+          "outcome": "Give them by name with when each last signed in — somebody who signs in daily will enrol tomorrow, somebody who signs in once a term will hit a wall on the day they need the system. One of them has no contact number recorded and cannot use the SMS method at all. Add the two nobody asks about: the people who switched it on themselves and never enrolled, whose accounts are exactly as exposed as before."
+        },
+        {
+          "request": {
+            "text": "Accounts role par MFA lagu hai ya nahi?",
+            "lang": "ur-Latn",
+            "gloss": "is MFA enforced on the Accounts role or not?"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "mfa.status.read",
+              "inputs": {
+                "enforced_on": "Role",
+                "target_phrase": "$request.target_phrase → Accounts"
+              },
+              "note": "One role (PR-1)."
+            }
+          ],
+          "outcome": "Say whether it is enforced and then the number that matters: how many of the six have actually enrolled. Enforcement covers people; enrolment is what stops a stolen password. Mention too whether the Super Admin's own account holds a factor — it is the one nobody can recover."
+        }
+      ]
+    }
+  ]
+}

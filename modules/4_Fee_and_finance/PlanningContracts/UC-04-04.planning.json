@@ -1,0 +1,423 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-04",
+    "name": "Produce the challan a family takes to the bank, printable by the family themselves",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-04.json",
+    "featureRef": "4.4 Printable payment slips / challans"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-04-PC-1",
+      "intent": {
+        "name": "fee.challan.generate",
+        "summary": "Produce the bank challan for issued, unpaid invoices — one invoice, a class, a section, or a whole issue batch. One per invoice, and it moves no money.",
+        "routesHere": [
+          "print the challan for Ayesha's September invoice",
+          {
+            "text": "Ayesha ka challan nikaal do",
+            "lang": "ur-Latn",
+            "gloss": "produce Ayesha's challan"
+          },
+          {
+            "text": "jo batch abhi issue kiya hai us ke saare challan print kar do",
+            "lang": "ur-Latn",
+            "gloss": "print all the challans for the batch we just issued"
+          },
+          {
+            "text": "poori class ke challan nikaal do",
+            "lang": "ur-Latn",
+            "gloss": "produce the challans for the whole class"
+          },
+          "generate the bank slip for this invoice",
+          {
+            "text": "mujhe apne bache ka challan chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need my child's challan"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "paisa mila hai, record kar do",
+              "lang": "ur-Latn",
+              "gloss": "the money has come in, record it"
+            },
+            "goesTo": "fee.payment.record — UC-04-05",
+            "note": "Printing a challan moves no money and changes no invoice (BR-9). Recording what came back from the bank is a different act."
+          },
+          {
+            "request": {
+              "text": "bill bana do",
+              "lang": "ur-Latn",
+              "gloss": "raise the bill"
+            },
+            "goesTo": "fee.invoice.issue — UC-04-02-PC-2",
+            "note": "A challan is produced against an invoice that already exists."
+          },
+          {
+            "request": {
+              "text": "dono bhai behno ka ek hi challan bana do",
+              "lang": "ur-Latn",
+              "gloss": "make one challan for both siblings"
+            },
+            "goesTo": "Not offered.",
+            "note": "One challan covers one invoice. A single reference has to tie the bank payment back to the exact invoice (BR-3, BR-4), and a slip covering several children returns one total that cannot be split across their invoices without a guess — which is what UC-04-05 BR-3 exists to prevent."
+          },
+          {
+            "request": {
+              "text": "challan WhatsApp pe bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the challan on WhatsApp"
+            },
+            "goesTo": "The messaging path, A4.",
+            "note": "Generating and sending are different acts."
+          },
+          {
+            "request": {
+              "text": "challan ka amount badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the amount on the challan"
+            },
+            "goesTo": "Not offered.",
+            "note": "Every figure is taken from the invoice and nothing on it is typed, so the slip and the ledger cannot disagree (BR-2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.challan.generate",
+            "inputs": {
+              "scope": "$request.scope",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, producing one challan per unpaid invoice in scope. Every figure comes from the invoice (BR-2), and reprinting returns the same challan with the same reference rather than a new one (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A paid or cancelled invoice, and missing bank details, are enforced by the API and arrive as errors. Paid invoices inside a class, section or batch scope are skipped and listed rather than aborting the run (E5).",
+        "atomicity": "A document, not a transaction. No money moves, no invoice changes and no ledger entry is made (BR-9). What is written is a challan record per invoice with its own unique reference, and the generation entry, so a slip circulating in a family's hands can be traced to when it was produced and by whom (BR-11). Reprinting returns the existing challan rather than issuing a second reference — two references for one bill is how a payment gets entered twice (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "fee.challan.generate",
+          "method": "POST",
+          "path": "/api/v1/fee-challans",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "invoice_id — one invoice carries one challan, and BR-7 backs it: reprinting produces the same reference, never a second",
+          "purpose": "Produce one challan per issued, unpaid invoice in scope, in its bank, school and payer copies, or return the ones that already exist.",
+          "parameters": [
+            {
+              "name": "scope",
+              "source": "request",
+              "sourceRef": "$request.scope",
+              "required": true,
+              "type": "enum: Student | Class | Section | Batch",
+              "notes": "One invoice, every unpaid invoice of a class or section, or every unpaid invoice of one issue batch. A batch is exactly one issue run, so the billing period is unambiguous — which a class scope on its own is not (see the open question)."
+            },
+            {
+              "name": "invoice_id",
+              "source": "resolved",
+              "sourceRef": "$request.invoice_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "invoice",
+                "fromPhrase": "$request.invoice_phrase",
+                "onNoMatch": "Refuse. No issued, unpaid invoice matches.",
+                "onAmbiguous": "Ask, naming the candidates with student, period and balance."
+              },
+              "notes": "Required where the scope is Student."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No active class of that name.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the scope is Class. Covers every unpaid invoice of that class, across whatever periods are outstanding — report how many and for which periods before printing."
+            },
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No such active section.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the scope is Section."
+            },
+            {
+              "name": "batch_id",
+              "source": "resolved",
+              "sourceRef": "$request.batch_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "fee_issue_batch",
+                "fromPhrase": "$request.batch_phrase",
+                "onNoMatch": "Refuse. No issued batch matches.",
+                "onAmbiguous": "Ask, naming the candidates with batch number, scope, period, invoice count and how many are still unpaid."
+              },
+              "notes": "Required where the scope is Batch. The invoice run to print for — one run, one period, one unambiguous set of invoices."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The challans produced, or the ones that already existed.",
+            "fields": [
+              {
+                "name": "challans",
+                "type": "object[]",
+                "description": "challan_reference, invoice_number, student, amount_payable, due_date — one per unpaid invoice."
+              },
+              {
+                "name": "challan_reference",
+                "type": "string",
+                "description": "Unique per challan. It is what ties the eventual bank payment back to the exact invoice (BR-3)."
+              },
+              {
+                "name": "amount_payable",
+                "type": "string",
+                "description": "Taken from the invoice. Never typed (BR-2)."
+              },
+              {
+                "name": "payable_after_due_date",
+                "type": "string",
+                "description": "The higher amount where a late fee policy applies, printed alongside (BR-8)."
+              },
+              {
+                "name": "copies",
+                "type": "string[]",
+                "description": "Bank, school and payer — identical in content (BR-5)."
+              },
+              {
+                "name": "generated_count",
+                "type": "integer",
+                "description": "How many challans the run produced."
+              },
+              {
+                "name": "skipped_paid",
+                "type": "object[]",
+                "description": "Invoices in scope already paid, skipped and listed (E5)."
+              },
+              {
+                "name": "reprinted",
+                "type": "object[]",
+                "description": "Those that already had a challan and were returned unchanged (BR-7)."
+              },
+              {
+                "name": "periods_covered",
+                "type": "string[]",
+                "description": "For a class or section scope, which billing periods the unpaid invoices span. Report this — it is the ambiguity a batch scope avoids."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_PAID",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The invoice has already been paid.",
+              "written": "Nothing.",
+              "notWritten": "No challan.",
+              "note": "The message names the payment date. A family is never sent to the bank with a slip for a bill that has been paid (BR-1)."
+            },
+            {
+              "code": "CANCELLED_OR_CREDITED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The charge has been cancelled or credited.",
+              "written": "Nothing.",
+              "notWritten": "No challan.",
+              "note": "Message: \"This charge has been cancelled. There is nothing to pay.\""
+            },
+            {
+              "code": "NO_BANK_DETAILS",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "No bank details are configured for the branch.",
+              "written": "Nothing.",
+              "notWritten": "No challan.",
+              "note": "Configuration, not a billing problem."
+            },
+            {
+              "code": "NOT_OWN_CHILD",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "A guardian requested a challan for a child who is not theirs.",
+              "written": "Nothing.",
+              "notWritten": "No challan."
+            },
+            {
+              "code": "BATCH_CONTAINS_PAID",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "Some invoices in the scope have already been paid.",
+              "written": "Challans for the unpaid ones.",
+              "notWritten": "No challan for the paid ones.",
+              "treatedAsSuccess": true,
+              "note": "Listed and skipped. Not a failure — a batch printed a week after issue will usually contain some."
+            },
+            {
+              "code": "RENDER_FAILED",
+              "mapsTo": "E6",
+              "httpStatus": 500,
+              "meaning": "The challan could not be rendered.",
+              "written": "Nothing.",
+              "notWritten": "No challan.",
+              "note": "Message: \"The challan could not be generated. Please try again.\""
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never type a figure onto a challan. Every amount, the due date and the after-due-date amount are taken from the invoice so the slip and the ledger cannot disagree (BR-2), and there is no parameter for any of them.",
+          "derivedFrom": [
+            "BR-2",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never treat a reprint as a new challan. Reprinting returns the same reference (BR-7); two references for one bill is how a payment gets entered twice, and the bank quotes whichever slip it is handed.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never combine invoices onto one slip. One challan covers one invoice, because one reference has to tie the bank payment back to the exact invoice (BR-3, BR-4) — a combined slip returns one total that could only be split across invoices by guessing, which UC-04-05 BR-3 forbids outright.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Prefer a batch scope over a class scope, and report the periods when a class scope is used. A batch is one issue run and so one period; a class may hold unpaid invoices from several, and printing them all hands a family three slips they did not expect.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never generate a challan for a paid or cancelled invoice to 'have one on file'. A family holding a slip will take it to the bank, and E1 and E2 refuse it for that reason.",
+          "derivedFrom": [
+            "BR-1",
+            "E1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never chain a payment record onto a challan. Printing moves no money (BR-9); the payment is recorded when the stamped school copy comes back, which may be days later.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A challan is a document and is not withdrawn. It becomes unusable when its invoice is paid or cancelled, and the bank copy returned afterwards is what closes it (BR-10). Where a slip is circulating for a charge that has since been cancelled, nothing recalls it — the bank will simply find no open invoice against the reference."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ka September ka challan nikaal do",
+            "lang": "ur-Latn",
+            "gloss": "produce Ayesha's September challan"
+          },
+          "context": "Accounts, Johar Town branch, on an issued unpaid invoice of PKR 5,000 due 10-09-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.challan.generate",
+              "inputs": {
+                "scope": "Student",
+                "invoice_id": "$request.invoice_phrase → \"Ayesha, Sep 2026\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No amount is supplied — every figure comes from the invoice (PR-1)."
+            }
+          ],
+          "outcome": "One challan with a unique reference, PKR 5,000 payable by 10-09-2026 and the higher amount payable after it, in bank, school and payer copies. Nothing moved and the invoice is unchanged."
+        },
+        {
+          "request": {
+            "text": "jo batch abhi issue kiya hai, us ke saare challan print kar do",
+            "lang": "ur-Latn",
+            "gloss": "print all the challans for the batch we just issued"
+          },
+          "context": "Accounts, Johar Town branch, on a batch of 30 invoices issued this morning.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.challan.generate",
+              "inputs": {
+                "scope": "Batch",
+                "batch_id": "$request.batch_phrase → the Grade 4 Sep 2026 batch",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A batch is one run and one period, so which invoices are printed is unambiguous — unlike a class scope (PR-4)."
+            }
+          ],
+          "outcome": "30 challans, one per invoice, each with its own reference. Report the count. Where any had already been paid since issue they are skipped and listed (E5)."
+        },
+        {
+          "request": {
+            "text": "poori Grade 4 ke challan nikaal do",
+            "lang": "ur-Latn",
+            "gloss": "produce the challans for the whole of Grade 4"
+          },
+          "context": "Accounts, Johar Town branch, in November. Some students have unpaid September, October and November invoices.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.challan.generate",
+              "inputs": {
+                "scope": "Class",
+                "class_id": "$request.class_phrase → \"Grade 4\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A class scope covers every unpaid invoice, whatever the period. periods_covered comes back naming all three (PR-4)."
+            }
+          ],
+          "outcome": "68 challans across three billing periods for 30 students. Report that before handing them out — the actor probably meant this month's batch, and some families would otherwise receive three slips."
+        }
+      ]
+    }
+  ]
+}

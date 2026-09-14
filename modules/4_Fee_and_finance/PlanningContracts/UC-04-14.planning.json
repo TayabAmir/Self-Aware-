@@ -1,0 +1,1421 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-14",
+    "name": "Agree an installment plan that lets a family pay in parts and keeps them out of the defaulter route",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-14.json",
+    "featureRef": "4.14 Payment plans / installment billing"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-14-PC-1",
+      "intent": {
+        "name": "fee.plan.request",
+        "summary": "Record a family's request to pay an outstanding charge in parts, with the reason they need it. One step, and it schedules nothing.",
+        "routesHere": [
+          "record a plan request for this family, they've asked to pay in three parts",
+          {
+            "text": "family ne kaha hai qiston mein dena chahte hain",
+            "lang": "ur-Latn",
+            "gloss": "the family has said they want to pay in installments"
+          },
+          {
+            "text": "counter pe aa kar installment ki darkhwast di hai",
+            "lang": "ur-Latn",
+            "gloss": "they came to the counter and asked for installments"
+          },
+          {
+            "text": "walid ki naukri chali gayi hai, qiston mein dena chahte hain",
+            "lang": "ur-Latn",
+            "gloss": "the father has lost his job, they want to pay in parts"
+          },
+          "log an installment request against the September invoice"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "plan approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the plan"
+            },
+            "goesTo": "fee.plan.approve — UC-04-14-PC-2",
+            "note": "Accounts receive the request; the School Admin approves it, because a plan changes when the school is paid (BR-3)."
+          },
+          {
+            "request": {
+              "text": "qisten set kar do",
+              "lang": "ur-Latn",
+              "gloss": "set the installments"
+            },
+            "goesTo": "fee.plan.define — UC-04-14-PC-3",
+            "note": "The schedule is defined after the request is approved, never before (E9)."
+          },
+          {
+            "request": {
+              "text": "fees kam kar do",
+              "lang": "ur-Latn",
+              "gloss": "reduce the fees"
+            },
+            "goesTo": "fee.concession.record — UC-04-13",
+            "note": "A plan schedules a debt. It never changes how much is owed, only when it is paid (BR-1)."
+          },
+          {
+            "request": {
+              "text": "late fee maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "waive the late fee"
+            },
+            "goesTo": "fee.latefee.waive — UC-04-15",
+            "note": "While a plan is being met no late fee accrues at all (BR-7) — but a fine already applied is waived separately."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.plan.request",
+            "inputs": {
+              "invoice_id": "$request.invoice_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, producing a request at Requested. No schedule exists, the charge is unchanged and the family is still in overdue tracking until a plan is approved and active (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. An active plan on the same charge, and an invoice already paid, are enforced by the API and arrive as errors.",
+        "atomicity": "One write: the request with the family's stated reason, together with the audit entry or not at all. The invoice is unchanged (BR-6), no protection applies yet, and the family is still chased and still accruing late fee until a plan is approved and active (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "fee.plan.request",
+          "method": "POST",
+          "path": "/api/v1/fee-plan-requests",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "invoice_id, since a charge carries one open request at a time",
+          "purpose": "Record a request to pay an outstanding charge in parts, with the guardian's stated reason.",
+          "parameters": [
+            {
+              "name": "invoice_id",
+              "source": "resolved",
+              "sourceRef": "$request.invoice_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "invoice",
+                "fromPhrase": "$request.invoice_phrase",
+                "onNoMatch": "Refuse. No invoice matches with an outstanding balance.",
+                "onAmbiguous": "Ask, naming the candidates with student, period and balance."
+              },
+              "notes": "The issued invoice with an outstanding balance the family cannot pay at once."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters, written by the guardian. It is what the School Admin weighs, and a request with no reason cannot be judged (BR-2, and E7 for the decline side). The family's own words, whether typed in the app or taken at the counter (A2)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The request as recorded.",
+            "fields": [
+              {
+                "name": "plan_request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Requested. Nothing is scheduled and no protection applies."
+              },
+              {
+                "name": "outstanding_charge",
+                "type": "string",
+                "description": "What the plan would schedule. Never typed (BR-1)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As the guardian gave it."
+              },
+              {
+                "name": "existing_plan",
+                "type": "object",
+                "description": "Any active plan on the same charge, which refuses a second (BR-11, E6)."
+              },
+              {
+                "name": "requested_by",
+                "type": "string",
+                "description": "The guardian, or the Accounts user who took it at the counter (A2)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ACTIVE_PLAN_EXISTS",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "An active plan already exists for the charge.",
+              "written": "Nothing.",
+              "notWritten": "No request recorded.",
+              "note": "The message names the next installment due. A student holds one active plan per charge (BR-11); changing it is a reschedule, not a second request."
+            },
+            {
+              "code": "ALREADY_PAID",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The invoice has been paid in full.",
+              "written": "Nothing.",
+              "notWritten": "No request recorded.",
+              "note": "Message: \"This fee has been paid. There is nothing to schedule.\""
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. It is what the School Admin weighs (BR-2), and a request with no reason cannot be judged — a planner's version describes what it inferred about a family's circumstances.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain the approval or the schedule. Accounts receive, the School Admin approves, Accounts define — three acts, because a plan changes when the school is paid (BR-3), and defining before approval is refused outright (E9).",
+          "derivedFrom": [
+            "BR-3",
+            "E5",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe the request as protecting the family yet. Nothing applies until a plan is approved and active (BR-7); until then they are still on the overdue list and still accruing late fee.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never treat a plan as a reduction. It schedules a debt and never changes how much is owed (BR-1) — a family asking to pay less is asking for a concession.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A request is approved or declined by the School Admin; nothing here withdraws one. Nothing has been scheduled and the charge is unchanged."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "walid ki naukri chali gayi hai, teen qiston mein dena chahte hain — darkhwast likh do",
+            "lang": "ur-Latn",
+            "gloss": "the father has lost his job, they want to pay in three installments — record the request"
+          },
+          "context": "Accounts, Johar Town branch, on an outstanding invoice of PKR 6,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.request",
+              "inputs": {
+                "invoice_id": "$request.invoice_phrase",
+                "reason": "The father has lost his job and the family cannot pay the full amount at once. They have asked to pay in three parts.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the family's own, taken at the counter (A2). The number of parts is not recorded here — the schedule is defined after approval (PR-2)."
+            }
+          ],
+          "outcome": "A request at Requested against PKR 6,000. The family is still on the overdue list and still accruing late fee until a plan is approved and active (PR-3) — worth saying, because they will assume otherwise."
+        },
+        {
+          "request": {
+            "text": "in ki qiston ki darkhwast daal do",
+            "lang": "ur-Latn",
+            "gloss": "put in their installment request"
+          },
+          "context": "Accounts, Johar Town branch, where an active plan already runs on that charge.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.request",
+              "inputs": {
+                "invoice_id": "$request.invoice_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns ACTIVE_PLAN_EXISTS (E6)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report the existing plan and its next installment date — changing it is a reschedule, which is a different act with its own reason (BR-10)."
+        },
+        {
+          "request": {
+            "text": "family qiston mein dena chahti hai",
+            "lang": "ur-Latn",
+            "gloss": "the family wants to pay in installments"
+          },
+          "context": "Accounts, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.request",
+              "inputs": {
+                "invoice_id": "$request.invoice_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: reason is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why the family needs it — it is what the School Admin weighs, and a request with no reason cannot be judged."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-14-PC-2",
+      "intent": {
+        "name": "fee.plan.approve",
+        "summary": "Approve a family's installment request so a schedule may be defined for it. School Admin only, one step.",
+        "routesHere": [
+          "approve the installment request for this family",
+          {
+            "text": "qiston ki darkhwast manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the installment request"
+          },
+          {
+            "text": "in ko qiston mein dene ki ijazat de do",
+            "lang": "ur-Latn",
+            "gloss": "allow them to pay in installments"
+          },
+          "approve the plan request Accounts sent up"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "darkhwast rad kar do",
+              "lang": "ur-Latn",
+              "gloss": "decline the request"
+            },
+            "goesTo": "fee.plan.decline — UC-04-14-PC-3",
+            "note": "A decline needs the reason the family is told (E7)."
+          },
+          {
+            "request": {
+              "text": "qisten set kar do",
+              "lang": "ur-Latn",
+              "gloss": "set the installments"
+            },
+            "goesTo": "fee.plan.define — UC-04-14-PC-3",
+            "note": "Approving permits a plan; Accounts define the schedule afterwards (E9)."
+          },
+          {
+            "request": {
+              "text": "darkhwast likh do",
+              "lang": "ur-Latn",
+              "gloss": "record the request"
+            },
+            "goesTo": "fee.plan.request — UC-04-14-PC-1"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.plan.approve",
+            "inputs": {
+              "plan_request_id": "$request.plan_request_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Approving permits a schedule to be defined; it does not create one, and no protection applies until the plan is active (BR-7, E9)."
+          }
+        ],
+        "onFailure": "Stop and report. The acting role is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the approval and the audit entry together or not at all. Nothing is scheduled, the charge is unchanged, and the family is still on the overdue list and still accruing late fee until the plan is defined and active (BR-7). The guardian is told (BR-13)."
+      },
+      "operations": [
+        {
+          "name": "fee.plan.approve",
+          "method": "POST",
+          "path": "/api/v1/fee-plan-requests/{plan_request_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "plan_request_id, since a request carries one decision",
+          "purpose": "Approve an installment request so Accounts may define the schedule, and tell the guardian.",
+          "parameters": [
+            {
+              "name": "plan_request_id",
+              "source": "resolved",
+              "sourceRef": "$request.plan_request_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "plan_request",
+                "fromPhrase": "$request.plan_request_phrase",
+                "onNoMatch": "Refuse. No plan request matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with student, invoice, amount and status."
+              },
+              "notes": "The plan request, resolved from how the actor named it — the student, the invoice, or the reference."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision.",
+            "fields": [
+              {
+                "name": "plan_request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "decided_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "outstanding_charge",
+                "type": "string",
+                "description": "What a plan would schedule."
+              },
+              {
+                "name": "plan_defined",
+                "type": "boolean",
+                "description": "Always false. The schedule is a separate act (E9)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status. The family is told either way (BR-13)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved. A schedule may now be defined."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to decide.",
+              "written": "Nothing.",
+              "notWritten": "Not decided.",
+              "note": "A plan changes when the school is paid, so it is not one person's decision (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never chain the schedule onto an approval. Approving permits a plan; defining it is Accounts' work, and defining before approval is refused outright (E9).",
+          "derivedFrom": [
+            "BR-3",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report that no protection applies yet. The family is still on the overdue list and still accruing late fee until the plan is defined and active (BR-7) — and they will assume approval was enough.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the guardian has been told. A request that disappears is worse than one that is declined (BR-13), and a failed message means it has disappeared as far as they know.",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A decision is not withdrawn. Where a declined family's circumstances change, they request again — a fresh request with a fresh reason. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "in ki qiston ki darkhwast manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve their installment request"
+          },
+          "context": "School Admin, Johar Town branch, on a PKR 6,000 charge.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.approve",
+              "inputs": {
+                "plan_request_id": "$request.plan_request_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "decline_reason is omitted — required only on a decline."
+            }
+          ],
+          "outcome": "Approved, and the guardian is told. Nothing is scheduled yet: Accounts define the installments next, and only when the plan is active does the family leave overdue tracking (PR-3)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-14-PC-3",
+      "intent": {
+        "name": "fee.plan.decline",
+        "summary": "Decline a family's installment request with the reason they are told. School Admin only, one step.",
+        "routesHere": [
+          "decline this request — they've broken two plans already this year",
+          {
+            "text": "ye darkhwast rad kar do, wajah likh do",
+            "lang": "ur-Latn",
+            "gloss": "decline this request, write the reason"
+          },
+          {
+            "text": "qiston ki ijazat nahi de sakte",
+            "lang": "ur-Latn",
+            "gloss": "we cannot allow installments"
+          },
+          {
+            "text": "darkhwast mansookh kar do",
+            "lang": "ur-Latn",
+            "gloss": "turn the request down"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "darkhwast manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the request"
+            },
+            "goesTo": "fee.plan.approve — UC-04-14-PC-2"
+          },
+          {
+            "request": {
+              "text": "qisten set kar do",
+              "lang": "ur-Latn",
+              "gloss": "set the installments"
+            },
+            "goesTo": "fee.plan.define — UC-04-14-PC-3",
+            "note": "Approving permits a plan; Accounts define the schedule afterwards (E9)."
+          },
+          {
+            "request": {
+              "text": "darkhwast likh do",
+              "lang": "ur-Latn",
+              "gloss": "record the request"
+            },
+            "goesTo": "fee.plan.request — UC-04-14-PC-1"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.plan.decline",
+            "inputs": {
+              "plan_request_id": "$request.plan_request_phrase",
+              "decline_reason": "$request.decline_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The request ends and the family is told why — a request that disappears is worse than one that is declined (BR-13)."
+          }
+        ],
+        "onFailure": "Stop and report. The reason and the acting role are enforced by the API and arrive as errors.",
+        "atomicity": "One write: the decision, the reason and the audit entry together or not at all. The charge stands in full, the family stays on the overdue list and late fee continues. The guardian is told (BR-13)."
+      },
+      "operations": [
+        {
+          "name": "fee.plan.decline",
+          "method": "POST",
+          "path": "/api/v1/fee-plan-requests/{plan_request_id}/decline",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "plan_request_id, since a request carries one decision",
+          "purpose": "Decline an installment request with the reason, and tell the guardian why.",
+          "parameters": [
+            {
+              "name": "plan_request_id",
+              "source": "resolved",
+              "sourceRef": "$request.plan_request_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "plan_request",
+                "fromPhrase": "$request.plan_request_phrase",
+                "onNoMatch": "Refuse. No plan request matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with student, invoice, amount and status."
+              },
+              "notes": "The plan request, resolved from how the actor named it — the student, the invoice, or the reference."
+            },
+            {
+              "name": "decline_reason",
+              "source": "request",
+              "sourceRef": "$request.decline_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (BR-3, E7) — the family is told why their request was not accepted. The School Admin's own words."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision, and what the family was told.",
+            "fields": [
+              {
+                "name": "plan_request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Declined. Terminal."
+              },
+              {
+                "name": "decline_reason",
+                "type": "string",
+                "description": "As given, sent to the family."
+              },
+              {
+                "name": "decided_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "outstanding_charge",
+                "type": "string",
+                "description": "Still owed in full, still on the overdue list."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status. The family is told either way (BR-13)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DECLINE_REASON_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A decline was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not declined.",
+              "note": "Message: \"Give a reason. The family is told why their request was not accepted.\" Ask; never compose one."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to decide.",
+              "written": "Nothing.",
+              "notWritten": "Not declined.",
+              "note": "A plan changes when the school is paid, so it is not one person's decision (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the decline reason. The family is told it (BR-13, E7), and a reason a planner wrote is the school telling a family something nobody decided to say.",
+          "derivedFrom": [
+            "BR-13",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never soften the reason on the way through. It goes to a family who has asked for help, and the words the School Admin chose are the record of what the school said.",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the charge stands in full and the family remains on the overdue list. Declining changes nothing about what is owed, and they will keep accruing late fee (BR-1, BR-7).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report that the guardian has been told. A request that disappears is worse than one that is declined (BR-13), and a failed message means it has disappeared as far as they know.",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A decline is not withdrawn. Where the family's circumstances change they request again — a fresh request with a fresh reason. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye darkhwast rad kar do — is saal pehle bhi do plan tor chuke hain",
+            "lang": "ur-Latn",
+            "gloss": "decline this request — they have already broken two plans this year"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.decline",
+              "inputs": {
+                "plan_request_id": "$request.plan_request_phrase",
+                "decline_reason": "Two installment plans have already been agreed and broken this session.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the School Admin's own and goes to the family as given (PR-1)."
+            }
+          ],
+          "outcome": "Declined and the family is told why. The charge stands in full, they remain on the overdue list, and late fee continues (PR-3)."
+        },
+        {
+          "request": "decline it — the amount is small enough that a plan isn't warranted",
+          "context": "School Admin, Johar Town branch, on a PKR 800 charge.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.decline",
+              "inputs": {
+                "plan_request_id": "$request.plan_request_phrase",
+                "decline_reason": "The outstanding amount is small enough to be paid in one part.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Declined with the reason sent. Nothing about the debt changes."
+        },
+        {
+          "request": {
+            "text": "darkhwast rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "decline the request"
+          },
+          "context": "School Admin, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.decline",
+              "inputs": {
+                "plan_request_id": "$request.plan_request_phrase",
+                "decline_reason": "$request.decline_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: decline_reason is required (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the family should be told — they are told either way (BR-13)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-14-PC-4",
+      "intent": {
+        "name": "fee.plan.define",
+        "summary": "Define the installments of an approved plan and activate it, which takes the family out of overdue tracking and stops late fee. One step.",
+        "routesHere": [
+          "set up three installments of 2,000 for October, November and December",
+          {
+            "text": "teen qisten bana do — 2000 har mahine, October se",
+            "lang": "ur-Latn",
+            "gloss": "make three installments — 2000 a month, from October"
+          },
+          {
+            "text": "plan set kar do, do qisten",
+            "lang": "ur-Latn",
+            "gloss": "set the plan up, two installments"
+          },
+          {
+            "text": "qiston ka schedule bana do",
+            "lang": "ur-Latn",
+            "gloss": "build the installment schedule"
+          },
+          "define the plan: 3,000 on 15 October and 3,000 on 15 November"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "darkhwast manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the request"
+            },
+            "goesTo": "fee.plan.approve — UC-04-14-PC-2",
+            "note": "Defining before approval is refused outright (E9)."
+          },
+          {
+            "request": {
+              "text": "plan badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the plan"
+            },
+            "goesTo": "fee.plan.reschedule — UC-04-14-PC-4",
+            "note": "An approved plan is rescheduled with a written reason, and the new schedule must still total the original charge (BR-10)."
+          },
+          {
+            "request": {
+              "text": "qist ki raqam kam kar do",
+              "lang": "ur-Latn",
+              "gloss": "reduce the installment amount"
+            },
+            "goesTo": "Not without changing the total.",
+            "note": "The installments must total exactly the outstanding charge (BR-4). Reducing one means raising another, which is a reschedule."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.plan.define",
+            "inputs": {
+              "plan_request_id": "$request.plan_request_phrase",
+              "installments": "$request.installments",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it activates the plan. From here the student leaves overdue tracking, is not reminded and accrues no late fee while the plan is met — which is the whole point of agreeing one (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. Installments that do not total the charge, dates out of order, dates outside the session, fewer than two installments and an unapproved request are all enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the plan, all its installments and the audit entry together or not at all. The original invoice is unchanged — the plan sits against it and the challan reflects the plan, but the charge itself is untouched (BR-6). Activating it removes the student from overdue tracking, stops reminders and stops late fee accruing, for as long as the plan is met (BR-7); a single missed installment ends all of that at once (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "fee.plan.define",
+          "method": "POST",
+          "path": "/api/v1/fee-plans",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "plan_request_id, since an approved request produces one plan",
+          "purpose": "Define the installments of an approved request and activate the plan.",
+          "parameters": [
+            {
+              "name": "plan_request_id",
+              "source": "resolved",
+              "sourceRef": "$request.plan_request_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "plan_request",
+                "fromPhrase": "$request.plan_request_phrase",
+                "onNoMatch": "Refuse. No plan request matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with student, invoice, amount and status."
+              },
+              "notes": "The plan request, resolved from how the actor named it — the student, the invoice, or the reference."
+            },
+            {
+              "name": "installments",
+              "source": "request",
+              "sourceRef": "$request.installments",
+              "required": true,
+              "type": "object[]",
+              "notes": "Two or more, each with an amount and a due date. They must total exactly the outstanding charge — a plan that adds up to less is a discount granted by arithmetic (BR-4, E1). Each falls due later than the one before, and all within the academic session (BR-5, E2, E3). Every figure and every date comes from the request."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The plan as activated.",
+            "fields": [
+              {
+                "name": "plan_id",
+                "type": "string",
+                "description": "The plan."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Active."
+              },
+              {
+                "name": "installments",
+                "type": "object[]",
+                "description": "number, amount, due_date, status."
+              },
+              {
+                "name": "total_scheduled",
+                "type": "string",
+                "description": "Checked against the charge (BR-4)."
+              },
+              {
+                "name": "outstanding_charge",
+                "type": "string",
+                "description": "What it must equal."
+              },
+              {
+                "name": "invoice_status",
+                "type": "string",
+                "description": "Unchanged. The plan sits against the invoice (BR-6)."
+              },
+              {
+                "name": "removed_from_overdue",
+                "type": "boolean",
+                "description": "True. The student leaves overdue tracking and accrues no late fee while the plan is met (BR-7)."
+              },
+              {
+                "name": "next_installment",
+                "type": "object",
+                "description": "Amount and date, so whoever answers the counter can see it (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "TOTAL_MISMATCH",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The installments do not total the outstanding charge.",
+              "written": "Nothing.",
+              "notWritten": "No plan created.",
+              "note": "The message names both figures. A plan that adds up to less is a discount granted by arithmetic (BR-4) — never adjust an installment to make it balance."
+            },
+            {
+              "code": "DATES_OUT_OF_ORDER",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "An installment falls due before the one before it.",
+              "written": "Nothing.",
+              "notWritten": "No plan created."
+            },
+            {
+              "code": "OUTSIDE_SESSION",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "An installment falls outside the academic session.",
+              "written": "Nothing.",
+              "notWritten": "No plan created.",
+              "note": "A debt carried past the session it arose in is a different problem (BR-5)."
+            },
+            {
+              "code": "TOO_FEW_INSTALLMENTS",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "Fewer than two installments were defined.",
+              "written": "Nothing.",
+              "notWritten": "No plan created.",
+              "note": "One payment is not a plan."
+            },
+            {
+              "code": "NOT_APPROVED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The request has not been approved.",
+              "written": "Nothing.",
+              "notWritten": "No plan created.",
+              "note": "Approval comes first, by the School Admin (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply, adjust or round an installment amount. They must total exactly the outstanding charge (BR-4), and a figure a planner nudges to make the arithmetic work is a discount or a surcharge nobody agreed.",
+          "derivedFrom": [
+            "BR-4",
+            "E1",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply the due dates. They are what the family committed to, and a schedule invented here commits them to dates nobody discussed.",
+          "derivedFrom": [
+            "BR-5",
+            "E2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never define a plan before the request is approved. E9 is BR-3 working — a plan changes when the school is paid, so somebody else agrees to it first.",
+          "derivedFrom": [
+            "BR-3",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report that the protection now applies, and that one missed installment ends it. While the plan is met the student is out of overdue tracking with no late fee (BR-7); a plan being broken is not a plan being kept, and the protection ends at once (BR-8).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the next installment. Whoever answers the counter needs it, so a family paying as agreed is never told they are in arrears by somebody who did not know (BR-12).",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never describe the plan as changing what is owed. It schedules a debt and nothing more (BR-1), and the invoice is untouched (BR-6).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An active plan is not deleted. It is rescheduled through fee.plan.reschedule, with a written reason and a schedule that still totals the original charge (BR-10). Where the family stops paying altogether the plan is missed and the protection ends (BR-8) — the debt was never reduced. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "teen qisten bana do — 2000 har mahine, 15 October, 15 November, 15 December",
+            "lang": "ur-Latn",
+            "gloss": "make three installments — 2000 a month, 15 October, 15 November, 15 December"
+          },
+          "context": "Accounts, Johar Town branch, on an approved request against PKR 6,000, session running to 30-06-2027.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.define",
+              "inputs": {
+                "plan_request_id": "$request.plan_request_phrase",
+                "installments": "$request.installments → [{2000, 2026-10-15}, {2000, 2026-11-15}, {2000, 2026-12-15}]",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Every amount and every date comes from the request. The total is checked against the charge by the API, not computed here (PR-1)."
+            }
+          ],
+          "outcome": "The plan is Active. The student leaves overdue tracking, stops being reminded and accrues no late fee while it is met (BR-7). Report the next installment — 15 October — and that one missed installment ends the protection at once (PR-4)."
+        },
+        {
+          "request": {
+            "text": "do qisten bana do — 2500 aur 3000",
+            "lang": "ur-Latn",
+            "gloss": "make two installments — 2500 and 3000"
+          },
+          "context": "Accounts, Johar Town branch, on a charge of PKR 6,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.define",
+              "inputs": {
+                "plan_request_id": "$request.plan_request_phrase",
+                "installments": "$request.installments → [{2500, …}, {3000, …}]",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as stated. The API returns TOTAL_MISMATCH (E1) — 5,500 against 6,000."
+            }
+          ],
+          "outcome": "No plan is created. Report both figures and the PKR 500 shortfall — never adjust an installment to make it balance (PR-1). A plan that adds up to less is a discount granted by arithmetic."
+        },
+        {
+          "request": {
+            "text": "qisten bana do, tareekhen tum theek kar lo",
+            "lang": "ur-Latn",
+            "gloss": "make the installments, you sort out the dates"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.define",
+              "inputs": {
+                "plan_request_id": "$request.plan_request_phrase",
+                "installments": "$request.installments — dates absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: the due dates are what the family committed to (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask when the family can pay each part. A schedule invented here commits them to dates nobody discussed."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-14-PC-5",
+      "intent": {
+        "name": "fee.plan.reschedule",
+        "summary": "Change an approved plan's installments, with the reason, keeping the total the same. One step.",
+        "routesHere": [
+          "reschedule the plan, they've asked to move December's part to January",
+          {
+            "text": "plan badal do, December wali qist January mein kar do",
+            "lang": "ur-Latn",
+            "gloss": "change the plan, move December's installment to January"
+          },
+          {
+            "text": "halaat phir kharab ho gaye, qisten dobara set karo",
+            "lang": "ur-Latn",
+            "gloss": "circumstances have worsened again, reset the installments"
+          },
+          "restructure this plan into four parts instead of three"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "naya plan bana do",
+              "lang": "ur-Latn",
+              "gloss": "make a new plan"
+            },
+            "goesTo": "fee.plan.define — UC-04-14-PC-3",
+            "note": "Where no plan is running yet."
+          },
+          {
+            "request": {
+              "text": "plan khatam kar do",
+              "lang": "ur-Latn",
+              "gloss": "end the plan"
+            },
+            "goesTo": "Not offered.",
+            "note": "The lifecycle holds Cancelled but no capability cancels a plan. See OPEN-QUESTIONS."
+          },
+          {
+            "request": {
+              "text": "baqaya kam kar do",
+              "lang": "ur-Latn",
+              "gloss": "reduce what is owed"
+            },
+            "goesTo": "fee.concession.record — UC-04-13",
+            "note": "A reschedule never changes how much is owed (BR-1, BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.plan.reschedule",
+            "inputs": {
+              "plan_id": "$request.plan_phrase",
+              "reschedule_reason": "$request.reschedule_reason",
+              "installments": "$request.installments",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The new schedule must still total the original charge (BR-10), and rescheduling repeatedly is visible in the record."
+          }
+        ],
+        "onFailure": "Stop and report. The reason, the total, the date order and the session boundary are all enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the reason, the new installments and the audit entry together or not at all. The charge is unchanged and the invoice is untouched (BR-1, BR-6). The protection continues while the new schedule is met. Every previous schedule stays on the record, so a plan rescheduled repeatedly is visible rather than silent (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "fee.plan.reschedule",
+          "method": "POST",
+          "path": "/api/v1/fee-plans/{plan_id}/reschedule",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "plan_id + the installment set, so a repeat does not inflate reschedule_count",
+          "purpose": "Replace an active plan's installments with a new schedule totalling the same charge, recording why.",
+          "parameters": [
+            {
+              "name": "plan_id",
+              "source": "resolved",
+              "sourceRef": "$request.plan_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "fee_plan",
+                "fromPhrase": "$request.plan_phrase",
+                "onNoMatch": "Refuse. No active plan matches.",
+                "onAmbiguous": "Ask, naming the candidates with student, charge and next installment."
+              },
+              "notes": "The active plan."
+            },
+            {
+              "name": "reschedule_reason",
+              "source": "request",
+              "sourceRef": "$request.reschedule_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (BR-10). The actor's own words — a plan rescheduled repeatedly is a pattern somebody reads later."
+            },
+            {
+              "name": "installments",
+              "source": "request",
+              "sourceRef": "$request.installments",
+              "required": true,
+              "type": "object[]",
+              "notes": "The new schedule. Must still total the original charge (BR-10), each later than the last, all within the session. Every figure and date from the request."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The plan as rescheduled.",
+            "fields": [
+              {
+                "name": "plan_id",
+                "type": "string",
+                "description": "The plan."
+              },
+              {
+                "name": "installments",
+                "type": "object[]",
+                "description": "The new schedule."
+              },
+              {
+                "name": "total_scheduled",
+                "type": "string",
+                "description": "Still equal to the original charge (BR-10)."
+              },
+              {
+                "name": "previous_schedule",
+                "type": "object[]",
+                "description": "Kept on the record."
+              },
+              {
+                "name": "reschedule_count",
+                "type": "integer",
+                "description": "How many times this plan has been changed. Visible rather than silent (BR-10)."
+              },
+              {
+                "name": "next_installment",
+                "type": "object",
+                "description": "Amount and date (BR-12)."
+              },
+              {
+                "name": "protection_continues",
+                "type": "boolean",
+                "description": "True while the new schedule is met (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "TOTAL_MISMATCH",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The new installments do not total the original charge.",
+              "written": "Nothing.",
+              "notWritten": "Not rescheduled.",
+              "note": "A reschedule never changes how much is owed (BR-10)."
+            },
+            {
+              "code": "DATES_OUT_OF_ORDER",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "An installment falls due before the one before it.",
+              "written": "Nothing.",
+              "notWritten": "Not rescheduled."
+            },
+            {
+              "code": "OUTSIDE_SESSION",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "An installment falls outside the academic session.",
+              "written": "Nothing.",
+              "notWritten": "Not rescheduled."
+            },
+            {
+              "code": "TOO_FEW_INSTALLMENTS",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "Fewer than two installments.",
+              "written": "Nothing.",
+              "notWritten": "Not rescheduled."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reschedule reason. Rescheduling repeatedly is visible in the record (BR-10), and the reasons are what make the pattern readable.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never adjust an amount to make the new schedule balance. It must still total the original charge (BR-10, E1); nudging a figure is a discount or a surcharge nobody agreed.",
+          "derivedFrom": [
+            "BR-10",
+            "E1",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never supply the new dates. They are what the family has newly committed to.",
+          "derivedFrom": [
+            "BR-5",
+            "E2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the reschedule count. A plan changed three times is a different conversation from one changed once, and BR-10 keeps it visible for that reason.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never describe a reschedule as reducing the debt. The charge is unchanged and the invoice untouched (BR-1, BR-6).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A reschedule is not undone. Changing it back is another reschedule with its own reason, and every schedule stays on the record (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "December wali qist January mein kar do — tankhwah der se mili hai",
+            "lang": "ur-Latn",
+            "gloss": "move December's installment to January — the salary came late"
+          },
+          "context": "Accounts, Johar Town branch, on an active three-part plan.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.reschedule",
+              "inputs": {
+                "plan_id": "$request.plan_phrase",
+                "reschedule_reason": "The salary was paid late; the family asked to move the December part to January.",
+                "installments": "$request.installments → the three parts with the third dated 2027-01-15",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "All three parts are restated, not just the moved one, because the schedule is replaced as a whole and must still total the charge (PR-2)."
+            }
+          ],
+          "outcome": "Rescheduled with the total unchanged. reschedule_count moves to 1. The protection continues while the new schedule is met."
+        },
+        {
+          "request": {
+            "text": "qisten dobara set karo, char kar do",
+            "lang": "ur-Latn",
+            "gloss": "reset the installments, make it four"
+          },
+          "context": "Accounts, Johar Town branch, on a PKR 6,000 plan.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.reschedule",
+              "inputs": {
+                "plan_id": "$request.plan_phrase",
+                "reschedule_reason": "$request.reschedule_reason",
+                "installments": "$request.installments → four parts totalling 6,000",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Four parts totalling the same PKR 6,000. The debt has not moved — only when it is paid (BR-1)."
+        },
+        {
+          "request": {
+            "text": "plan badal do",
+            "lang": "ur-Latn",
+            "gloss": "change the plan"
+          },
+          "context": "Accounts, Johar Town branch, with no reason and no new schedule.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.plan.reschedule",
+              "inputs": {
+                "plan_id": "$request.plan_phrase",
+                "reschedule_reason": "$request.reschedule_reason — absent",
+                "installments": "$request.installments — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1, PR-3)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the new schedule is and why it is changing."
+        }
+      ]
+    }
+  ]
+}

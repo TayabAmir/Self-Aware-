@@ -1,0 +1,2059 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-03-08",
+    "name": "End a student's enrolment permanently as a disciplinary decision, after due process",
+    "module": "Student records",
+    "file": "../UseCases/UC-03-08.json",
+    "featureRef": "3.8 Student expulsion"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-03-08-PC-1",
+      "intent": {
+        "name": "expulsion.recommend",
+        "summary": "Recommend an expulsion from a recorded incident, setting out what happened and what was already tried. Coordinator, one step, and nothing about the child changes.",
+        "routesHere": [
+          "recommend expulsion — the warnings and the suspension did not change it",
+          {
+            "text": "expulsion ki sifarish karo, pehle ki sazaaein kaafi nahi rahin",
+            "lang": "ur-Latn",
+            "gloss": "recommend expulsion, the earlier sanctions were not enough"
+          },
+          {
+            "text": "ye case Principal ke paas bhejna hai",
+            "lang": "ur-Latn",
+            "gloss": "this case needs to go to the Principal"
+          },
+          {
+            "text": "bache ko school se nikalne ki sifarish",
+            "lang": "ur-Latn",
+            "gloss": "a recommendation to remove the child from the school"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "kuch din ke liye bahar rakh do",
+              "lang": "ur-Latn",
+              "gloss": "keep them out for a few days"
+            },
+            "goesTo": "suspension.recommend — UC-03-07-PC-1",
+            "note": "A suspension holds the place and the enrolment continues (UC-03-07 BR-5). An expulsion ends it permanently."
+          },
+          {
+            "request": {
+              "text": "walidain khud naam katwa lein",
+              "lang": "ur-Latn",
+              "gloss": "let the family withdraw the child themselves"
+            },
+            "goesTo": "withdrawal.raise — UC-03-06-PC-1",
+            "note": "A withdrawal the family applies for and an expulsion are different records with different consequences for the child's future."
+          },
+          {
+            "request": {
+              "text": "seedha faisla kar do",
+              "lang": "ur-Latn",
+              "gloss": "just make the decision"
+            },
+            "goesTo": "Not offered.",
+            "note": "The guardian is informed in writing and heard before any decision. This step is not optional and the case cannot proceed without it (BR-3, E4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "expulsion.recommend",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "incident_id": "$request.incident_phrase",
+              "what_happened": "$request.what_happened",
+              "sanctions_applied": "$request.sanctions_applied",
+              "why_insufficient": "$request.why_insufficient",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A case that does not show what was tried first is a case that has not been made (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report. A case with no incident, and one with no prior sanctions set out, are both refused.",
+        "atomicity": "One write: the case and the audit entry together or not at all. **Nothing about the student changes.** They attend as normal, remain enrolled and remain on the roster. The case proceeds only through the support-record review, the hearing, the decision and the appeal window — none of which has happened (BR-2, BR-3, BR-6)."
+      },
+      "operations": [
+        {
+          "name": "expulsion.recommend",
+          "method": "POST",
+          "path": "/api/v1/expulsion-cases",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "student_id + incident_id, since one incident opens one case",
+          "purpose": "Open an expulsion case from a recorded incident.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No enrolled student matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their class and section."
+              },
+              "notes": "The student."
+            },
+            {
+              "name": "incident_id",
+              "source": "resolved",
+              "sourceRef": "$request.incident_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "incident",
+                "fromPhrase": "$request.incident_phrase",
+                "onNoMatch": "Refuse. No recorded incident matches for that student. A case is not raised from nothing (BR-1).",
+                "onAmbiguous": "Ask, naming the recorded incidents with their date and what was recorded."
+              },
+              "notes": "The recorded incident the case arises from (BR-1, E1)."
+            },
+            {
+              "name": "what_happened",
+              "source": "request",
+              "sourceRef": "$request.what_happened",
+              "required": true,
+              "type": "string",
+              "notes": "50 to 5000 characters, set out by the Coordinator (BR-1). The account the case rests on — never composed, summarised or reconstructed from the incident record."
+            },
+            {
+              "name": "sanctions_applied",
+              "source": "request",
+              "sourceRef": "$request.sanctions_applied",
+              "required": true,
+              "type": "string",
+              "notes": "What was already done under the behaviour and suspension routes (BR-1, E2). A case that does not show what was tried first is a case that has not been made."
+            },
+            {
+              "name": "why_insufficient",
+              "source": "request",
+              "sourceRef": "$request.why_insufficient",
+              "required": true,
+              "type": "string",
+              "notes": "Why those sanctions were not sufficient (BR-1). The Coordinator's judgement, not an inference from a repeat."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The case as opened.",
+            "fields": [
+              {
+                "name": "case_id",
+                "type": "string",
+                "description": "The case."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Recommended. Nothing about the student changes."
+              },
+              {
+                "name": "open_support_record",
+                "type": "boolean",
+                "description": "Whether an open special educational need or safeguarding record exists. It is reviewed before the case proceeds (BR-2, E3)."
+              },
+              {
+                "name": "previous_suspensions",
+                "type": "object[]",
+                "description": "Suspensions already on the record, which are what the case's account of prior sanctions is read against (UC-03-07 BR-11)."
+              },
+              {
+                "name": "next_step",
+                "type": "string",
+                "description": "The support-record review where one is open, then the family being informed in writing and heard (BR-2, BR-3)."
+              },
+              {
+                "name": "decider_role",
+                "type": "string",
+                "description": "The Principal. Not configurable to a lower role (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_INCIDENT",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "No incident is selected.",
+              "written": "Nothing.",
+              "notWritten": "The recommendation is not raised.",
+              "note": "The case arises from a recorded incident (BR-1)."
+            },
+            {
+              "code": "NO_PRIOR_SANCTIONS",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No prior sanctions are set out.",
+              "written": "Nothing.",
+              "notWritten": "Not raised.",
+              "note": "A case that does not show what was tried first is a case that has not been made (BR-1)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the account of what happened. It is the case against a child, set out by the Coordinator (BR-1), and it is read by the family at the hearing and by anybody reviewing the decision afterwards.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never assemble the prior sanctions from the record. What was already done and why it was not enough is the Coordinator's account (BR-1, E2) — a list a planner compiled shows what happened, not what the school judged about it.",
+          "derivedFrom": [
+            "BR-1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never create or infer the incident. The case arises from one already recorded (BR-1, E1).",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report an open support record. It is reviewed before the case proceeds (BR-2, E3), and this is the earliest point at which anybody sees that it exists.",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say plainly that nothing about the student changes. They attend as normal — the case has to pass the support review, the hearing, the decision and the appeal window before anything happens (BR-3, BR-6).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never suggest a withdrawal as a tidier route. A family withdrawing a child and a school expelling one are different records with different consequences for the child's future.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An expulsion case is never deleted (BR-11, E11). One that does not proceed ends as Not expelled, with the decision and any lesser sanction recorded against it (BR-4)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "expulsion ki sifarish karo — tanbeeh aur suspension ke baad bhi koi farq nahi para",
+            "lang": "ur-Latn",
+            "gloss": "recommend expulsion — the warnings and the suspension made no difference"
+          },
+          "context": "Coordinator, Johar Town branch, the incident recorded, the account written.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.recommend",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "incident_id": "$request.incident_phrase",
+                "what_happened": "as the Coordinator set it out",
+                "sanctions_applied": "as the Coordinator set them out",
+                "why_insufficient": "as the Coordinator judged",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Every account is the Coordinator's own (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "The case is open. Report whether the student has an open support record for review (PR-4), that the family must be informed in writing and heard before any decision, and that nothing about the child changes meanwhile (PR-5)."
+        },
+        {
+          "request": {
+            "text": "bacha bar bar wahi kar raha hai, expulsion ka case bana do",
+            "lang": "ur-Latn",
+            "gloss": "the child keeps doing the same thing, make the expulsion case"
+          },
+          "context": "Coordinator, Johar Town branch, three suspensions on the record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.recommend",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "incident_id": "$request.incident_phrase",
+                "what_happened": "$request.what_happened — absent",
+                "sanctions_applied": "$request.sanctions_applied — absent",
+                "why_insufficient": "$request.why_insufficient — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The three accounts are the Coordinator's to write (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Nothing is opened. The three suspensions are on the record and can be listed, but the case has to say what happened, what was already tried and why it was not enough — a case assembled from a history is a summary, and the family will be answering it at a hearing."
+        },
+        {
+          "request": {
+            "text": "case bana kar faisla bhi kar do, bohat ho gaya",
+            "lang": "ur-Latn",
+            "gloss": "open the case and make the decision too, enough is enough"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.recommend",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "incident_id": "$request.incident_phrase",
+                "what_happened": "$request.what_happened",
+                "sanctions_applied": "$request.sanctions_applied",
+                "why_insufficient": "$request.why_insufficient",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The case only. No decision is chained (PR-5)."
+            }
+          ],
+          "outcome": "The case is open. Report the steps that have to come first — any open support record reviewed, the family informed in writing and heard with their response recorded — and that a decision recorded before the family has been heard is refused. The hearing is not a formality in this design; it is what the decision rests on."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-08-PC-2",
+      "intent": {
+        "name": "expulsion.hearing.record",
+        "summary": "Record that the family was informed in writing and heard, and what they said. One step, and no decision can be taken without it.",
+        "routesHere": [
+          "record the hearing — we met the parents on Tuesday, here is their response",
+          {
+            "text": "walidain ko tehreeri ittila di thi, mulaqat ho gayi hai, jawab darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "the parents were informed in writing, the meeting happened, record their response"
+          },
+          {
+            "text": "hearing ka record daal do",
+            "lang": "ur-Latn",
+            "gloss": "record the hearing"
+          },
+          {
+            "text": "family ne jo kaha wo likh do",
+            "lang": "ur-Latn",
+            "gloss": "write down what the family said"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "faisla darj kar do",
+              "lang": "ur-Latn",
+              "gloss": "record the decision"
+            },
+            "goesTo": "expulsion.decision.record — UC-03-08-PC-3",
+            "note": "A decision recorded before the family has been heard is refused. This step is not optional (BR-3, E4)."
+          },
+          {
+            "request": {
+              "text": "family nahi aayi, aage barho",
+              "lang": "ur-Latn",
+              "gloss": "the family did not come, proceed"
+            },
+            "goesTo": "Not offered.",
+            "note": "The case cannot proceed without the family being informed and heard (BR-3, E4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "expulsion.hearing.record",
+            "inputs": {
+              "case_id": "$request.case_phrase",
+              "informed_on": "$request.informed_on",
+              "hearing_date": "$request.hearing_date",
+              "who_attended": "$request.who_attended",
+              "family_response": "$request.family_response",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The guardian is informed of the case in writing and is heard; the meeting, who attended and the family's response are recorded (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. A hearing recorded with no account of the family's response is not recorded at all.",
+        "atomicity": "One write: the written notice, the meeting, who attended and the family's response together or not at all. This is the step the whole case rests on — a decision recorded before it is refused (E4), and what the family said is recorded in their terms rather than summarised away (BR-3)."
+      },
+      "operations": [
+        {
+          "name": "expulsion.hearing.record",
+          "method": "POST",
+          "path": "/api/v1/expulsion-cases/{case_id}/hearing",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "case_id, since a case carries one hearing record",
+          "purpose": "Record the written notice, the hearing and the family's response.",
+          "parameters": [
+            {
+              "name": "case_id",
+              "source": "resolved",
+              "sourceRef": "$request.case_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "expulsion_case",
+                "fromPhrase": "$request.case_phrase",
+                "onNoMatch": "Refuse. No expulsion case matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the incident and where the case has reached."
+              },
+              "notes": "The expulsion case, resolved from the student and its state."
+            },
+            {
+              "name": "informed_on",
+              "source": "request",
+              "sourceRef": "$request.informed_on",
+              "required": true,
+              "type": "date",
+              "notes": "When the family was informed of the case in writing. The case cannot proceed without it (BR-3)."
+            },
+            {
+              "name": "hearing_date",
+              "source": "request",
+              "sourceRef": "$request.hearing_date",
+              "required": true,
+              "type": "date",
+              "notes": "When the family was heard. Not optional (BR-3)."
+            },
+            {
+              "name": "who_attended",
+              "source": "request",
+              "sourceRef": "$request.who_attended",
+              "required": true,
+              "type": "string",
+              "notes": "Who was present at the hearing (BR-3)."
+            },
+            {
+              "name": "family_response",
+              "source": "request",
+              "sourceRef": "$request.family_response",
+              "required": true,
+              "type": "string",
+              "notes": "What the family said, recorded in their terms and not summarised away (BR-3, E5). Their own account — a response a planner paraphrased is the school deciding what a family's answer amounted to."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The hearing as recorded.",
+            "fields": [
+              {
+                "name": "case_id",
+                "type": "string",
+                "description": "The case."
+              },
+              {
+                "name": "informed_on",
+                "type": "date",
+                "description": "When the family was informed in writing."
+              },
+              {
+                "name": "hearing_date",
+                "type": "date",
+                "description": "When they were heard."
+              },
+              {
+                "name": "who_attended",
+                "type": "string",
+                "description": "Who was present (BR-3)."
+              },
+              {
+                "name": "family_response",
+                "type": "string",
+                "description": "As recorded, in their terms (BR-3)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Family heard. The Principal may now decide (BR-4)."
+              },
+              {
+                "name": "support_record_reviewed",
+                "type": "boolean",
+                "description": "Whether the open support record was reviewed before this (BR-2, E3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RESPONSE_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The hearing was recorded with no account of the family's response.",
+              "written": "Nothing.",
+              "notWritten": "Not recorded.",
+              "note": "What they said is the point of hearing them (BR-3)."
+            },
+            {
+              "code": "SUPPORT_RECORD_NOT_REVIEWED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The student has an open support record and it has not been reviewed.",
+              "written": "Nothing.",
+              "notWritten": "The case cannot proceed.",
+              "note": "It is reviewed before the case proceeds (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the family's response. It is recorded in their terms and not summarised away (BR-3, E5) — a paraphrase is the school deciding what a family's answer amounted to, in a record that justifies expelling their child.",
+          "derivedFrom": [
+            "BR-3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never record a hearing that did not happen. The dates, who attended and the response are facts about a meeting, and this record is what makes the decision defensible.",
+          "derivedFrom": [
+            "BR-3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never proceed past a missing hearing. A decision recorded before the family has been heard is refused, and this step is not optional (BR-3, E4).",
+          "derivedFrom": [
+            "BR-3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report whether the family was offered the chance to bring somebody. Whether they must be is not decided anywhere in this use case, and who attended is recorded either way (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A hearing record is not withdrawn. It states what happened at a meeting on a date."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "walidain ko 4 tareekh ko tehreeri ittila di thi, 9 ko mulaqat hui — jawab ye hai",
+            "lang": "ur-Latn",
+            "gloss": "the parents were informed in writing on the 4th, the meeting was on the 9th — this is their response"
+          },
+          "context": "Principal, Johar Town branch, support record reviewed.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.hearing.record",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "informed_on": "2026-09-04",
+                "hearing_date": "2026-09-09",
+                "who_attended": "as stated",
+                "family_response": "as the family put it, verbatim",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The response is recorded in the family's own terms (PR-1)."
+            }
+          ],
+          "outcome": "Recorded. The Principal may now decide. Report who attended, and note that whether the family had to be offered the chance to bring somebody with them is not settled anywhere in this use case (PR-4)."
+        },
+        {
+          "request": {
+            "text": "mulaqat ho gayi thi, family ne apni baat rakhi — mukhtasar likh do",
+            "lang": "ur-Latn",
+            "gloss": "the meeting took place, the family made their case — write it up briefly"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.hearing.record",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "informed_on": "$request.informed_on",
+                "hearing_date": "$request.hearing_date",
+                "who_attended": "$request.who_attended",
+                "family_response": "$request.family_response — to be summarised",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted with a summary. The response is recorded in the family's terms (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Ask for what the family actually said — the whole point of the hearing is that their account is on the case in their words, and a summary written for them is the school characterising the defence against its own decision."
+        },
+        {
+          "request": {
+            "text": "family do baar nahi aayi, hearing ka record chhorh kar faisla kar do",
+            "lang": "ur-Latn",
+            "gloss": "the family did not come twice, skip the hearing record and decide"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.hearing.record",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "informed_on": "$request.informed_on",
+                "hearing_date": "$request.hearing_date",
+                "who_attended": "$request.who_attended",
+                "family_response": "$request.family_response",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No decision is planned. The step is not optional (PR-3)."
+            }
+          ],
+          "outcome": "Report that the case cannot proceed to a decision without the hearing being recorded — and that where the family did not attend, that is itself what the record should say, with the dates they were informed and the meetings offered. Nothing here lets the step be skipped."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-08-PC-3",
+      "intent": {
+        "name": "expulsion.decision.record",
+        "summary": "Record the Principal's decision and its reasons. Principal only, one step, and an appeal window runs before it takes effect.",
+        "routesHere": [
+          "record the decision to expel, with the reasons",
+          {
+            "text": "faisla darj kar do — expulsion, wajoohat ke sath",
+            "lang": "ur-Latn",
+            "gloss": "record the decision — expel, with the reasons"
+          },
+          {
+            "text": "expel nahi karna, is ke bajaye doosri sazaa",
+            "lang": "ur-Latn",
+            "gloss": "not to expel, a lesser sanction instead"
+          },
+          {
+            "text": "Principal ka faisla record karo",
+            "lang": "ur-Latn",
+            "gloss": "record the Principal's decision"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "faisla foran lagu kar do",
+              "lang": "ur-Latn",
+              "gloss": "put the decision into effect immediately"
+            },
+            "goesTo": "Not offered.",
+            "note": "An appeal window runs before the decision takes effect. A decision that takes effect before a family can appeal it has no appeal (BR-6, E8)."
+          },
+          {
+            "request": {
+              "text": "Coordinator faisla kar le",
+              "lang": "ur-Latn",
+              "gloss": "let the Coordinator decide"
+            },
+            "goesTo": "Not offered.",
+            "note": "The decision is the Principal's and is not configurable to a lower role (BR-5, E6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "expulsion.decision.record",
+            "inputs": {
+              "case_id": "$request.case_phrase",
+              "decision": "$request.decision",
+              "reasons": "$request.reasons",
+              "lesser_sanction": "$request.lesser_sanction",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The decision and its reasons are recorded, and where it is not to expel, any lesser sanction applied instead is recorded against the same case (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. A decision before the family has been heard, a decision by anybody below the Principal, and a decision not to expel with no lesser sanction recorded, are all refused.",
+        "atomicity": "One write: the decision, its reasons and any lesser sanction together or not at all. **It does not take effect yet.** An appeal window runs first, its length set by the school — a decision that takes effect before a family can appeal it has no appeal (BR-6). How long that window is is not stated anywhere in this use case."
+      },
+      "operations": [
+        {
+          "name": "expulsion.decision.record",
+          "method": "POST",
+          "path": "/api/v1/expulsion-cases/{case_id}/decision",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "case_id, since a case carries one decision",
+          "purpose": "Record the Principal's decision and its reasons.",
+          "parameters": [
+            {
+              "name": "case_id",
+              "source": "resolved",
+              "sourceRef": "$request.case_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "expulsion_case",
+                "fromPhrase": "$request.case_phrase",
+                "onNoMatch": "Refuse. No expulsion case matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the incident and where the case has reached."
+              },
+              "notes": "The expulsion case, resolved from the student and its state."
+            },
+            {
+              "name": "decision",
+              "source": "request",
+              "sourceRef": "$request.decision",
+              "required": true,
+              "type": "enum: Expel | Do not expel",
+              "notes": "The Principal's decision (BR-4). Theirs alone and not configurable to a lower role (BR-5)."
+            },
+            {
+              "name": "reasons",
+              "source": "request",
+              "sourceRef": "$request.reasons",
+              "required": true,
+              "type": "string",
+              "notes": "50 to 5000 characters. The reasons for the decision (BR-4). What the family reads, what an appeal answers, and what is read back long afterwards."
+            },
+            {
+              "name": "lesser_sanction",
+              "source": "request",
+              "sourceRef": "$request.lesser_sanction",
+              "required": false,
+              "type": "string",
+              "notes": "Required where the decision is not to expel (BR-4, E7). Recorded against the same case, so a case that ended in something short of expulsion still shows what was done."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision.",
+            "fields": [
+              {
+                "name": "case_id",
+                "type": "string",
+                "description": "The case."
+              },
+              {
+                "name": "decision",
+                "type": "string",
+                "description": "Expel, or Do not expel (BR-4)."
+              },
+              {
+                "name": "reasons",
+                "type": "string",
+                "description": "As recorded."
+              },
+              {
+                "name": "lesser_sanction",
+                "type": "string",
+                "description": "Where the decision is not to expel (BR-4)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Appeal open where the decision is to expel; Not expelled otherwise."
+              },
+              {
+                "name": "appeal_window_days",
+                "type": "integer",
+                "description": "Set by the school. Its length is not stated anywhere in this use case (BR-6)."
+              },
+              {
+                "name": "takes_effect_after",
+                "type": "date",
+                "description": "When the appeal window closes. Nothing happens to the student before it (BR-6, E8)."
+              },
+              {
+                "name": "decided_by",
+                "type": "string",
+                "description": "The Principal (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "FAMILY_NOT_HEARD",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The decision was recorded before the family was heard.",
+              "written": "Nothing.",
+              "notWritten": "Not recorded.",
+              "note": "This step is not optional (BR-3)."
+            },
+            {
+              "code": "NOT_PRINCIPAL",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "A Coordinator or School Admin attempted to decide.",
+              "written": "Nothing.",
+              "notWritten": "Not recorded.",
+              "note": "The decision is the Principal's and is not configurable to a lower role (BR-5)."
+            },
+            {
+              "code": "NO_LESSER_SANCTION",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "The decision is not to expel and no lesser sanction is recorded.",
+              "written": "Nothing.",
+              "notWritten": "Not recorded.",
+              "note": "A case that ended in something short of expulsion still shows what was done (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never make the decision. It is the Principal's and is not configurable to a lower role (BR-5, E6) — it ends a child's place at the school permanently.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the reasons. The family reads them, an appeal answers them, and they are read back long afterwards (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never record a decision not to expel without the lesser sanction. E7 is BR-4 working — a case that ended in something short of expulsion still has to show what was done instead.",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say plainly that it does not take effect yet. An appeal window runs first, and a decision that takes effect before a family can appeal it has no appeal (BR-6, E8).",
+          "derivedFrom": [
+            "BR-6",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report that the appeal window's length is not stated. The school sets it, and nothing in this use case says how long — nor who hears an appeal.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A decision is not withdrawn. An appeal, if made, is recorded with its outcome (BR-6), and an upheld appeal is where the decision does not take effect."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "faisla darj kar do — expulsion, wajoohat ye hain",
+            "lang": "ur-Latn",
+            "gloss": "record the decision — expel, and these are the reasons"
+          },
+          "context": "Principal, Johar Town branch, family heard and recorded.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.decision.record",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "decision": "Expel",
+                "reasons": "as the Principal set them out",
+                "lesser_sanction": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The decision and the reasons are the Principal's (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Recorded, and the appeal window opens. Report that nothing happens to the student until it closes (PR-4) — and that its length is set by the school and is not stated anywhere in this use case, nor is who hears an appeal (PR-5)."
+        },
+        {
+          "request": {
+            "text": "expel nahi kar rahe, case band kar do",
+            "lang": "ur-Latn",
+            "gloss": "we are not expelling, close the case"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.decision.record",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "decision": "Do not expel",
+                "reasons": "$request.reasons",
+                "lesser_sanction": "$request.lesser_sanction — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns NO_LESSER_SANCTION (E7)."
+            }
+          ],
+          "outcome": "Not recorded. Ask what is being done instead — a case that reached a hearing and ended in nothing is a record that says the school considered expelling a child and then did nothing, which is not what happened if a lesser sanction was applied."
+        },
+        {
+          "request": {
+            "text": "faisla ho gaya hai, kal se bacha na aaye",
+            "lang": "ur-Latn",
+            "gloss": "the decision is made, the child should not come from tomorrow"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.decision.record",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "decision": "Expel",
+                "reasons": "$request.reasons",
+                "lesser_sanction": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The decision only. Nothing closes the enrolment (PR-4)."
+            }
+          ],
+          "outcome": "Recorded. Report that the child remains enrolled and expected in school until the appeal window closes — closing the enrolment before it is refused, because a decision that takes effect before a family can appeal it has no appeal."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-08-PC-4",
+      "intent": {
+        "name": "expulsion.appeal.record",
+        "summary": "Record a family's appeal and its outcome. One step.",
+        "routesHere": [
+          "the family has appealed — record it",
+          {
+            "text": "walidain ne appeal ki hai, darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "the parents have appealed, record it"
+          },
+          {
+            "text": "appeal ka natija darj karo",
+            "lang": "ur-Latn",
+            "gloss": "record the outcome of the appeal"
+          },
+          {
+            "text": "appeal manzoor ho gayi hai",
+            "lang": "ur-Latn",
+            "gloss": "the appeal has been upheld"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "appeal ka faisla khud kar do",
+              "lang": "ur-Latn",
+              "gloss": "decide the appeal yourself"
+            },
+            "goesTo": "Not offered.",
+            "note": "Who hears an appeal — the Principal who made the decision, or somebody else — is not decided anywhere in this use case."
+          },
+          {
+            "request": {
+              "text": "appeal ka waqt khatam, naam kaat do",
+              "lang": "ur-Latn",
+              "gloss": "the appeal window is over, close the enrolment"
+            },
+            "goesTo": "expulsion.enrolment.close — UC-03-08-PC-5"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "expulsion.appeal.record",
+            "inputs": {
+              "case_id": "$request.case_phrase",
+              "appeal": "$request.appeal",
+              "outcome": "$request.outcome",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The appeal, if made, and its outcome are recorded (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the appeal and its outcome together or not at all. Where the appeal is upheld the decision does not take effect and the enrolment does not close (A3). Where it is not, the decision takes effect when the window closes. Who hears the appeal is not stated anywhere in this use case."
+      },
+      "operations": [
+        {
+          "name": "expulsion.appeal.record",
+          "method": "POST",
+          "path": "/api/v1/expulsion-cases/{case_id}/appeal",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "case_id, since a case carries one appeal",
+          "purpose": "Record the family's appeal and its outcome.",
+          "parameters": [
+            {
+              "name": "case_id",
+              "source": "resolved",
+              "sourceRef": "$request.case_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "expulsion_case",
+                "fromPhrase": "$request.case_phrase",
+                "onNoMatch": "Refuse. No expulsion case matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the incident and where the case has reached."
+              },
+              "notes": "The expulsion case, resolved from the student and its state."
+            },
+            {
+              "name": "appeal",
+              "source": "request",
+              "sourceRef": "$request.appeal",
+              "required": true,
+              "type": "string",
+              "notes": "What the family said in appeal. Their own words, as with their response at the hearing (BR-3, BR-6)."
+            },
+            {
+              "name": "outcome",
+              "source": "request",
+              "sourceRef": "$request.outcome",
+              "required": true,
+              "type": "string",
+              "notes": "The outcome of the appeal, recorded (BR-6). Whoever heard it decided this — never inferred from the decision it answers."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The appeal.",
+            "fields": [
+              {
+                "name": "case_id",
+                "type": "string",
+                "description": "The case."
+              },
+              {
+                "name": "appeal_made",
+                "type": "boolean",
+                "description": "True."
+              },
+              {
+                "name": "appeal",
+                "type": "string",
+                "description": "As recorded, in the family's terms."
+              },
+              {
+                "name": "outcome",
+                "type": "string",
+                "description": "As decided by whoever heard it (BR-6)."
+              },
+              {
+                "name": "decision_takes_effect",
+                "type": "boolean",
+                "description": "False where the appeal is upheld — the enrolment does not close (A3)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Taking effect, or Not expelled where the appeal is upheld."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_DECISION",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "No decision has been recorded on the case.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "There is nothing to appeal against yet."
+            },
+            {
+              "code": "WINDOW_CLOSED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The appeal window has closed and the decision has taken effect.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the appeal. It is the family's answer to a decision to remove their child, and it belongs on the record in their words.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never decide the outcome. Whoever heard the appeal decided it — and who that is, the Principal who made the decision or somebody else, is not stated anywhere in this use case.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report what an upheld appeal means. The decision does not take effect and the enrolment does not close (A3) — the case ends without the child leaving.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never treat no appeal as an appeal. Where the family did not appeal, nothing is recorded here and the decision simply takes effect when the window closes (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An appeal record is not withdrawn. It states what the family said and what was decided about it."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "walidain ne appeal ki hai — ye un ki baat hai, appeal manzoor ho gayi",
+            "lang": "ur-Latn",
+            "gloss": "the parents have appealed — this is what they said, and the appeal was upheld"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.appeal.record",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "appeal": "in the family's own words",
+                "outcome": "Upheld, as decided",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Both the appeal and its outcome are recorded as given (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Recorded. The decision does not take effect and the enrolment does not close (PR-3) — the case ends with the student still enrolled and the whole record readable."
+        },
+        {
+          "request": {
+            "text": "family ne appeal ki hai, tum faisla likh do",
+            "lang": "ur-Latn",
+            "gloss": "the family has appealed, you decide the outcome"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.appeal.record",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "appeal": "$request.appeal",
+                "outcome": "$request.outcome — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The outcome is decided by whoever heard the appeal (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that who hears an appeal — the Principal who made the decision, or somebody else — is not settled anywhere in this use case, which is worth deciding before this one is heard rather than after."
+        },
+        {
+          "request": {
+            "text": "appeal nahi hui, appeal ka record khali daal do",
+            "lang": "ur-Latn",
+            "gloss": "there was no appeal, put in an empty appeal record"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.appeal.record",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "appeal": "$request.appeal",
+                "outcome": "$request.outcome",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. No appeal means nothing is recorded here (PR-4)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that where the family did not appeal, the decision simply takes effect when the window closes — an empty appeal record would say a family answered when they did not."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-08-PC-5",
+      "intent": {
+        "name": "expulsion.enrolment.close",
+        "summary": "Close the enrolment once the decision takes effect. School Admin, one step, and it cannot run before the appeal window has.",
+        "routesHere": [
+          "the appeal window has closed — close the enrolment",
+          {
+            "text": "appeal ka waqt guzar gaya, naam kaat do",
+            "lang": "ur-Latn",
+            "gloss": "the appeal window has passed, close the enrolment"
+          },
+          {
+            "text": "faisla lagu ho gaya hai, enrolment band kar do",
+            "lang": "ur-Latn",
+            "gloss": "the decision has taken effect, close the enrolment"
+          },
+          {
+            "text": "leaving date set kar do",
+            "lang": "ur-Latn",
+            "gloss": "set the leaving date"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "hisab kitab karo",
+              "lang": "ur-Latn",
+              "gloss": "settle the fees"
+            },
+            "goesTo": "expulsion.clearance.settle — UC-03-08-PC-6"
+          },
+          {
+            "request": {
+              "text": "certificates jari kar do",
+              "lang": "ur-Latn",
+              "gloss": "issue the certificates"
+            },
+            "goesTo": "expulsion.certificates.decide — UC-03-08-PC-7",
+            "note": "Which certificates are issued is decided explicitly by the Principal rather than following automatically (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "expulsion.enrolment.close",
+            "inputs": {
+              "case_id": "$request.case_phrase",
+              "leaving_date": "$request.leaving_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches the roster, the attendance and the invoicing. The student is removed from the section roster so class counts and teacher lists are correct, attendance stops being expected, alerts stop, and no further invoice is raised (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. Closing before the appeal window has run is refused.",
+        "atomicity": "One write, atomic in itself: the leaving date, the removal from the roster and the record set to Expelled together or not at all. The record is deactivated and never deleted, since results, the fee ledger, ledger entries and audit trails reference it (BR-11). It is **flagged**, so that any future admission attempt surfaces it rather than the school re-admitting the student unknowingly (BR-12) — whether that bars re-admission outright or only surfaces at the attempt is not decided."
+      },
+      "operations": [
+        {
+          "name": "expulsion.enrolment.close",
+          "method": "POST",
+          "path": "/api/v1/expulsion-cases/{case_id}/close-enrolment",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "case_id, since an enrolment closes once",
+          "purpose": "Close the enrolment on the leaving date.",
+          "parameters": [
+            {
+              "name": "case_id",
+              "source": "resolved",
+              "sourceRef": "$request.case_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "expulsion_case",
+                "fromPhrase": "$request.case_phrase",
+                "onNoMatch": "Refuse. No expulsion case matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the incident and where the case has reached."
+              },
+              "notes": "The expulsion case, resolved from the student and its state."
+            },
+            {
+              "name": "leaving_date",
+              "source": "request",
+              "sourceRef": "$request.leaving_date",
+              "required": true,
+              "type": "date",
+              "notes": "Set when the decision takes effect (BR-7). The day the enrolment closes and the student comes off the roster."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The closure.",
+            "fields": [
+              {
+                "name": "case_id",
+                "type": "string",
+                "description": "The case."
+              },
+              {
+                "name": "leaving_date",
+                "type": "date",
+                "description": "When the enrolment closes (BR-7)."
+              },
+              {
+                "name": "removed_from_roster",
+                "type": "boolean",
+                "description": "So class counts and teacher lists are correct (BR-7)."
+              },
+              {
+                "name": "record_state",
+                "type": "string",
+                "description": "Expelled and deactivated. Never deleted (BR-11)."
+              },
+              {
+                "name": "flagged",
+                "type": "boolean",
+                "description": "True. A future admission attempt surfaces it rather than the school re-admitting the student unknowingly (BR-12)."
+              },
+              {
+                "name": "clearance_outstanding",
+                "type": "object[]",
+                "description": "Fees, credit, deposit and property still to settle (BR-8)."
+              },
+              {
+                "name": "certificates_decided",
+                "type": "boolean",
+                "description": "False until the Principal decides which are issued. The case cannot close without it (BR-10, E10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "APPEAL_WINDOW_OPEN",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The appeal window has not run.",
+              "written": "Nothing.",
+              "notWritten": "The enrolment does not close.",
+              "note": "A decision that takes effect before a family can appeal it has no appeal (BR-6)."
+            },
+            {
+              "code": "NOT_EXPELLED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The decision was not to expel.",
+              "written": "Nothing.",
+              "notWritten": "Nothing closed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never close before the appeal window has run. E8 is BR-6 working — closing early makes the appeal meaningless whatever the family then says.",
+          "derivedFrom": [
+            "BR-6",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report exactly what closes and when. Off the roster, attendance no longer expected, alerts stopped, no further invoice (BR-7) — several teams see the effect and none of them is in this conversation.",
+          "derivedFrom": [
+            "BR-7",
+            "E12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the record is flagged. A future admission attempt surfaces it rather than the school re-admitting the student unknowingly (BR-12) — whether that bars re-admission outright or only surfaces at the attempt is not decided.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never describe the record as deleted. It is set to Expelled and deactivated, because results, the fee ledger, ledger entries and audit trails reference it (BR-11, E11).",
+          "derivedFrom": [
+            "BR-11",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the clearance still outstanding and that the certificates are undecided. The case cannot close without the Principal deciding which are issued (BR-10, E10).",
+          "derivedFrom": [
+            "BR-8",
+            "BR-10",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A closed enrolment is not reopened here. A student returning is a fresh admission, and the flagged record surfaces at the attempt (BR-12, A6)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "appeal ka waqt guzar gaya, naam kaat do",
+            "lang": "ur-Latn",
+            "gloss": "the appeal window has passed, close the enrolment"
+          },
+          "context": "School Admin, Johar Town branch, no appeal made.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.enrolment.close",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "leaving_date": "$request.leaving_date",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Closed. Report what stops on the leaving date (PR-2), that the record is flagged for any future admission attempt (PR-3), and what is still outstanding on clearance and certificates (PR-5) — the case does not close until the Principal decides which certificates are issued."
+        },
+        {
+          "request": {
+            "text": "faisla ho gaya hai, aaj hi naam kaat do",
+            "lang": "ur-Latn",
+            "gloss": "the decision is made, close the enrolment today"
+          },
+          "context": "School Admin, Johar Town branch, appeal window still open.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.enrolment.close",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "leaving_date": "today's date",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns APPEAL_WINDOW_OPEN (E8)."
+            }
+          ],
+          "outcome": "The enrolment does not close. Report that the appeal window is still running — closing now would make the appeal meaningless whatever the family said in it, which is precisely what the window exists to prevent."
+        },
+        {
+          "request": {
+            "text": "naam kaat kar record bhi mita do",
+            "lang": "ur-Latn",
+            "gloss": "close the enrolment and delete the record too"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.enrolment.close",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "leaving_date": "$request.leaving_date",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The closure only. Nothing is deleted (PR-4)."
+            }
+          ],
+          "outcome": "Closed. Report that the record is set to Expelled and deactivated rather than deleted — results, the fee ledger and the audit trail all reference it, and it is flagged so a future admission attempt surfaces what happened rather than the school taking the student back unknowingly."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-08-PC-6",
+      "intent": {
+        "name": "expulsion.clearance.settle",
+        "summary": "Settle the fee position on an expulsion: refund the credit and deposit, and record the property returned. Accounts, one step.",
+        "routesHere": [
+          "settle the clearance — refund the deposit and the credit",
+          {
+            "text": "hisab saaf karo, deposit aur credit wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "settle the account, refund the deposit and the credit"
+          },
+          {
+            "text": "school ki cheezein wapas darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "record the school property returned"
+          },
+          {
+            "text": "expulsion ka clearance kar do",
+            "lang": "ur-Latn",
+            "gloss": "complete the expulsion clearance"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "baqaya maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "write off the balance"
+            },
+            "goesTo": "fee write-off — module 4",
+            "note": "Any outstanding balance is chased or written off under the write-off use case by the approver named there, and is not approved within this one. An expulsion must not become a route around that control (BR-9, E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "expulsion.clearance.settle",
+            "inputs": {
+              "case_id": "$request.case_phrase",
+              "items": "$request.items",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Any unused credit and any security deposit held are refunded, and school property is returned — the ID card, library books and any equipment issued (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. A write-off attempted from within the case is refused.",
+        "atomicity": "One write, atomic in itself: the fee position, the credit refund, the deposit refund and the property record together or not at all. Any outstanding balance is chased or written off elsewhere, by the approver named in the write-off use case (BR-9) — the family is leaving on the school's decision, which does not change what they are owed or what they owe."
+      },
+      "operations": [
+        {
+          "name": "expulsion.clearance.settle",
+          "method": "POST",
+          "path": "/api/v1/expulsion-cases/{case_id}/clearance",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "case_id, since a case is cleared once and a repeat must not refund twice",
+          "purpose": "Settle fees, refund credit and deposit, and record property returned.",
+          "parameters": [
+            {
+              "name": "case_id",
+              "source": "resolved",
+              "sourceRef": "$request.case_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "expulsion_case",
+                "fromPhrase": "$request.case_phrase",
+                "onNoMatch": "Refuse. No expulsion case matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the incident and where the case has reached."
+              },
+              "notes": "The expulsion case, resolved from the student and its state."
+            },
+            {
+              "name": "items",
+              "source": "request",
+              "sourceRef": "$request.items",
+              "required": false,
+              "type": "object[]",
+              "notes": "Per item of school property: which, and whether it has been returned (BR-8). Only what the actor confirmed came back."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The clearance.",
+            "fields": [
+              {
+                "name": "case_id",
+                "type": "string",
+                "description": "The case."
+              },
+              {
+                "name": "fee_position",
+                "type": "money",
+                "description": "What is owed, or the credit held (BR-8)."
+              },
+              {
+                "name": "credit_refunded",
+                "type": "money",
+                "description": "Any unused credit, refunded (BR-8)."
+              },
+              {
+                "name": "deposit_refunded",
+                "type": "money",
+                "description": "Any security deposit held (BR-8)."
+              },
+              {
+                "name": "property_returned",
+                "type": "object[]",
+                "description": "Recorded as back."
+              },
+              {
+                "name": "property_outstanding",
+                "type": "object[]",
+                "description": "Still out."
+              },
+              {
+                "name": "balance_outstanding",
+                "type": "money",
+                "description": "Chased or written off under the write-off use case, and not approved here (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WRITE_OFF_ATTEMPTED",
+              "mapsTo": "E9",
+              "httpStatus": 403,
+              "meaning": "A write-off was attempted from within the case.",
+              "written": "Nothing.",
+              "notWritten": "Nothing written off.",
+              "note": "An expulsion must not become a route around that control (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write off a balance here. E9 is BR-9 working — an expulsion must not become a route around the write-off approval, exactly as a withdrawal must not (UC-03-06 BR-6).",
+          "derivedFrom": [
+            "BR-9",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the credit and the deposit refunded. The family is leaving on the school's decision, which does not change what they are owed.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never mark property returned that the actor did not confirm. This says the school has it back.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report any balance still outstanding as going to the write-off route or to collection. It does not lapse because the student was expelled.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A settled clearance is not reversed — the refunds have been made. A figure found wrong afterwards is corrected as its own record."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "hisab saaf karo — deposit aur bacha hua credit wapas kar do, ID card wapas mil gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "settle the account — refund the deposit and remaining credit, the ID card is back"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.clearance.settle",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "items": "ID card returned, as confirmed",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the confirmed item is marked returned (PR-3)."
+            }
+          ],
+          "outcome": "Settled. Report the credit and deposit refunded (PR-2) and any property still out — the family is leaving on the school's decision, and what they are owed is unaffected by it."
+        },
+        {
+          "request": {
+            "text": "baqaya 22,000 hai, expulsion hai to maaf kar do",
+            "lang": "ur-Latn",
+            "gloss": "there is 22,000 outstanding, they are expelled so write it off"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.clearance.settle",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "items": "$request.items",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The clearance is emitted; nothing is written off (PR-1)."
+            }
+          ],
+          "outcome": "Settled, with 22,000 still outstanding. Report that it is chased or written off under the write-off use case by the approver named there — an expulsion is not a reason to clear a balance without that approval, which is what BR-9 exists to say."
+        },
+        {
+          "request": {
+            "text": "family ja chuki hai, deposit chhorh do",
+            "lang": "ur-Latn",
+            "gloss": "the family has gone, keep the deposit"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.clearance.settle",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "items": "$request.items",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The clearance refunds the deposit as the rule requires (PR-2)."
+            }
+          ],
+          "outcome": "Report that the deposit and any unused credit are refunded as part of clearance — the school's decision to expel does not change what is the family's money, and keeping it would need a decision nobody has taken and nothing here records."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-08-PC-7",
+      "intent": {
+        "name": "expulsion.certificates.decide",
+        "summary": "Decide explicitly which certificates are issued. Principal, one step, and the case cannot close without it.",
+        "routesHere": [
+          "issue the leaving certificate and the transcript, withhold the character certificate",
+          {
+            "text": "leaving certificate aur transcript jari karo",
+            "lang": "ur-Latn",
+            "gloss": "issue the leaving certificate and the transcript"
+          },
+          {
+            "text": "character certificate nahi dena",
+            "lang": "ur-Latn",
+            "gloss": "the character certificate is not to be given"
+          },
+          {
+            "text": "kaun se certificates jari honge, tay kar do",
+            "lang": "ur-Latn",
+            "gloss": "decide which certificates are issued"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "jo normal hota hai wahi jari kar do",
+              "lang": "ur-Latn",
+              "gloss": "issue whatever is normally issued"
+            },
+            "goesTo": "Not offered.",
+            "note": "Which certificates are issued is decided explicitly by the Principal and recorded, rather than following automatically (BR-10)."
+          },
+          {
+            "request": {
+              "text": "hisab kitab karo",
+              "lang": "ur-Latn",
+              "gloss": "settle the clearance"
+            },
+            "goesTo": "expulsion.clearance.settle — UC-03-08-PC-6"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "expulsion.certificates.decide",
+            "inputs": {
+              "case_id": "$request.case_phrase",
+              "certificate_types": "$request.certificate_types",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It is decided explicitly and recorded rather than following automatically, because the school leaving certificate is effectively required for the child to enrol anywhere else (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. The case cannot close until this is decided.",
+        "atomicity": "One write: the decision and the certificate requests together or not at all. Only the certificates the Principal explicitly decided to issue are raised (BR-10). Withholding the school leaving certificate is not an administrative detail — it is effectively required for the child to enrol anywhere else, so a child without one may not be able to go to another school at all."
+      },
+      "operations": [
+        {
+          "name": "expulsion.certificates.decide",
+          "method": "POST",
+          "path": "/api/v1/expulsion-cases/{case_id}/certificates",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "case_id, since a case carries one certificate decision",
+          "purpose": "Record which certificates the Principal has decided to issue.",
+          "parameters": [
+            {
+              "name": "case_id",
+              "source": "resolved",
+              "sourceRef": "$request.case_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "expulsion_case",
+                "fromPhrase": "$request.case_phrase",
+                "onNoMatch": "Refuse. No expulsion case matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the incident and where the case has reached."
+              },
+              "notes": "The expulsion case, resolved from the student and its state."
+            },
+            {
+              "name": "certificate_types",
+              "source": "request",
+              "sourceRef": "$request.certificate_types",
+              "required": true,
+              "type": "string[]",
+              "notes": "Which certificates are issued, decided explicitly by the Principal (BR-10, E10). The complete list — anything not named is withheld, and one of them decides whether the child can enrol anywhere else."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision.",
+            "fields": [
+              {
+                "name": "case_id",
+                "type": "string",
+                "description": "The case."
+              },
+              {
+                "name": "certificates_issued",
+                "type": "string[]",
+                "description": "Raised as certificate requests (BR-10)."
+              },
+              {
+                "name": "certificates_withheld",
+                "type": "string[]",
+                "description": "Not issued. Anything not named is withheld."
+              },
+              {
+                "name": "leaving_certificate_issued",
+                "type": "boolean",
+                "description": "Whether the school leaving certificate is among them. It is effectively required for the child to enrol anywhere else (BR-10)."
+              },
+              {
+                "name": "decided_by",
+                "type": "string",
+                "description": "The Principal (BR-10)."
+              },
+              {
+                "name": "case_closable",
+                "type": "boolean",
+                "description": "True once the certificates are decided (E10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_DECIDED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The certificates have not been decided.",
+              "written": "Nothing.",
+              "notWritten": "The case cannot close (BR-10)."
+            },
+            {
+              "code": "NOT_PRINCIPAL",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "Somebody other than the Principal attempted to decide.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "It is decided explicitly by the Principal (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never decide which certificates are issued. The Principal decides explicitly and it is recorded rather than following automatically (BR-10) — a default applied by a plan is the school withholding or issuing a document nobody chose.",
+          "derivedFrom": [
+            "BR-10",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say plainly what withholding the leaving certificate means. It is effectively required for the child to enrol anywhere else (BR-10) — a child without one may not be able to go to another school at all, and that consequence should be stated before the decision, not discovered after.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report exactly what is withheld. The list is complete: anything not named is not issued, and a certificate silently left off is one the family will never be given.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never issue a certificate the Principal did not name in order to be helpful. Each is a document about a child's conduct and record, issued by the school in its own name.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A certificate decision is recorded again rather than withdrawn. A certificate already issued has reached the family."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "leaving certificate aur transcript jari karo, character certificate nahi",
+            "lang": "ur-Latn",
+            "gloss": "issue the leaving certificate and the transcript, not the character certificate"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.certificates.decide",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "certificate_types": "the school leaving certificate and the transcript, as named",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The complete list is the Principal's (PR-1)."
+            }
+          ],
+          "outcome": "Recorded, and those two are raised as requests. Report the character certificate as withheld (PR-3), and that the leaving certificate is issued — which is what lets the child enrol elsewhere."
+        },
+        {
+          "request": {
+            "text": "expulsion hai, koi certificate nahi dena",
+            "lang": "ur-Latn",
+            "gloss": "it is an expulsion, no certificates at all"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.certificates.decide",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "certificate_types": "an empty list, as stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Recorded as the Principal decided (PR-1)."
+            }
+          ],
+          "outcome": "Report before recording it what withholding the school leaving certificate means (PR-2): it is effectively required for the child to enrol anywhere else, so the practical effect is a child who may not be able to attend another school. It is the Principal's decision to take — and it should be taken knowing that, rather than as part of a general refusal."
+        },
+        {
+          "request": {
+            "text": "jo hamesha jari hote hain wahi kar do",
+            "lang": "ur-Latn",
+            "gloss": "issue the usual ones"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "expulsion.certificates.decide",
+              "inputs": {
+                "case_id": "$request.case_phrase",
+                "certificate_types": "$request.certificate_types — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. There is no default, and it is the Principal's decision (PR-1, PR-4)."
+            }
+          ],
+          "outcome": "Nothing is recorded and the case cannot close. Report that the Principal names each certificate explicitly — the rule exists precisely so that issuing or withholding one is a decision somebody took rather than a default that followed from the case type."
+        }
+      ]
+    }
+  ]
+}

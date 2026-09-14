@@ -1,0 +1,445 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-05-09",
+    "name": "Tell parents their child was absent, when a person decides to send it",
+    "module": "Attendance",
+    "file": "../UseCases/UC-05-09.json",
+    "featureRef": "5.9 Sending absence alerts to parents"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-05-09-PC-1",
+      "intent": {
+        "name": "attendance.alert.send",
+        "summary": "Tell parents their child was absent, at the scope the sender chooses, once attendance is done. One step, and it changes no mark.",
+        "routesHere": [
+          "send absence alerts for Grade 4 section B today",
+          {
+            "text": "jo bachay aaj ghair hazir hain, unke walidain ko bata do",
+            "lang": "ur-Latn",
+            "gloss": "tell the parents of the children absent today"
+          },
+          {
+            "text": "is ek bache ke walidain ko message kar do",
+            "lang": "ur-Latn",
+            "gloss": "message this one child's parents"
+          },
+          {
+            "text": "poore school ke absentees ko alert bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send alerts for the whole school's absentees"
+          },
+          {
+            "text": "4-B ke ghair hazir bachon ka alert bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send the alert for 4-B's absent children"
+          },
+          "alert the parents of everyone absent in 6-A"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark the attendance"
+            },
+            "goesTo": "attendance.daily.mark — UC-05-01-PC-1",
+            "note": "Attendance is completed first; the alert reports the marks and does not set them (BR-11)."
+          },
+          {
+            "request": {
+              "text": "mark theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the mark"
+            },
+            "goesTo": "attendance.daily.correct — UC-05-01-PC-2",
+            "note": "An alert changes no attendance. It reports a mark; it does not set one (BR-11)."
+          },
+          {
+            "request": {
+              "text": "chhutti wale bachon ko bhi bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send it to the children on leave as well"
+            },
+            "goesTo": "Not offered.",
+            "note": "Students on approved leave are excluded and cannot be re-added by selecting all. A family who told the school in advance must not be told their child is missing (BR-6)."
+          },
+          {
+            "request": {
+              "text": "fees ka reminder bhejo",
+              "lang": "ur-Latn",
+              "gloss": "send a fee reminder"
+            },
+            "goesTo": "fee.reminder.send — UC-04-07",
+            "note": "A different route, a different template and a different sender."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "attendance.alert.send",
+            "inputs": {
+              "scope": "$request.scope",
+              "date": "$request.date",
+              "channel": "$request.channel",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Each guardian's message is built from their own child's record alone — a message assembled from a list is a message that ends up naming somebody else's child (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. Attendance not yet marked, no absences in the scope, missing contacts, no balance, an already-alerted family and a Staff user attempting a school-wide send are all enforced by the API and arrive as errors or as flagged outcomes.",
+        "atomicity": "One write per recipient, and the batch does not stop at the first failure — valid recipients are sent and failures are listed with the reason, so a parent who was not reached is identifiable rather than lost (BR-10). Every send is logged against the student with its date, channel and delivery status (BR-7). Delivery status starts at Queued and is never reported optimistically (BR-8). **No attendance mark changes** — an alert reports a mark; it does not set one (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "attendance.alert.send",
+          "method": "POST",
+          "path": "/api/v1/attendance/alerts",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "scope + the scope id + date + channel, so a repeat does not message the same families twice and inflate the already-alerted history BR-9 reads",
+          "purpose": "Send absence alerts for a scope and date, each built from the child's own record, and log every send.",
+          "parameters": [
+            {
+              "name": "scope",
+              "source": "request",
+              "sourceRef": "$request.scope",
+              "required": true,
+              "type": "enum: School-wide | Class | Section | Student",
+              "notes": "What the send covers (BR-2). A single child arriving late does not need the whole school's parents messaged. A school-wide send needs the School Admin (E8)."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No active class of that name.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the scope is Class."
+            },
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No such active section.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the scope is Section."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student matches in scope.",
+                "onAmbiguous": "Ask, naming the candidates with class and section."
+              },
+              "notes": "Required where the scope is Student."
+            },
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": true,
+              "type": "date",
+              "notes": "The attendance date the alerts are for. Only where the request states it."
+            },
+            {
+              "name": "channel",
+              "source": "request",
+              "sourceRef": "$request.channel",
+              "required": true,
+              "type": "enum: WhatsApp | SMS",
+              "notes": "Only channels the guardian holds a contact for are offered."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "A per-recipient result.",
+            "fields": [
+              {
+                "name": "sent",
+                "type": "object[]",
+                "description": "student_id, guardian, delivery_status. Queued until the provider says otherwise (BR-8)."
+              },
+              {
+                "name": "failed",
+                "type": "object[]",
+                "description": "student_id and the reason, so a parent who was not reached is identifiable (BR-10)."
+              },
+              {
+                "name": "absent_count",
+                "type": "integer",
+                "description": "How many students were actually marked absent. Only they are messaged (BR-5)."
+              },
+              {
+                "name": "excluded_on_leave",
+                "type": "object[]",
+                "description": "Students on approved leave, excluded and not re-addable (BR-6)."
+              },
+              {
+                "name": "no_contact",
+                "type": "object[]",
+                "description": "Guardians holding no contact for the channel (E3)."
+              },
+              {
+                "name": "already_alerted",
+                "type": "object[]",
+                "description": "Families alerted for the same date, flagged so one family is not messaged three times because three people pressed the button (BR-9)."
+              },
+              {
+                "name": "detail_basis",
+                "type": "string",
+                "description": "Per day it reads as absent today; per lecture it names the subjects missed (BR-4)."
+              },
+              {
+                "name": "marks_changed",
+                "type": "integer",
+                "description": "Always zero. An alert reports a mark; it does not set one (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ATTENDANCE_NOT_MARKED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "Attendance has not been marked for the scope.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "The message names the class. The alert reports marks, so there have to be marks."
+            },
+            {
+              "code": "NO_ABSENCES",
+              "mapsTo": "E2",
+              "httpStatus": 200,
+              "meaning": "No student in the scope is absent.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "treatedAsSuccess": true,
+              "note": "Message: \"No absences in this class today.\" An answer, not a failure — and a good one."
+            },
+            {
+              "code": "NO_CONTACT",
+              "mapsTo": "E3",
+              "httpStatus": 200,
+              "meaning": "Some guardians hold no contact for the chosen channel.",
+              "written": "Nothing for those.",
+              "notWritten": "No alert to them.",
+              "treatedAsSuccess": true,
+              "note": "Listed and skipped."
+            },
+            {
+              "code": "NO_BALANCE",
+              "mapsTo": "E4",
+              "httpStatus": 402,
+              "meaning": "There is no messaging balance for the channel.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "Never fall back to the other channel — the guardian may hold no contact for it."
+            },
+            {
+              "code": "ALREADY_ALERTED",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "Some guardians were already alerted for the same date.",
+              "written": "Nothing for those unless the sender confirms.",
+              "notWritten": "No duplicate alert.",
+              "treatedAsSuccess": true,
+              "note": "Flagged so one family is not messaged three times because three people pressed the button (BR-9)."
+            },
+            {
+              "code": "PROVIDER_UNREACHABLE",
+              "mapsTo": "E6",
+              "httpStatus": 503,
+              "meaning": "The provider cannot be reached.",
+              "written": "The alerts are queued.",
+              "notWritten": "Not delivered.",
+              "treatedAsSuccess": true,
+              "note": "Report them as queued, never as sent (BR-8)."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "A Teacher attempted to send alerts.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "Only Staff or the School Admin send absence alerts."
+            },
+            {
+              "code": "SCHOOL_WIDE_NEEDS_ADMIN",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "Staff attempted a school-wide send.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "A school-wide send needs the School Admin (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report who the send resolves to and how many before the plan is emitted. An alert cannot be unsent, and it tells a parent their child is missing — the count is what the sender is actually approving.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never send automatically after marking. The alert is sent by a person pressing a button once attendance is done (BR-1), because the school decides when a family should be told.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never include a student on approved leave. They are excluded and cannot be re-added by selecting all (BR-6) — a family who told the school in advance being told their child is missing is the failure that rule exists to prevent.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never message a student not marked absent. Only students actually marked absent are messaged; a child marked present or late is not (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never widen the scope. A single child arriving late does not need the whole school's parents messaged (BR-2), and Staff cannot send school-wide at all (E8) — splitting a school-wide send into class-sized ones to get round that reaches the same families with nobody having authorised it.",
+          "derivedFrom": [
+            "BR-2",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report alerts as queued, never as delivered, and report the already-alerted flag. The school believing a parent was told when they were not is what BR-8 prevents, and three people pressing the button is what BR-9 prevents.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never claim the alert changed anything. It reports a mark and does not set one (BR-11), and a correction afterwards sends no retraction (BR-12).",
+          "derivedFrom": [
+            "BR-11",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An alert cannot be unsent. Where a mark is corrected from absent after the alert has gone, no retraction is sent (BR-12, UC-05-01 BR-10) — a parent told their child was absent is not told twice. Somebody may want to phone them, and that is a person's decision."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "4-B ke jo bachay aaj ghair hazir hain, unke walidain ko WhatsApp kar do",
+            "lang": "ur-Latn",
+            "gloss": "WhatsApp the parents of the children absent in 4-B today"
+          },
+          "context": "Staff, Johar Town branch. 4-B was marked this morning: 1 absent, 1 on approved leave.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.alert.send",
+              "inputs": {
+                "scope": "Section",
+                "section_id": "$request.section_phrase → \"Grade 4 section B\"",
+                "date": "2026-09-08",
+                "channel": "WhatsApp",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The one absent child is reported by name before the plan is emitted (PR-1). The child on leave is excluded by the API and cannot be added back (PR-3)."
+            }
+          ],
+          "outcome": "One alert queued, built from that child's own record (BR-3). Report the excluded leave case too — the actor asked for 4-B and got one message, and the reason matters."
+        },
+        {
+          "request": {
+            "text": "poore school ke absentees ko alert bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send alerts for the whole school's absentees"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.alert.send",
+              "inputs": {
+                "scope": "School-wide",
+                "date": "2026-09-08",
+                "channel": "WhatsApp",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted at the scope asked for. The API returns SCHOOL_WIDE_NEEDS_ADMIN (E8)."
+            }
+          ],
+          "outcome": "Nothing is sent. Report that a school-wide send needs the School Admin — and never split it into class-sized sends to get round that (PR-5), which would reach the same families with nobody having authorised it."
+        },
+        {
+          "request": {
+            "text": "6-A ke absentees ko alert bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send alerts for 6-A's absentees"
+          },
+          "context": "Staff, Johar Town branch, where three families were already alerted this morning by another member of staff.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.alert.send",
+              "inputs": {
+                "scope": "Section",
+                "section_id": "$request.section_phrase → \"6-A\"",
+                "date": "2026-09-08",
+                "channel": "WhatsApp",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The three already-alerted families come back flagged and are not messaged again (BR-9). Report them by name (PR-6) — one family messaged three times because three people pressed the button is exactly what that flag exists to stop."
+        }
+      ]
+    }
+  ]
+}

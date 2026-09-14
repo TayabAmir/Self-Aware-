@@ -1,0 +1,1119 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-04-12",
+  "featureRef": "4.12 Correcting a wrongly recorded payment",
+  "name": "Correct a payment that did not happen, or was recorded against the wrong person",
+  "module": "Fee",
+  "alsoAffectsModules": [
+    "Finance"
+  ],
+  "priority": "MVP",
+  "priorityReason": "A payment recorded against the wrong family leaves one household falsely settled and another falsely in debt, and neither is visible until somebody complains.",
+  "goal": {
+    "actor": "Accounts",
+    "capability": "to put right a payment record that does not match what actually happened",
+    "outcome": "both households read correctly, and the books show what was entered as well as what was corrected"
+  },
+  "primaryActor": "Accounts",
+  "secondaryActors": [
+    {
+      "actor": "School Admin",
+      "involvement": "Approves the correction. A payment record is not moved on one person's word."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "involvement": "Sees their account restored to the correct position."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "Reconciliation finds a recorded payment with no matching bank or gateway line.",
+        "source": "UC-04-16"
+      },
+      {
+        "type": "event",
+        "description": "A family disputes a receipt or a balance at the counter.",
+        "source": "UC-04-06"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "A payment has been recorded and is found not to match what actually happened (BR-2).",
+      "establishedBy": {
+        "id": "UC-04-05",
+        "name": "Recording a payment and issuing the receipt",
+        "link": "UC-04-05.json"
+      }
+    },
+    {
+      "condition": "An authenticated session exists. Raising requires Accounts; approving requires School Admin.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "Where the payment belongs to another account, that account exists and has a charge to apply it to.",
+      "establishedBy": {
+        "id": "UC-04-02",
+        "name": "Issuing fee invoices at different scopes",
+        "link": "UC-04-02.json"
+      }
+    },
+    {
+      "condition": "A chart of accounts exists, so the reversing and re-recording entries can post.",
+      "establishedBy": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    }
+  ],
+  "postConditions": [
+    "The payment has been reversed from the account it was wrongly recorded against, and that household's balance reads correctly again.",
+    "Where the money belongs to another household, it has been recorded there instead, and that household's balance reads correctly too.",
+    "Both entries stay visible. The original record is not deleted, so the books show what was entered as well as what was corrected.",
+    "The original receipt is marked superseded and a receipt has been issued to whoever actually paid.",
+    "The invoices on both sides have returned to their correct status, and any that is now unpaid is back in overdue tracking.",
+    "The correction carries what actually happened, who raised it and who approved it.",
+    "The correction is visible to reconciliation, so the bank line and the payment record can be matched properly.",
+    "Nothing about the charge has changed. Only the record of the payment was wrong."
+  ],
+  "screens": [
+    {
+      "name": "Receipt log",
+      "route": "/fee/payments",
+      "sidebar": "Fee",
+      "columns": [
+        "Receipt",
+        "Date",
+        "Student",
+        "Invoice",
+        "Route",
+        "Amount",
+        "Recorded by",
+        "Status"
+      ],
+      "defaultSort": "Date, newest first",
+      "filters": [
+        "Route",
+        "Date range",
+        "Class",
+        "Recorded by",
+        "Status"
+      ],
+      "actions": [
+        "Open",
+        "Correct payment",
+        "Reprint receipt"
+      ],
+      "visibleTo": [
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Correct payment",
+      "route": "/fee/payments/{id}/correct",
+      "sidebar": "Fee",
+      "actions": [
+        "Select correction type",
+        "State what actually happened",
+        "Select the correct account",
+        "Submit for approval"
+      ],
+      "visibleTo": [
+        "Accounts"
+      ]
+    },
+    {
+      "name": "Payment corrections",
+      "route": "/fee/payments/corrections",
+      "sidebar": "Fee",
+      "columns": [
+        "Date",
+        "Original receipt",
+        "Wrongly against",
+        "Correctly against",
+        "Amount",
+        "Type",
+        "Raised by",
+        "Approved by",
+        "Status"
+      ],
+      "defaultSort": "Date, newest first",
+      "filters": [
+        "Status",
+        "Type",
+        "Date range",
+        "Raised by"
+      ],
+      "actions": [
+        "Open",
+        "Approve",
+        "Return",
+        "Export"
+      ],
+      "visibleTo": [
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Payment",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "The recorded payment that is wrong.",
+      "example": "RCP/LHR/26-27/002218",
+      "lookupSource": "Recorded payments"
+    },
+    {
+      "name": "Correction type",
+      "type": "enum",
+      "required": "yes",
+      "validation": "What was wrong with the record (BR-3).",
+      "example": "Recorded against the wrong student",
+      "enumValues": [
+        "Payment never happened",
+        "Recorded against the wrong student",
+        "Recorded against the wrong household",
+        "Recorded against the wrong invoice",
+        "Wrong amount recorded",
+        "Wrong date recorded"
+      ]
+    },
+    {
+      "name": "What actually happened",
+      "type": "text",
+      "required": "yes",
+      "validation": "20 to 500 characters. The account somebody reads a year later when the entry is questioned (BR-4).",
+      "example": "Entered against Ayesha Khan, but the stamped challan was for her brother Bilal, roll 2026-0418."
+    },
+    {
+      "name": "Correct student",
+      "type": "lookup",
+      "required": "conditional",
+      "validation": "Where the money belongs to another account, the student it should be recorded against (BR-5).",
+      "example": "2026-0418 — Bilal Khan",
+      "requiredWhen": "The correction type moves the payment to another account",
+      "lookupSource": "Enrolled students"
+    },
+    {
+      "name": "Correct invoice",
+      "type": "lookup",
+      "required": "conditional",
+      "validation": "The invoice the payment should be applied to.",
+      "example": "INV/LHR/26-27/004193",
+      "requiredWhen": "The correction type moves the payment to another account",
+      "lookupSource": "Invoices of the correct student with an outstanding balance"
+    },
+    {
+      "name": "Correct amount",
+      "type": "money",
+      "required": "conditional",
+      "validation": "Where the amount recorded was wrong.",
+      "example": "PKR 4,000",
+      "requiredWhen": "The correction type is Wrong amount recorded"
+    },
+    {
+      "name": "Correct date",
+      "type": "date",
+      "required": "conditional",
+      "validation": "Where the date recorded was wrong.",
+      "example": "06-09-2026",
+      "requiredWhen": "The correction type is Wrong date recorded"
+    },
+    {
+      "name": "Return reason",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 500 characters. Required when returning a correction unapproved.",
+      "example": "Check the challan reference before moving this — it matches the original entry.",
+      "requiredWhen": "The correction is being returned"
+    },
+    {
+      "name": "Raised by",
+      "type": "generated",
+      "required": "no",
+      "example": "Sana Iqbal"
+    },
+    {
+      "name": "Approved by",
+      "type": "generated",
+      "required": "no",
+      "example": "Imran Sultan"
+    },
+    {
+      "name": "Status",
+      "type": "generated",
+      "required": "no",
+      "validation": "See the lifecycle below.",
+      "default": "Awaiting approval",
+      "example": "Approved"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Payment correction",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One per correction, holding what actually happened, the raiser and the approver. Never deleted."
+    },
+    {
+      "entity": "Payment",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "The original is marked Reversed and stays visible. A new payment is created where the money belongs elsewhere (BR-6)."
+    },
+    {
+      "entity": "Receipt",
+      "operations": [
+        "read",
+        "create",
+        "update"
+      ],
+      "notes": "The original is marked superseded, not destroyed, and a receipt is issued to whoever actually paid (BR-8)."
+    },
+    {
+      "entity": "Invoice",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Both invoices return to their correct status. Neither is edited (BR-9)."
+    },
+    {
+      "entity": "Student ledger",
+      "operations": [
+        "create"
+      ],
+      "notes": "A reversing entry on one account and, where applicable, a new entry on the other."
+    },
+    {
+      "entity": "General ledger voucher",
+      "operations": [
+        "create"
+      ],
+      "notes": "The reversing and re-recording postings. The cash total is unchanged where the money merely moved (BR-7)."
+    },
+    {
+      "entity": "Family credit balance",
+      "operations": [
+        "update"
+      ],
+      "notes": "Where the money belongs to no charge, it is held as a household credit rather than left unattached (BR-10)."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "The correction, its approval and every posting."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Accounts",
+      "actions": [
+        "view",
+        "create"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Raises a correction. Cannot approve one, including their own (BR-1)."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "approve"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "The only role that approves a payment correction."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches.",
+      "notes": "Reviews corrections, since a pattern by one person is a control matter (BR-12)."
+    },
+    {
+      "actor": "Staff",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Read only."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own household only.",
+      "notes": "Sees their account restored to the correct position."
+    },
+    {
+      "actor": "Student",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own household only."
+    },
+    {
+      "actor": "Coordinator, Teacher",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "A correction is raised by one person and approved by another. Moving a payment record between households is not something one hand does alone."
+    },
+    {
+      "id": "BR-2",
+      "rule": "This use case corrects the record of a payment, not a charge. The charge itself is untouched, and where the charge is wrong the cancellation or credit route applies instead."
+    },
+    {
+      "id": "BR-3",
+      "rule": "The correction states what was wrong: the payment never happened, it was recorded against the wrong student, the wrong household, the wrong invoice, or with the wrong amount or date."
+    },
+    {
+      "id": "BR-4",
+      "rule": "A written account of what actually happened is mandatory. It is what somebody reads a year later when the entry is questioned."
+    },
+    {
+      "id": "BR-5",
+      "rule": "Where the money belongs to another account, it is recorded there rather than simply removed. Reversing without re-recording leaves the school holding money nobody is credited with."
+    },
+    {
+      "id": "BR-6",
+      "rule": "The original payment is marked reversed and stays visible. Nothing is deleted, so the books show what was entered as well as what was corrected."
+    },
+    {
+      "id": "BR-7",
+      "rule": "Where the money merely moved between accounts, the school's cash total is unchanged. Only the household it belongs to changed, and reconciliation must still balance afterwards."
+    },
+    {
+      "id": "BR-8",
+      "rule": "The original receipt is marked superseded rather than destroyed, and a receipt is issued to whoever actually paid. A family holding a receipt that no longer means anything must be able to see why."
+    },
+    {
+      "id": "BR-9",
+      "rule": "Both invoices return to their correct status. Neither is edited, and an invoice that is now unpaid goes back into overdue tracking."
+    },
+    {
+      "id": "BR-10",
+      "rule": "Where money was received but belongs to no charge, it is held as a household credit rather than left unattached."
+    },
+    {
+      "id": "BR-11",
+      "rule": "A correction where the payment never happened reverses the entry entirely and records nothing in its place. That is the case reconciliation is most likely to find."
+    },
+    {
+      "id": "BR-12",
+      "rule": "Corrections are visible in a report grouped by who raised them, because a pattern of corrections by one person is a control matter rather than a clerical one."
+    },
+    {
+      "id": "BR-13",
+      "rule": "A correction cannot be raised against a payment already corrected. The current record is corrected instead."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Payment correction",
+      "states": [
+        "Awaiting approval",
+        "Approved",
+        "Returned"
+      ],
+      "initial": "Awaiting approval",
+      "terminal": [
+        "Approved"
+      ],
+      "transitions": [
+        {
+          "from": "Awaiting approval",
+          "to": "Approved",
+          "triggeredBy": "School Admin",
+          "condition": "Approved. The reversal and any re-recording post together (BR-5, BR-6)."
+        },
+        {
+          "from": "Awaiting approval",
+          "to": "Returned",
+          "triggeredBy": "School Admin",
+          "condition": "Returned with a reason. The record is untouched."
+        },
+        {
+          "from": "Returned",
+          "to": "Awaiting approval",
+          "triggeredBy": "Accounts",
+          "condition": "Corrected and resubmitted."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Accounts",
+      "navigation": "Login → Fee → Receipt log",
+      "userAction": "Finds a payment recorded in error, or recorded against the wrong student or household.",
+      "function": "openPaymentForCorrection(paymentId)",
+      "systemResponse": "Shows the payment, its receipt, the invoice it was applied to and how it was recorded.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "Accounts",
+      "navigation": "Receipt log → Correct payment",
+      "userAction": "Raises a correction stating what actually happened, and where the money belongs, the account it should be recorded against.",
+      "function": "raisePaymentCorrection(paymentId, correctionType, description, correctStudentId, correctInvoiceId)",
+      "systemResponse": "Requires a written account, and refuses a correction that would leave the money unattached.",
+      "rules": [
+        "BR-1",
+        "BR-3",
+        "BR-4",
+        "BR-5"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "School Admin",
+      "navigation": "Login → Fee → Payment corrections → Approve",
+      "userAction": "Reviews the correction and approves it.",
+      "function": "approvePaymentCorrection(correctionId)",
+      "systemResponse": "Records the approval with who gave it and when.",
+      "rules": [
+        "BR-1"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "reversePayment(paymentId)",
+      "systemResponse": "Reverses the payment from the account it was wrongly recorded against. The original entry stays visible.",
+      "rules": [
+        "BR-6"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "recordPaymentOnCorrectAccount(correctionId)",
+      "systemResponse": "Records the payment against the correct account where it belongs there, so the money is never left uncredited.",
+      "rules": [
+        "BR-5",
+        "BR-7"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "supersedeReceipt(paymentId); issueReceipt(newPaymentId)",
+      "systemResponse": "Marks the original receipt superseded and issues a receipt to whoever actually paid.",
+      "rules": [
+        "BR-8"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "restoreInvoiceStatuses(correctionId)",
+      "systemResponse": "Returns both invoices to their correct status, and puts any that is now unpaid back into overdue tracking.",
+      "rules": [
+        "BR-9"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 2,
+      "condition": "The payment never happened at all",
+      "actor": "Accounts",
+      "navigation": "Receipt log → Correct payment → Payment never happened",
+      "behaviour": "The entry is reversed entirely and nothing is recorded in its place. The invoice returns to unpaid and re-enters overdue tracking. This is the case reconciliation most often finds (BR-11).",
+      "function": "raisePaymentCorrection(paymentId, 'Payment never happened', description, null, null)",
+      "resumesAtStep": 3
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 2,
+      "condition": "The money belongs to a sibling in the same household",
+      "actor": "Accounts",
+      "navigation": "Correct payment → Correct student and invoice",
+      "behaviour": "It is re-recorded against the sibling's invoice. The household's total position is unchanged and only the child it sits against differs (BR-5).",
+      "function": "raisePaymentCorrection(paymentId, 'Recorded against the wrong student', description, siblingId, invoiceId)",
+      "resumesAtStep": 3
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 5,
+      "condition": "The money belongs to no outstanding charge",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "It is held as a household credit rather than left unattached, and reaches the next invoice for that household (BR-10).",
+      "function": "holdCreditAgainstFamily(familyCode, amount)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 3,
+      "condition": "The School Admin does not accept the correction",
+      "actor": "School Admin",
+      "navigation": "Payment corrections → Return with a reason",
+      "behaviour": "It returns to Accounts with a written reason and the record is untouched in the meantime.",
+      "function": "returnPaymentCorrection(correctionId, reason)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 1,
+      "condition": "Reconciliation found a payment with no matching bank line",
+      "actor": "Accounts",
+      "navigation": "Login → Fee → Payment reconciliation → Correct payment",
+      "behaviour": "The correction is raised from the reconciliation screen, and the reconciliation picks up the corrected entry afterwards.",
+      "function": "openPaymentForCorrection(paymentId)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 2,
+      "condition": "Only the amount or the date was wrong",
+      "actor": "Accounts",
+      "navigation": "Correct payment → Wrong amount recorded",
+      "behaviour": "The entry is reversed and re-recorded against the same account with the correct figure or date. The household does not change.",
+      "function": "raisePaymentCorrection(paymentId, 'Wrong amount recorded', description, sameStudentId, sameInvoiceId)",
+      "resumesAtStep": 3
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 2,
+      "condition": "No account of what actually happened is given",
+      "systemResponse": "The correction is not raised (BR-4).",
+      "messageShown": "Describe what actually happened. This is what somebody reads when the entry is questioned.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E2",
+      "atStep": 2,
+      "condition": "The correction would leave the money unattached",
+      "systemResponse": "It is refused. Money received is either credited to an account or held as a household credit (BR-5, BR-10).",
+      "messageShown": "Choose the account this payment belongs to, or hold it as a household credit.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E3",
+      "atStep": 3,
+      "condition": "Accounts attempt to approve their own correction",
+      "systemResponse": "The approval is refused (BR-1).",
+      "messageShown": "Only a School Admin can approve a payment correction.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 1,
+      "condition": "The payment has already been corrected",
+      "systemResponse": "No second correction is raised (BR-13).",
+      "messageShown": "This payment was corrected on 22-09-2026. Correct the current record instead.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 2,
+      "condition": "The correct invoice named has no outstanding balance",
+      "systemResponse": "The payment cannot be applied to it, and the household credit route is offered instead.",
+      "messageShown": "That invoice is already settled. Hold the payment as a household credit, or choose another invoice.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 4,
+      "condition": "The ledger posting fails part way",
+      "systemResponse": "The whole correction is rolled back. Neither account changes and the correction stays awaiting approval.",
+      "messageShown": "The correction could not be posted. Nothing has changed.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 2,
+      "condition": "The charge is wrong rather than the payment record",
+      "systemResponse": "The correction is refused and the credit or cancellation route is named (BR-2).",
+      "messageShown": "The payment record is right and the charge is wrong. Raise a credit against the charge instead.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E8",
+      "atStep": 5,
+      "condition": "The receiving invoice was settled between raising and approving",
+      "systemResponse": "The payment is held as a household credit rather than forced onto a settled invoice.",
+      "messageShown": "That invoice was settled while this was awaiting approval. The payment is held as a household credit.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Correction approved and account restored",
+      "recipient": "Every related parent or guardian of both households",
+      "channels": [
+        "whatsapp",
+        "sms"
+      ],
+      "template": "PAYMENT_CORRECTED",
+      "contents": [
+        "Student name",
+        "What changed on the account",
+        "The corrected balance",
+        "The new receipt where one was issued"
+      ],
+      "retry": "Resend from the correction; each attempt is logged.",
+      "blocking": false
+    },
+    {
+      "event": "Correction awaiting approval",
+      "recipient": "School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "PAYMENT_CORRECTION_AWAITING_APPROVAL",
+      "contents": [
+        "Original receipt",
+        "Wrongly against",
+        "Correctly against",
+        "Amount",
+        "Type",
+        "Raised by"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Correction returned",
+      "recipient": "Accounts",
+      "channels": [
+        "inApp"
+      ],
+      "template": "PAYMENT_CORRECTION_RETURNED",
+      "contents": [
+        "Original receipt",
+        "Returned by",
+        "The reason given"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "An invoice that is now unpaid returns to overdue tracking.",
+      "affects": {
+        "id": "UC-04-06",
+        "name": "Overdue-fee tracking",
+        "link": "UC-04-06.json"
+      }
+    },
+    {
+      "effect": "Late fee resumes accruing on an invoice that is unpaid again.",
+      "affects": {
+        "id": "UC-04-15",
+        "name": "Late fee policy",
+        "link": "UC-04-15.json"
+      }
+    },
+    {
+      "effect": "The corrected entry is picked up in reconciliation against the bank or gateway.",
+      "affects": {
+        "id": "UC-04-16",
+        "name": "Payment reconciliation",
+        "link": "UC-04-16.json"
+      }
+    },
+    {
+      "effect": "Money belonging to no charge becomes a household credit.",
+      "affects": {
+        "id": "UC-04-10",
+        "name": "Crediting a wrong charge already paid",
+        "link": "UC-04-10.json"
+      }
+    },
+    {
+      "effect": "Both postings appear in the general ledger, leaving the cash total unchanged where the money merely moved.",
+      "affects": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    },
+    {
+      "effect": "The day's collection figure is restated where the date recorded was wrong.",
+      "affects": {
+        "id": "UC-01-07",
+        "name": "Role-based dashboards, main and module level",
+        "link": "UC-01-07.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Payment corrections",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Date",
+        "Original receipt",
+        "Wrongly against",
+        "Correctly against",
+        "Amount",
+        "Type",
+        "What happened",
+        "Raised by",
+        "Approved by"
+      ],
+      "grouping": "By person who raised it",
+      "totals": "Corrections in the period, by type and by raiser, which is what makes a pattern visible"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "A payment of PKR 4,000 recorded against Ayesha but belonging to her brother Bilal",
+      "when": "Accounts raise a correction and the School Admin approves it",
+      "then": "Ayesha's invoice is unpaid again, Bilal's is settled, and the school's cash total is unchanged"
+    },
+    {
+      "id": "AC-2",
+      "given": "The same correction",
+      "when": "the receipt log is opened",
+      "then": "the original payment is marked reversed and still visible, and a new receipt has been issued to Bilal's household"
+    },
+    {
+      "id": "AC-3",
+      "given": "A payment that never happened",
+      "when": "the correction is approved",
+      "then": "the entry is reversed, nothing is recorded in its place, and the invoice returns to overdue tracking"
+    },
+    {
+      "id": "AC-4",
+      "given": "A correction raised by Accounts",
+      "when": "the same Accounts user attempts to approve it",
+      "then": "the approval is refused and School Admin is named"
+    },
+    {
+      "id": "AC-5",
+      "given": "A correction raised with no account of what happened",
+      "when": "it is submitted",
+      "then": "it is not raised"
+    },
+    {
+      "id": "AC-6",
+      "given": "A correction that would remove a payment without recording it anywhere",
+      "when": "it is submitted",
+      "then": "it is refused, and either an account or a household credit must be chosen"
+    },
+    {
+      "id": "AC-7",
+      "given": "Money that belongs to no outstanding charge",
+      "when": "the correction is approved",
+      "then": "it is held as a household credit rather than left unattached"
+    },
+    {
+      "id": "AC-8",
+      "given": "A correction where only the amount was wrong",
+      "when": "it is approved",
+      "then": "the entry is reversed and re-recorded on the same account with the correct figure, and the household does not change"
+    },
+    {
+      "id": "AC-9",
+      "given": "A case where the charge is wrong rather than the payment record",
+      "when": "a correction is attempted",
+      "then": "it is refused and the credit route is named"
+    },
+    {
+      "id": "AC-10",
+      "given": "Several corrections raised by one Accounts user over a term",
+      "when": "the corrections report is opened",
+      "then": "they are grouped by who raised them, so a pattern is visible to a reviewer"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-04-05",
+        "name": "Recording a payment and issuing the receipt",
+        "link": "UC-04-05.json",
+        "why": "Supplies the payment being corrected and issues the replacement receipt."
+      },
+      {
+        "id": "UC-04-10",
+        "name": "Crediting a wrong charge already paid",
+        "link": "UC-04-10.json",
+        "why": "Holds money that belongs to no charge as a household credit."
+      },
+      {
+        "id": "UC-04-16",
+        "name": "Payment reconciliation",
+        "link": "UC-04-16.json",
+        "why": "Finds the mismatches this corrects, and picks up the correction afterwards."
+      },
+      {
+        "id": "UC-04-02",
+        "name": "Issuing fee invoices at different scopes",
+        "link": "UC-04-02.json",
+        "why": "Supplies the invoices on both sides."
+      },
+      {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json",
+        "why": "Receives the reversing and re-recording postings."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Keeps raising and approving in separate hands."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      }
+    ],
+    "masterData": [
+      "Correction type list",
+      "Chart of accounts",
+      "Family codes"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "A charge that was wrong and unpaid",
+      "handledBy": {
+        "id": "UC-04-08",
+        "name": "Cancelling a wrong unpaid charge",
+        "link": "UC-04-08.json"
+      }
+    },
+    {
+      "item": "A charge that was wrong and has been paid",
+      "handledBy": {
+        "id": "UC-04-10",
+        "name": "Crediting a wrong charge already paid",
+        "link": "UC-04-10.json"
+      }
+    },
+    {
+      "item": "A correct charge that will never be collected",
+      "handledBy": {
+        "id": "UC-04-09",
+        "name": "Writing off an uncollectable debt",
+        "link": "UC-04-09.json"
+      }
+    },
+    {
+      "item": "Returning money to a family in cash",
+      "handledBy": {
+        "id": "UC-04-11",
+        "name": "Refunding an unused credit on withdrawal",
+        "link": "UC-04-11.json"
+      }
+    },
+    {
+      "item": "Matching payments against the bank statement",
+      "handledBy": {
+        "id": "UC-04-16",
+        "name": "Payment reconciliation",
+        "link": "UC-04-16.json"
+      }
+    },
+    {
+      "item": "Recording a payment in the first place",
+      "handledBy": {
+        "id": "UC-04-05",
+        "name": "Recording a payment and issuing the receipt",
+        "link": "UC-04-05.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Cash integrity",
+        "requirement": "Where money moves between accounts the school's cash total is unchanged, so reconciliation still balances after a correction."
+      },
+      {
+        "aspect": "Atomicity",
+        "requirement": "The reversal, the re-recording, the receipt changes and both invoice status changes commit together or not at all. A half-applied correction would leave two households wrong instead of one."
+      },
+      {
+        "aspect": "Immutability",
+        "requirement": "The original payment and receipt are never deleted. Both the wrong entry and its correction stay visible."
+      },
+      {
+        "aspect": "Segregation of duty",
+        "requirement": "Corrections are reported grouped by raiser, because a pattern by one person is a control matter rather than a clerical one."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Corrections and their postings are retained 7 years as financial records."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "Is there a time limit after which a payment may no longer be corrected — a closed period or a closed session?",
+      "assumption": "Not specified, and a correction into a closed period changes a reported figure.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should both households be told when a payment moves between them, or only the one that gains?",
+      "assumption": "Both, since one household's balance worsens. Not confirmed.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Is there a value above which the Principal rather than the School Admin should approve?",
+      "assumption": "Not specified.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    },
+    {
+      "question": "Where a correction restores an unpaid invoice that has passed its due date, does late fee accrue from the original due date or from the correction?",
+      "assumption": "Not specified, and charging a family for the school's clerical error would be wrong.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Who reviews the corrections report, and how often?",
+      "assumption": "Not specified, and BR-12 is the control that depends on it.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "money",
+      "area": "Money",
+      "rule": "All monetary values are stored as fixed-point decimals in the smallest currency unit, never as floating point. Displayed as PKR with a thousands separator and two decimal places. Rounding is half-up at the line."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

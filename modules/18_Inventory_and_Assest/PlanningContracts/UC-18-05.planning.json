@@ -1,0 +1,1572 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-18-05",
+    "name": "Give stock out against a named person, showing what they already hold, and keep returnable items outstanding",
+    "module": "Inventory, Assets & Point-of-Sale",
+    "file": "../UseCases/UC-18-05.json",
+    "featureRef": "18.5 Recording an issue from stock"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-18-05-PC-1",
+      "intent": {
+        "name": "stock.issue.record",
+        "summary": "Hand stock out against a named person, having seen what they already hold.",
+        "routesHere": [
+          "issue 4 black markers to Imran Sultan",
+          {
+            "text": "Imran ko 4 marker de dein",
+            "lang": "ur-Latn",
+            "gloss": "give Imran 4 markers"
+          },
+          {
+            "text": "lab ke liye 2 ream paper issue kar dein Sana ke naam pe",
+            "lang": "ur-Latn",
+            "gloss": "issue 2 reams of paper to Sana for the lab"
+          },
+          {
+            "text": "projector remote nikaal kar de dein",
+            "lang": "ur-Latn",
+            "gloss": "hand out the projector remote"
+          },
+          "give out the stationery for Grade 9"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "issue ghalat likha gaya tha, theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "the issue was recorded wrongly, correct it"
+            },
+            "goesTo": "stock.adjustment.raise — UC-18-06.",
+            "note": "An issue is never deleted. A wrong one is corrected by a stock adjustment, which has its own record and its own approval (BR-12, E10, A7)."
+          },
+          {
+            "request": {
+              "text": "kisi ke naam ke baghair de dein",
+              "lang": "ur-Latn",
+              "gloss": "hand it over without naming anybody"
+            },
+            "goesTo": "Refused.",
+            "note": "An issue is recorded against a named person. Stock issued to nobody is stock that has left with no owner (BR-1, E1)."
+          },
+          {
+            "request": {
+              "text": "ise consumable likh dein",
+              "lang": "ur-Latn",
+              "gloss": "record it as a consumable"
+            },
+            "goesTo": "Not offered.",
+            "note": "The item carries its type and the issue takes it. The storekeeper does not choose whether something is expected back (BR-3, E4)."
+          },
+          {
+            "request": {
+              "text": "jo hai us se zyada de dein",
+              "lang": "ur-Latn",
+              "gloss": "hand out more than there is"
+            },
+            "goesTo": "Refused.",
+            "note": "An issue larger than what is on hand cannot be recorded. The balance falls by what went out and cannot go below what the shelf holds (BR-7, E2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.issue.record",
+            "inputs": {
+              "person_id": "$request.person_phrase",
+              "lines": "$request.lines",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The type comes from the item, not from the request: a consumable issue closes at once, a returnable one stays open against that person until it comes back (BR-3, BR-4, BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. No person, a quantity above what is on hand, or a quantity of zero each refuses the issue, and nothing leaves the store.",
+        "atomicity": "One write. The balance falls by what went out (BR-7), a returnable issue joins the outstanding list against that person (BR-5), and where the balance crosses the reorder level the item is listed for the next request (BR-10). Above the configured threshold the issue is **held for approval rather than recorded**, and the stock does not leave the store until it is given (BR-6, E5)."
+      },
+      "operations": [
+        {
+          "name": "stock.issue.record",
+          "method": "POST",
+          "path": "/api/v1/stock-issues",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "person + the lines + the minute, so a double press does not take the stock off the shelf twice and open two outstanding items against one person",
+          "purpose": "Record stock issued to a named person.",
+          "parameters": [
+            {
+              "name": "person_id",
+              "source": "resolved",
+              "sourceRef": "$request.person_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "person",
+                "fromPhrase": "$request.person_phrase",
+                "onNoMatch": "Refuse. No active staff member or student matches, or they are outside the actor's scope. Whether stock is ever issued to a student at all is an open question this use case raises and does not answer (OQ-3).",
+                "onAmbiguous": "Ask, showing each candidate with their name, class and section or role, and identifier — and what each already holds, since that is the thing worth seeing before handing anything over (BR-2)."
+              },
+              "notes": "The person taking the items, confirmed through the same person picker the card use case specifies (BR-1). Stock issued to nobody is stock that has left with no owner."
+            },
+            {
+              "name": "lines",
+              "source": "request",
+              "sourceRef": "$request.lines",
+              "required": true,
+              "type": "object[]",
+              "notes": "One entry per item: the item and the quantity, in that item's own unit, greater than zero and not more than is on hand (BR-7, E2, E3). The type is carried from the item and is not among the fields (BR-3, E4). A deactivated item is refused (E9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What went out, to whom, and what is now owed.",
+            "fields": [
+              {
+                "name": "issue_id",
+                "type": "string",
+                "description": "The issue."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Closed for a consumable, open for a returnable, or awaiting approval where it is above the threshold (BR-4, BR-5, BR-6)."
+              },
+              {
+                "name": "person",
+                "type": "string",
+                "description": "Who took it, by name (BR-1)."
+              },
+              {
+                "name": "already_held",
+                "type": "object[]",
+                "description": "What that person had already been issued before this — item, quantity, how long ago, and whether still outstanding. Shown **before** anything is handed over (BR-2, A1)."
+              },
+              {
+                "name": "lines",
+                "type": "object[]",
+                "description": "Item, quantity, unit and type."
+              },
+              {
+                "name": "returnable_now_open",
+                "type": "object[]",
+                "description": "Items expected back from this person. They stay outstanding until returned and appear on their exit checklist if they leave (BR-5, BR-11)."
+              },
+              {
+                "name": "balance_after",
+                "type": "object[]",
+                "description": "What the shelf now holds, item by item (BR-7)."
+              },
+              {
+                "name": "now_below_reorder_level",
+                "type": "object[]",
+                "description": "Items this issue took to or below their level, which are offered for inclusion in the next request (BR-10, A4)."
+              },
+              {
+                "name": "approval_required",
+                "type": "boolean",
+                "description": "Whether the issue is above the configured threshold and is held rather than recorded. What the threshold is, in value or in quantity, is not specified anywhere (BR-6, E5, OQ-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERSON",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "No person was selected.",
+              "written": "Nothing.",
+              "notWritten": "Nothing leaves the store.",
+              "note": "Stock issued to nobody has left with no owner (BR-1)."
+            },
+            {
+              "code": "EXCEEDS_ON_HAND",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The quantity is more than is on hand.",
+              "written": "Nothing.",
+              "notWritten": "The issue is not recorded.",
+              "note": "The balance cannot fall below what the shelf holds (BR-7)."
+            },
+            {
+              "code": "QUANTITY_NOT_POSITIVE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The quantity is zero or less.",
+              "written": "Nothing.",
+              "notWritten": "The line is not saved."
+            },
+            {
+              "code": "TYPE_NOT_SETTABLE",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "An attempt was made to set the consumable or returnable type on the issue.",
+              "written": "Nothing.",
+              "notWritten": "There is no such field.",
+              "note": "The type is carried from the item (BR-3)."
+            },
+            {
+              "code": "ABOVE_THRESHOLD",
+              "mapsTo": "E5",
+              "httpStatus": 202,
+              "meaning": "The issue is above the configured approval threshold.",
+              "written": "The issue is held awaiting the School Admin's approval.",
+              "notWritten": "The stock does not leave the store.",
+              "note": "Recording alone is unimportant for a box of markers and not for twenty reams of paper (BR-6)."
+            },
+            {
+              "code": "ITEM_DEACTIVATED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "A deactivated item was issued.",
+              "written": "Nothing.",
+              "notWritten": "The issue is not recorded.",
+              "note": "The item is no longer stocked (UC-18-01 BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Read out what the person already holds before handing anything over. That is the point of the rule: a storekeeper about to give out a marker can see one went to the same person twelve days ago, and nothing else in the flow surfaces it (BR-2, A1).",
+          "derivedFrom": [
+            "BR-2",
+            "A1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never say whether an item is expected back. It comes from the item's own type, and a returnable read as a consumable is an item nobody is ever asked to return (BR-3, BR-4, BR-5, E4).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4",
+            "BR-5",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say when something stays owed. A returnable issue is open against that person until it is recorded back, it appears on the outstanding list, and it appears on their exit checklist if they leave (BR-5, BR-9, BR-11).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-9",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never issue more than is on hand, and never suggest adjusting the balance to make it fit. A shelf that disagrees with the system is settled by a count, not by an issue (BR-7, E2).",
+          "derivedFrom": [
+            "BR-7",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say when an issue is held rather than recorded. Above the threshold the stock does not leave the store until the School Admin approves it — and the threshold itself is not specified anywhere (BR-6, E5, OQ-1).",
+          "derivedFrom": [
+            "BR-6",
+            "E5",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Name the items this issue takes below their reorder level. The shelf that just emptied is the one the next round should carry (BR-10, A4).",
+          "derivedFrom": [
+            "BR-10",
+            "A4"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An issue is never deleted. A wrong one is corrected by a stock adjustment with its own reason and approval (BR-12, E10, A7). A returnable item coming back is a return, not a reversal — it closes the issue and raises the balance (BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Imran ko 4 kaale marker de dein",
+            "lang": "ur-Latn",
+            "gloss": "give Imran 4 black markers"
+          },
+          "context": "Staff (storekeeper), Johar Town branch, 14 on hand, Imran issued 4 twelve days ago.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.issue.record",
+              "inputs": {
+                "person_id": "$request.person_phrase → Imran Sultan",
+                "lines": "4 pieces of Whiteboard marker, black",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The type comes from the item — this one is a consumable, so nothing stays owed (PR-2)."
+            }
+          ],
+          "outcome": "Before handing over, say that Imran was issued 4 of the same markers twelve days ago. That is the whole reason the check exists, and it is the storekeeper's call whether it matters. After: report the balance at 10 and that nothing is outstanding against him for this, since markers are a consumable."
+        },
+        {
+          "request": {
+            "text": "projector remote Sana ko de dein",
+            "lang": "ur-Latn",
+            "gloss": "give the projector remote to Sana"
+          },
+          "context": "Staff (storekeeper), Johar Town branch, remote is a returnable item.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.issue.record",
+              "inputs": {
+                "person_id": "$request.person_phrase → Sana Iqbal",
+                "lines": "1 Projector remote",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Returnable, from the item (PR-2)."
+            }
+          ],
+          "outcome": "Report that this one stays owed. It is open against Sana until it is recorded back, it will show on the outstanding list with the days counting, and if she leaves the school it appears on her exit handover checklist and has to be returned before the leaving date."
+        },
+        {
+          "request": {
+            "text": "20 ream paper de dein",
+            "lang": "ur-Latn",
+            "gloss": "hand out 20 reams of paper"
+          },
+          "context": "Staff (storekeeper), issue above the configured threshold.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.issue.record",
+              "inputs": {
+                "person_id": "$request.person_phrase → the person named",
+                "lines": "20 reams of A4 paper",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Held rather than recorded (PR-5)."
+            }
+          ],
+          "outcome": "The stock does not leave the store yet. This is above the threshold, so it needs the School Admin's approval first — recording alone is enough for a box of markers and not for twenty reams. Note that what the threshold actually is, in money or in quantity, is not written down anywhere in the specification."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-05-PC-2",
+      "intent": {
+        "name": "stock.issue.approve",
+        "summary": "Approve an issue above the threshold, so the stock may leave the store.",
+        "routesHere": [
+          "approve the 20 reams going out to the exam office",
+          {
+            "text": "wo bara issue manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve that large issue"
+          },
+          {
+            "text": "20 ream wala issue approve kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve the 20-ream issue"
+          },
+          "sign off the issue waiting for me"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "threshold barha dein taake manzoori ki zaroorat na ho",
+              "lang": "ur-Latn",
+              "gloss": "raise the threshold so approval is not needed"
+            },
+            "goesTo": "Not offered here.",
+            "note": "The threshold is configuration, and what it actually is — in value or in quantity — is not specified anywhere (BR-6, OQ-1)."
+          },
+          {
+            "request": {
+              "text": "khud hi record kar dein, manzoori chhod dein",
+              "lang": "ur-Latn",
+              "gloss": "just record it, skip the approval"
+            },
+            "goesTo": "Refused.",
+            "note": "Above the threshold the issue is held rather than recorded, and the stock does not leave the store until it is approved (BR-6, E5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.issue.approve",
+            "inputs": {
+              "issue_id": "$request.issue_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it is the point at which the stock actually leaves: the balance falls now, not when the issue was first entered (BR-6, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by anybody other than the School Admin is refused and the stock stays on the shelf.",
+        "atomicity": "One state change with the effects of the issue itself: the balance falls by what goes out, a returnable issue opens against the holder, and any item taken below its reorder level is listed for the next request (BR-5, BR-7, BR-10)."
+      },
+      "operations": [
+        {
+          "name": "stock.issue.approve",
+          "method": "POST",
+          "path": "/api/v1/stock-issues/{issue_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "issue_id, since an issue carries one approval and a repeat must not take the stock off the shelf twice",
+          "purpose": "Approve an above-threshold issue so the stock leaves the store.",
+          "parameters": [
+            {
+              "name": "issue_id",
+              "source": "resolved",
+              "sourceRef": "$request.issue_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_issue",
+                "fromPhrase": "$request.issue_phrase",
+                "onNoMatch": "Refuse. No issue is awaiting approval that matches.",
+                "onAmbiguous": "Ask, naming the issues that match with their holders, items and how long each has been out."
+              },
+              "notes": "The issue, named by who holds it and what."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What leaves and what is now owed.",
+            "fields": [
+              {
+                "name": "issue_id",
+                "type": "string",
+                "description": "The issue."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Recorded, and then closed for a consumable or open for a returnable (BR-4, BR-5)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The School Admin (BR-6)."
+              },
+              {
+                "name": "person",
+                "type": "string",
+                "description": "Who is taking it."
+              },
+              {
+                "name": "already_held",
+                "type": "object[]",
+                "description": "What that person already holds, including anything outstanding. Worth reading at the approval as much as at the counter (BR-2)."
+              },
+              {
+                "name": "balance_after",
+                "type": "object[]",
+                "description": "What the shelf holds once it goes (BR-7)."
+              },
+              {
+                "name": "now_below_reorder_level",
+                "type": "object[]",
+                "description": "Items this issue takes to or below their level (BR-10)."
+              },
+              {
+                "name": "threshold",
+                "type": "string",
+                "description": "What put it above the line. The figure is not specified anywhere in the specification (BR-6, OQ-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_SCHOOL_ADMIN",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "The acting user is not the School Admin.",
+              "written": "Nothing.",
+              "notWritten": "The stock stays in the store.",
+              "note": "Above the threshold an issue is approved rather than merely recorded (BR-6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say what the person already holds. The approval is a second chance to see that twenty reams are going to somebody who took ten a fortnight ago, and the approver is further from the counter than the storekeeper (BR-2).",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the stock leaves now. Until the approval it was held, not issued — the balance falls at this moment and not when the storekeeper first entered it (BR-6, BR-7, E5).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say when something stays owed. A returnable issue opens against the holder from here and appears on their exit checklist if they leave (BR-5, BR-11).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never claim what the threshold is. It is configuration and the figure is written down nowhere (BR-6, OQ-1).",
+          "derivedFrom": [
+            "BR-6",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no unapprove — once approved the stock has left the store. A returnable item comes back through a return (BR-8); anything else is corrected by a stock adjustment with its own record (BR-12, A7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "20 ream wala issue manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve the 20-ream issue"
+          },
+          "context": "School Admin, Johar Town branch, 34 reams on hand, reorder level 15.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.issue.approve",
+              "inputs": {
+                "issue_id": "$request.issue_phrase → the 20-ream issue",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The stock leaves at this moment (PR-2)."
+            }
+          ],
+          "outcome": "Before approving: this takes A4 paper from 34 to 14, below its reorder level of 15, so it will be offered for buying in the next round — and the person taking it already holds 10 reams issued three weeks ago. After: report the balance and that paper is now on the low list."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-05-PC-3",
+      "intent": {
+        "name": "stock.return.record",
+        "summary": "Record a returnable item coming back, with the date and the condition it came back in.",
+        "routesHere": [
+          "record the projector remote back from Sana, in good condition",
+          {
+            "text": "projector remote wapas aa gaya hai, theek halat mein",
+            "lang": "ur-Latn",
+            "gloss": "the projector remote has come back, in good condition"
+          },
+          {
+            "text": "chabiyan wapas mil gayi hain, issue band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the keys have come back, close the issue"
+          },
+          {
+            "text": "remote toota hua wapas aaya hai",
+            "lang": "ur-Latn",
+            "gloss": "the remote has come back broken"
+          },
+          "close the outstanding lab instrument"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "marker wapas aa gaya hai",
+              "lang": "ur-Latn",
+              "gloss": "the marker has come back"
+            },
+            "goesTo": "Refused.",
+            "note": "A consumable is used up once issued and nothing is expected back. A return against one is refused (BR-4, E8)."
+          },
+          {
+            "request": {
+              "text": "toota hua hai lekin balance mein daal dein",
+              "lang": "ur-Latn",
+              "gloss": "it is broken but add it back to the balance"
+            },
+            "goesTo": "Refused.",
+            "note": "A damaged or unusable item goes to an adjustment with the reason rather than back onto the shelf. The balance must not rise by an item nobody can use (BR-8, E7, A3)."
+          },
+          {
+            "request": {
+              "text": "wapas nahi aaya, tankhwah se kaat lein",
+              "lang": "ur-Latn",
+              "gloss": "it never came back, take it from salary"
+            },
+            "goesTo": "Not offered.",
+            "note": "Whether an unreturned item is recovered from salary as an advance is is not modelled, and the use case does not say (OQ-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.return.record",
+            "inputs": {
+              "issue_id": "$request.issue_phrase",
+              "return_date": "$request.return_date",
+              "condition": "$request.condition",
+              "condition_note": "$request.condition_note",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and the condition decides where the item goes: back onto the shelf, or to an adjustment (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. A return with no condition is not recorded (E6), and a return against a consumable issue is refused outright (E8).",
+        "atomicity": "One write. The issue closes and the balance rises **unless the item came back damaged or unusable**, in which case it goes to an adjustment with the reason and the shelf does not gain an item nobody can use (BR-8, E7, A3)."
+      },
+      "operations": [
+        {
+          "name": "stock.return.record",
+          "method": "POST",
+          "path": "/api/v1/stock-issues/{issue_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "issue_id, since an issue closes once and a repeat would raise the balance twice for one item coming back",
+          "purpose": "Record a returnable item coming back, with its date and condition.",
+          "parameters": [
+            {
+              "name": "issue_id",
+              "source": "resolved",
+              "sourceRef": "$request.issue_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_issue",
+                "fromPhrase": "$request.issue_phrase",
+                "onNoMatch": "Refuse. No open returnable issue matches. A consumable issue closed when it was made and nothing is expected back (BR-4, E8).",
+                "onAmbiguous": "Ask, naming the issues that match with their holders, items and how long each has been out."
+              },
+              "notes": "The open returnable issue, named by who holds it and what."
+            },
+            {
+              "name": "return_date",
+              "source": "request",
+              "sourceRef": "$request.return_date",
+              "required": true,
+              "type": "date",
+              "notes": "When it came back (BR-8)."
+            },
+            {
+              "name": "condition",
+              "source": "request",
+              "sourceRef": "$request.condition",
+              "required": true,
+              "type": "enum: Good|Damaged|Unusable",
+              "notes": "How it came back. Required (BR-8, E6). **Good raises the balance; Damaged and Unusable go to an adjustment instead** — the shelf must not gain an item nobody can use (E7, A3)."
+            },
+            {
+              "name": "condition_note",
+              "source": "request",
+              "sourceRef": "$request.condition_note",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required where the condition is not Good (BR-8) — it is what the adjustment is raised against and what explains a balance that will not rise."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What came back and where it went.",
+            "fields": [
+              {
+                "name": "issue_id",
+                "type": "string",
+                "description": "The issue."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Closed, or returned damaged where it cannot go back on the shelf (BR-8)."
+              },
+              {
+                "name": "returned_on",
+                "type": "date",
+                "description": "When."
+              },
+              {
+                "name": "condition",
+                "type": "string",
+                "description": "As recorded."
+              },
+              {
+                "name": "days_out",
+                "type": "integer",
+                "description": "How long it was out. A remote out for eleven days and one out for eight months close the same way and mean different things (BR-9)."
+              },
+              {
+                "name": "balance_raised",
+                "type": "boolean",
+                "description": "True only for a good return. A damaged or unusable item does not raise it (BR-8, E7)."
+              },
+              {
+                "name": "adjustment_required",
+                "type": "object",
+                "description": "Where the item came back damaged or unusable: what has to be raised, and against what reason. It is a separate act with its own approval (BR-8, A3)."
+              },
+              {
+                "name": "still_outstanding",
+                "type": "object[]",
+                "description": "Anything else still out against the same person. Closing one issue does not close the rest (BR-5, BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_CONDITION",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no condition.",
+              "written": "Nothing.",
+              "notWritten": "The issue stays open."
+            },
+            {
+              "code": "DAMAGED_CANNOT_RAISE_BALANCE",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "A damaged return was recorded as raising the balance.",
+              "written": "Nothing of that kind.",
+              "notWritten": "The balance does not rise.",
+              "note": "It goes to an adjustment with the reason instead (BR-8, A3)."
+            },
+            {
+              "code": "CONSUMABLE_NOT_RETURNABLE",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "A return was recorded against a consumable issue.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is recorded.",
+              "note": "The item is a consumable and nothing is expected back (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never guess the condition. It decides whether the item goes back on the shelf or to an adjustment, and a damaged item recorded as good is a balance that says the school has something usable when it does not (BR-8, E6, E7).",
+          "derivedFrom": [
+            "BR-8",
+            "E6",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that a damaged return does not raise the balance. It goes to an adjustment with the reason, which is a separate act with its own approval — until that is raised, the item is neither on the shelf nor out with anybody (BR-8, A3).",
+          "derivedFrom": [
+            "BR-8",
+            "A3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say how long it was out. Eleven days and eight months close identically and are different facts about how the store is being run (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say what is still outstanding against the same person. Closing one issue does not close the rest, and the moment somebody is at the counter returning something is the moment to mention the other two (BR-5, BR-9).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not un-recorded. A wrong one is corrected by a stock adjustment with its own reason and approval (BR-12, A7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "projector remote Sana se wapas aa gaya hai, theek halat mein",
+            "lang": "ur-Latn",
+            "gloss": "the projector remote has come back from Sana, in good condition"
+          },
+          "context": "Staff (storekeeper), Johar Town branch, out 19 days.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.return.record",
+              "inputs": {
+                "issue_id": "$request.issue_phrase → Sana's projector remote",
+                "return_date": "today",
+                "condition": "Good",
+                "condition_note": "not required",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Good, so it goes back on the shelf (PR-1)."
+            }
+          ],
+          "outcome": "Report the issue closed, the balance up by one, and that it was out 19 days. Add what the counter conversation is the moment for: Sana still has a set of lab keys outstanding from six weeks ago."
+        },
+        {
+          "request": {
+            "text": "remote wapas aaya hai lekin battery ka dhakkan toota hua hai",
+            "lang": "ur-Latn",
+            "gloss": "the remote has come back but the battery cover is broken"
+          },
+          "context": "Staff (storekeeper), Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.return.record",
+              "inputs": {
+                "issue_id": "$request.issue_phrase → the projector remote",
+                "return_date": "today",
+                "condition": "Damaged",
+                "condition_note": "as they described it — the battery cover is broken and it will not hold a battery",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Damaged, so the balance does not rise (PR-2)."
+            }
+          ],
+          "outcome": "The issue closes against Sana — she has returned it. But the balance does not go up: a remote that will not hold a battery is not stock the school can issue to anybody else. It goes to an adjustment with that reason, which is a separate act and needs approval, and until it is raised the item is neither on the shelf nor out."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-05-PC-4",
+      "intent": {
+        "name": "stock.person.holdings.read",
+        "summary": "See what one person has already been issued, how long ago, and what is still outstanding against them.",
+        "routesHere": [
+          "what has Imran already been issued?",
+          {
+            "text": "Imran ko pehle kya kya diya gaya hai?",
+            "lang": "ur-Latn",
+            "gloss": "what has Imran already been issued?"
+          },
+          {
+            "text": "Sana ke paas school ki kya kya cheezein hain?",
+            "lang": "ur-Latn",
+            "gloss": "what school items does Sana have?"
+          },
+          {
+            "text": "ye teacher ja rahe hain, unke naam pe kya baqi hai?",
+            "lang": "ur-Latn",
+            "gloss": "this teacher is leaving, what is outstanding against them?"
+          },
+          "show me what this student is still holding"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "sab ke paas kya kya hai?",
+              "lang": "ur-Latn",
+              "gloss": "what is everybody holding?"
+            },
+            "goesTo": "stock.issues.outstanding.read — this use case.",
+            "note": "The whole outstanding list is the other question. This one is about a single person, usually with them standing at the counter (BR-2)."
+          },
+          {
+            "request": {
+              "text": "store mein kitna para hai?",
+              "lang": "ur-Latn",
+              "gloss": "how much is in the store?"
+            },
+            "goesTo": "stock.items.read — UC-18-01.",
+            "note": "What is on the shelf and what is out with people are different quantities."
+          },
+          {
+            "request": {
+              "text": "unke assets bhi dikha dein",
+              "lang": "ur-Latn",
+              "gloss": "show their assets too"
+            },
+            "goesTo": "asset.assignments.read — UC-18-08.",
+            "note": "An asset assigned to somebody is recorded on the asset register, not as a stock issue. Both appear on an exit handover checklist together (BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.person.holdings.read",
+            "inputs": {
+              "person_id": "$request.person_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. It is the check the storekeeper makes before handing anything over (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. Where the person cannot be identified nothing is returned — the holdings of the wrong person are worse than none, because they are the basis for handing something over.",
+        "atomicity": "A read. Nothing is issued, returned or changed by looking."
+      },
+      "operations": [
+        {
+          "name": "stock.person.holdings.read",
+          "method": "GET",
+          "path": "/api/v1/people/{person_id}/stock-holdings",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return what a person has been issued and what is still outstanding against them.",
+          "parameters": [
+            {
+              "name": "person_id",
+              "source": "resolved",
+              "sourceRef": "$request.person_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "person",
+                "fromPhrase": "$request.person_phrase",
+                "onNoMatch": "Refuse. No active staff member or student matches, or they are outside the actor's scope.",
+                "onAmbiguous": "Ask, showing each candidate with their name, class and section or role, and identifier."
+              },
+              "notes": "The person, confirmed through the same person picker the card use case specifies (BR-1)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What they have had and what they still have.",
+            "fields": [
+              {
+                "name": "person",
+                "type": "string",
+                "description": "Who."
+              },
+              {
+                "name": "outstanding",
+                "type": "object[]",
+                "description": "Returnable items still out: item, quantity, issued on, and how long ago. These are owed back (BR-5, BR-9)."
+              },
+              {
+                "name": "history",
+                "type": "object[]",
+                "description": "Everything issued to them, consumables included. A consumable closes at once and stays on the history, which is how a repeat is visible (BR-4)."
+              },
+              {
+                "name": "repeat_issues",
+                "type": "object[]",
+                "description": "The same item issued to the same person more than once in a short period. This is what BR-2 exists to put in front of a storekeeper (BR-2, A1)."
+              },
+              {
+                "name": "longest_outstanding",
+                "type": "object",
+                "description": "The item out the longest, with the days. Beyond the configured number it should have been chased — and after how many days is not specified anywhere (BR-9, OQ-2)."
+              },
+              {
+                "name": "on_exit_checklist",
+                "type": "boolean",
+                "description": "Where the person is leaving, everything outstanding appears on their exit handover checklist and has to be returned before the leaving date (BR-11, E11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERSON",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "No person was selected.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Lead with what is still outstanding, not with the history. The question is almost always asked with the person at the counter or on their way out of the school, and the outstanding items are the ones that have to come back (BR-5, BR-11).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the repeats. The same item to the same person twice in a fortnight is the exact case the check exists for, and it does not stand out in a list sorted by date (BR-2, A1).",
+          "derivedFrom": [
+            "BR-2",
+            "A1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Give the days, not only the dates. \"Issued on 12 November\" and \"out for 47 days\" are the same fact and only one of them reads as a problem (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say when somebody is leaving. Everything outstanding has to be returned before the leaving date, and the exit cannot complete until it is (BR-11, E11).",
+          "derivedFrom": [
+            "BR-11",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Imran ko pehle kya kya diya gaya hai?",
+            "lang": "ur-Latn",
+            "gloss": "what has Imran already been issued?"
+          },
+          "context": "Staff (storekeeper), Johar Town branch, Imran at the counter.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.person.holdings.read",
+              "inputs": {
+                "person_id": "$request.person_phrase → Imran Sultan",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-1)."
+            }
+          ],
+          "outcome": "Give what is still outstanding first — a set of lab keys, out 47 days — then the history. Point out the repeat: 4 markers twelve days ago, which is the thing worth knowing before handing over another four."
+        },
+        {
+          "request": {
+            "text": "ye teacher agle hafte ja rahe hain, unke naam pe kya baqi hai?",
+            "lang": "ur-Latn",
+            "gloss": "this teacher is leaving next week, what is outstanding against them?"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.person.holdings.read",
+              "inputs": {
+                "person_id": "$request.person_phrase → the teacher named",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-4)."
+            }
+          ],
+          "outcome": "List the three returnable items outstanding with the days each has been out. Say plainly that these appear on the exit handover checklist and the exit cannot complete until they come back — and add that any asset assigned to them is a separate register with its own line on the same checklist."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-05-PC-5",
+      "intent": {
+        "name": "stock.issues.outstanding.read",
+        "summary": "See every returnable item still out, who holds it and for how long.",
+        "routesHere": [
+          "what returnable items are still out?",
+          {
+            "text": "kaunsi cheezein abhi tak wapas nahi aayin?",
+            "lang": "ur-Latn",
+            "gloss": "which items have still not come back?"
+          },
+          {
+            "text": "kis kis ke paas school ka saman para hai?",
+            "lang": "ur-Latn",
+            "gloss": "who is holding the school's things?"
+          },
+          {
+            "text": "ek mahine se zyada purani cheezein dikhayein",
+            "lang": "ur-Latn",
+            "gloss": "show me the ones out longer than a month"
+          },
+          "list the outstanding items by holder"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "in sab ko yaad dila dein",
+              "lang": "ur-Latn",
+              "gloss": "remind all of them"
+            },
+            "goesTo": "stock.issue.chase — this use case.",
+            "note": "Reading the list and chasing on it are separate acts (BR-9, A5)."
+          },
+          {
+            "request": {
+              "text": "store mein kitna para hai?",
+              "lang": "ur-Latn",
+              "gloss": "how much is in the store?"
+            },
+            "goesTo": "stock.items.read — UC-18-01.",
+            "note": "A returnable item shows a low balance because people are holding it, not because the school is short of it."
+          },
+          {
+            "request": {
+              "text": "jo wapas nahi aaye unki tankhwah kaat lein",
+              "lang": "ur-Latn",
+              "gloss": "dock the pay of those who did not return"
+            },
+            "goesTo": "Not offered.",
+            "note": "Whether an unreturned item is recovered from salary as an advance is is not modelled anywhere (OQ-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.issues.outstanding.read",
+            "inputs": {
+              "older_than_days": "$request.older_than_days",
+              "person_phrase": "$request.person_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read, visible to the storekeeper, the School Admin and the Principal (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written, chased or closed by looking."
+      },
+      "operations": [
+        {
+          "name": "stock.issues.outstanding.read",
+          "method": "GET",
+          "path": "/api/v1/stock-issues/outstanding",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List returnable items still outstanding, with their holders and days out.",
+          "parameters": [
+            {
+              "name": "older_than_days",
+              "source": "request",
+              "sourceRef": "$request.older_than_days",
+              "required": false,
+              "type": "integer",
+              "notes": "Where the question is about how long. The number of days beyond which an item is chased is not specified anywhere (BR-9, OQ-2)."
+            },
+            {
+              "name": "person_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.person_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "person",
+                "fromPhrase": "$request.person_phrase",
+                "onNoMatch": "Refuse. No active staff member or student matches.",
+                "onAmbiguous": "Ask, showing each candidate with their name, role or class and identifier."
+              },
+              "notes": "Where the question is about one person."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What is out and who has it.",
+            "fields": [
+              {
+                "name": "outstanding",
+                "type": "object[]",
+                "description": "Item, quantity, holder, issued on and days out (BR-9)."
+              },
+              {
+                "name": "by_holder",
+                "type": "object[]",
+                "description": "Grouped by person. Somebody holding four separate items is a different conversation from four people holding one each."
+              },
+              {
+                "name": "past_chasing_point",
+                "type": "object[]",
+                "description": "Items out beyond the configured number of days. What that number is, is not specified (BR-9, OQ-2)."
+              },
+              {
+                "name": "never_chased",
+                "type": "object[]",
+                "description": "Items past that point that nobody has chased. The list is only a control if somebody acts on it (BR-9, A5)."
+              },
+              {
+                "name": "holders_who_have_left",
+                "type": "object[]",
+                "description": "Items outstanding against people who have already left the school. The exit checklist should have caught these, and anything here is one it did not (BR-11, E11)."
+              },
+              {
+                "name": "students_holding",
+                "type": "object[]",
+                "description": "Items out with students. Whether stock is ever issued to a student at all is an open question this use case raises and does not answer (OQ-3)."
+              },
+              {
+                "name": "visible_to",
+                "type": "string[]",
+                "description": "Storekeeper, School Admin and Principal (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the outstanding-issues list.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned.",
+              "note": "It is visible to the storekeeper, the School Admin and the Principal (BR-9), but the use case writes no exception for anybody else opening it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Group by holder as well as by item. One person holding four things and four people holding one each are the same eight rows and completely different situations (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the items nobody has chased. The list is a control only if somebody acts on it, and an item sitting unchased past the point is the failure it was meant to catch (BR-9, A5).",
+          "derivedFrom": [
+            "BR-9",
+            "A5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name anything outstanding against somebody who has already left. The exit checklist is supposed to prevent this, so every row here is one that got past it (BR-11, E11).",
+          "derivedFrom": [
+            "BR-11",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never say how long is too long. The number of days beyond which an item is chased is not written down anywhere (BR-9, OQ-2).",
+          "derivedFrom": [
+            "BR-9",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "kis kis ke paas school ka saman para hai?",
+            "lang": "ur-Latn",
+            "gloss": "who is holding the school's things?"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.issues.outstanding.read",
+              "inputs": {
+                "older_than_days": "omitted",
+                "person_phrase": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-1)."
+            }
+          ],
+          "outcome": "Give it grouped by holder with the days on each. Then the two rows that matter most and read like the rest: the items nobody has ever chased, and anything still out against somebody who has already left the school — the exit checklist was supposed to catch those."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-05-PC-6",
+      "intent": {
+        "name": "stock.issue.chase",
+        "summary": "Ask a holder to bring back a returnable item that has been out too long.",
+        "routesHere": [
+          "chase Imran for the lab keys",
+          {
+            "text": "Imran se chabiyan mangwa lein, bohot din ho gaye",
+            "lang": "ur-Latn",
+            "gloss": "ask Imran for the keys, it has been a long time"
+          },
+          {
+            "text": "jo cheezein mahine se zyada bahar hain unhein chase kar dein",
+            "lang": "ur-Latn",
+            "gloss": "chase the items out longer than a month"
+          },
+          "remind the people holding overdue items"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "cheez wapas aa gayi hai",
+              "lang": "ur-Latn",
+              "gloss": "the item has come back"
+            },
+            "goesTo": "stock.return.record — this use case.",
+            "note": "Recording the return closes the issue and, where the condition is good, raises the balance (BR-8)."
+          },
+          {
+            "request": {
+              "text": "tankhwah se kaat lein",
+              "lang": "ur-Latn",
+              "gloss": "take it out of their salary"
+            },
+            "goesTo": "Not offered.",
+            "note": "Whether an item never returned is recovered from salary as an advance is is not modelled, and the use case does not say (OQ-4)."
+          },
+          {
+            "request": {
+              "text": "consumable ke liye bhi yaad dila dein",
+              "lang": "ur-Latn",
+              "gloss": "chase the consumables too"
+            },
+            "goesTo": "Not offered.",
+            "note": "A consumable is used up once issued and nothing is expected back. Only a returnable stays outstanding (BR-4, BR-5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.issue.chase",
+            "inputs": {
+              "issue_id": "$request.issue_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The holder is asked; nothing about the issue changes and the item stays outstanding until it is recorded back (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. An issue already closed is not chased, and a consumable issue cannot be chased at all (BR-4).",
+        "atomicity": "One notification. The issue stays open, the balance stays as it is, and the days keep counting — chasing records that somebody asked, not that anything came back (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "stock.issue.chase",
+          "method": "POST",
+          "path": "/api/v1/stock-issues/{issue_id}/chase",
+          "kind": "action",
+          "idempotent": true,
+          "idempotencyKey": "issue_id + the day, so a holder is not chased twice in one day for the same item",
+          "purpose": "Ask the holder of an outstanding returnable item to return it.",
+          "parameters": [
+            {
+              "name": "issue_id",
+              "source": "resolved",
+              "sourceRef": "$request.issue_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_issue",
+                "fromPhrase": "$request.issue_phrase",
+                "onNoMatch": "Refuse. No open returnable issue matches. A consumable closed when it was issued and nothing is expected back (BR-4).",
+                "onAmbiguous": "Ask, naming the outstanding issues with their holders, items and days out."
+              },
+              "notes": "The open returnable issue."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who was asked and what is still owed.",
+            "fields": [
+              {
+                "name": "issue_id",
+                "type": "string",
+                "description": "The issue."
+              },
+              {
+                "name": "holder",
+                "type": "string",
+                "description": "Who was asked."
+              },
+              {
+                "name": "item",
+                "type": "string",
+                "description": "What is owed back."
+              },
+              {
+                "name": "days_out",
+                "type": "integer",
+                "description": "How long it has been out (BR-9)."
+              },
+              {
+                "name": "chased_before",
+                "type": "integer",
+                "description": "How many times this issue has already been chased. A third reminder means the reminders are not working."
+              },
+              {
+                "name": "still_outstanding",
+                "type": "boolean",
+                "description": "True, always. Chasing records that somebody asked, not that anything came back (BR-9)."
+              },
+              {
+                "name": "holder_other_outstanding",
+                "type": "object[]",
+                "description": "Anything else out against the same person, which is worth putting in the same message rather than sending three."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CONSUMABLE_NOT_RETURNABLE",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The issue is for a consumable.",
+              "written": "Nothing.",
+              "notWritten": "Nobody is chased.",
+              "note": "Nothing is expected back (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that chasing changes nothing. The item is still out, the balance is unchanged and the days keep counting — a chased issue and an unchased one differ only in whether somebody asked (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Put everything the person holds in one message. Three separate reminders to the same person on the same day is how reminders stop being read (BR-9, BR-2).",
+          "derivedFrom": [
+            "BR-9",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say how many times they have been chased already. A third reminder is not a fourth reminder's problem — it means this route is not working and something else has to happen (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never threaten a recovery. Whether an unreturned item is ever recovered from salary is not modelled anywhere, so nothing here can promise a consequence (OQ-4).",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A reminder cannot be unsent, and nothing about the issue changed to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Imran se lab ki chabiyan mangwa lein",
+            "lang": "ur-Latn",
+            "gloss": "ask Imran for the lab keys"
+          },
+          "context": "Staff (storekeeper), Johar Town branch, out 47 days, chased once already.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.issue.chase",
+              "inputs": {
+                "issue_id": "$request.issue_phrase → Imran's lab keys",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One reminder, and nothing about the issue changes (PR-1)."
+            }
+          ],
+          "outcome": "Report that he has been asked, that this is the second time, and that the keys are still out — chasing records the asking, not the returning. Put the projector remote he also holds into the same message rather than sending two. If a third reminder is needed, the reminders are not the answer."
+        }
+      ]
+    }
+  ]
+}

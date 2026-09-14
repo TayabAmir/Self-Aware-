@@ -1,0 +1,1790 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-06-07",
+    "name": "Hold every question in one reusable store and assemble papers and quizzes from it",
+    "module": "Examination",
+    "file": "../UseCases/UC-06-07.json",
+    "featureRef": "6.7 Question bank and paper generation"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-06-07-PC-1",
+      "intent": {
+        "name": "question.create",
+        "summary": "Write a question into the bank with its class, subject, answer key and marks. One step, and writing it and banking it are the same act.",
+        "routesHere": [
+          "add a question to the bank — class 8 maths, short answer, worth 5",
+          {
+            "text": "bank mein naya sawal daal do",
+            "lang": "ur-Latn",
+            "gloss": "add a new question to the bank"
+          },
+          {
+            "text": "class 8 maths ka sawal likhna hai, 5 number ka",
+            "lang": "ur-Latn",
+            "gloss": "I need to write a class 8 maths question, worth 5 marks"
+          },
+          {
+            "text": "ye sawal bank mein mehfooz kar do",
+            "lang": "ur-Latn",
+            "gloss": "save this question in the bank"
+          },
+          "store this multiple choice question with its options and answer"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "sawal paper mein daal do",
+              "lang": "ur-Latn",
+              "gloss": "put the question into the paper"
+            },
+            "goesTo": "paper.question.add — UC-06-07-PC-3",
+            "note": "A question written new is added to the bank as it is used (BR-6). Attaching it to a paper is the next act, not the same one."
+          },
+          {
+            "request": {
+              "text": "ghalat sawal hata do",
+              "lang": "ur-Latn",
+              "gloss": "remove the wrong question"
+            },
+            "goesTo": "question.retire — UC-06-07-PC-4",
+            "note": "A question is retired rather than deleted, and stays attached to the papers that used it (BR-8)."
+          },
+          {
+            "request": {
+              "text": "bachon ko sawal dikha do",
+              "lang": "ur-Latn",
+              "gloss": "show the questions to the students"
+            },
+            "goesTo": "Not offered.",
+            "note": "A question bank is never visible to a student or a guardian. A readable bank is a leaked paper (BR-12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "question.create",
+            "inputs": {
+              "class_id": "$request.class_phrase",
+              "subject_id": "$request.subject_phrase",
+              "question_type": "$request.question_type",
+              "question_text": "$request.question_text",
+              "options": "$request.options",
+              "answer_key": "$request.answer_key",
+              "marks": "$request.marks",
+              "topic": "$request.topic",
+              "difficulty": "$request.difficulty",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every question carries a class, a subject and an answer key — without those three it cannot be found again or marked (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing answer key, a missing class or subject, and a multiple-choice question with no options each arrive as errors.",
+        "atomicity": "One write: the question and the audit entry together or not at all. It is available for reuse from that moment, which is why the bank fills without anybody remembering to add to it (BR-3). It is visible to no student or guardian (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "question.create",
+          "method": "POST",
+          "path": "/api/v1/question-bank/questions",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "class_id + subject_id + question_text, since the same question written twice is one question",
+          "purpose": "Write a question into the bank.",
+          "parameters": [
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class the question is for. Every question carries one (BR-1, E2)."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. No subject matches, or it is not one the actor teaches.",
+                "onAmbiguous": "Ask, naming the subjects the actor may write for."
+              },
+              "notes": "The subject. A teacher works within their own subjects; a Coordinator across their remit (BR-5)."
+            },
+            {
+              "name": "question_type",
+              "source": "request",
+              "sourceRef": "$request.question_type",
+              "required": true,
+              "type": "enum: Multiple choice | True or false | Short answer | Long answer | Numerical",
+              "notes": "What kind of question it is. It decides whether options are required (E3)."
+            },
+            {
+              "name": "question_text",
+              "source": "request",
+              "sourceRef": "$request.question_text",
+              "required": true,
+              "type": "string",
+              "notes": "5 to 2000 characters, as the teacher wrote it. Never rephrased, tidied or translated — a question read differently by a child is a different question."
+            },
+            {
+              "name": "options",
+              "source": "request",
+              "sourceRef": "$request.options",
+              "required": false,
+              "type": "string[]",
+              "notes": "The choices offered, where the type is multiple choice (E3). The teacher's own, including the wrong ones — a distractor a planner invented is a trap nobody designed."
+            },
+            {
+              "name": "answer_key",
+              "source": "request",
+              "sourceRef": "$request.answer_key",
+              "required": true,
+              "type": "string",
+              "notes": "The correct answer, or the marking points for a written question (BR-1, E1). Never derived from the question — a planner that worked out the answer has set what the school will mark as correct."
+            },
+            {
+              "name": "marks",
+              "source": "request",
+              "sourceRef": "$request.marks",
+              "required": true,
+              "type": "number",
+              "notes": "What the question is worth. Greater than zero."
+            },
+            {
+              "name": "topic",
+              "source": "request",
+              "sourceRef": "$request.topic",
+              "required": false,
+              "type": "string",
+              "notes": "Optional. Makes the bank searchable by what the question is about (BR-2)."
+            },
+            {
+              "name": "difficulty",
+              "source": "request",
+              "sourceRef": "$request.difficulty",
+              "required": false,
+              "type": "enum: Easy | Medium | Hard",
+              "notes": "Optional (BR-2). The teacher's judgement, never inferred from the question's wording."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The question as banked.",
+            "fields": [
+              {
+                "name": "question_id",
+                "type": "string",
+                "description": "The question."
+              },
+              {
+                "name": "class_id",
+                "type": "string",
+                "description": "Its class."
+              },
+              {
+                "name": "subject_id",
+                "type": "string",
+                "description": "Its subject."
+              },
+              {
+                "name": "marks",
+                "type": "number",
+                "description": "What it is worth."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Active."
+              },
+              {
+                "name": "similar_existing",
+                "type": "object[]",
+                "description": "Questions already in the bank for that class and subject with the same topic. Nobody has to rewrite what the school already has."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_ANSWER_KEY",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A question was saved with no answer key.",
+              "written": "Nothing.",
+              "notWritten": "No question saved.",
+              "note": "Without one it cannot be marked (BR-1). Ask the teacher; never derive it."
+            },
+            {
+              "code": "NO_CLASS_OR_SUBJECT",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "A question was saved with no class or subject.",
+              "written": "Nothing.",
+              "notWritten": "No question saved.",
+              "note": "Without them it cannot be found again (BR-1)."
+            },
+            {
+              "code": "NO_OPTIONS",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A multiple-choice question was saved with no options.",
+              "written": "Nothing.",
+              "notWritten": "No question saved."
+            },
+            {
+              "code": "SUBJECT_NOT_TAUGHT",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The subject is not one the acting teacher teaches.",
+              "written": "Nothing.",
+              "notWritten": "No question saved.",
+              "note": "A teacher works within their own subjects (BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write, rephrase or complete the question text. It is what a child reads in an exam hall, and a question a planner tidied is a different question from the one the teacher set.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never derive the answer key. It is what the school will mark as correct (BR-1), and a planner that worked out the answer has decided that for every student who sits the paper.",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never invent options for a multiple-choice question. The wrong answers are as deliberate as the right one, and a distractor a planner supplied is a trap nobody designed.",
+          "derivedFrom": [
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never infer the topic or the difficulty. Both are optional so that a teacher entering a question during a busy week is not blocked by taxonomy (BR-2) — a guess fills the field without anybody deciding it.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report questions already in the bank on that topic. Nobody should rewrite what the school already has, and that is the whole point of the bank.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never read a question's text or answer key back to anybody outside the bank's readers. A readable bank is a leaked paper (BR-12).",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A question is retired with a reason rather than deleted, and stays attached to the papers that used it (BR-8). There is no delete control (E8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "class 8 maths ka short answer sawal bank mein daal do, 5 number ka",
+            "lang": "ur-Latn",
+            "gloss": "add a class 8 maths short answer question to the bank, worth 5 marks"
+          },
+          "context": "Teacher, Johar Town branch, maths assigned to them. Text and answer key given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "question.create",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"class 8\"",
+                "subject_id": "$request.subject_phrase → \"maths\"",
+                "question_type": "Short answer",
+                "question_text": "as the teacher wrote it",
+                "options": "omitted",
+                "answer_key": "as the teacher gave it",
+                "marks": "5",
+                "topic": "$request.topic",
+                "difficulty": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Text and key are verbatim (PR-1, PR-2). Difficulty is left out rather than guessed (PR-4)."
+            }
+          ],
+          "outcome": "Banked and available for reuse. Report any similar questions already there on the same topic (PR-5)."
+        },
+        {
+          "request": {
+            "text": "ye MCQ bank mein daal do",
+            "lang": "ur-Latn",
+            "gloss": "add this MCQ to the bank"
+          },
+          "context": "Teacher, Johar Town branch, who gave the question and the correct answer but no options.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "question.create",
+              "inputs": {
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "question_type": "Multiple choice",
+                "question_text": "as given",
+                "options": "$request.options — absent",
+                "answer_key": "as given",
+                "marks": "$request.marks",
+                "topic": "omitted",
+                "difficulty": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The options have nothing to take them from (PR-3)."
+            }
+          ],
+          "outcome": "Nothing is saved. Ask for the choices to be offered, including the wrong ones — a multiple-choice question is mostly its distractors, and inventing them would be setting the question."
+        },
+        {
+          "request": {
+            "text": "sawal likh do aur jawab bhi khud nikal lo",
+            "lang": "ur-Latn",
+            "gloss": "write the question and work out the answer yourself"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "question.create",
+              "inputs": {
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "question_type": "$request.question_type",
+                "question_text": "$request.question_text — absent",
+                "options": "omitted",
+                "answer_key": "$request.answer_key — absent",
+                "marks": "$request.marks",
+                "topic": "omitted",
+                "difficulty": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Neither the text nor the key has anything to take it from (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Nothing is saved. Report that the answer key is what the school marks as correct for every child who sits the paper — it is the teacher's to set, not something to derive from the question."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-07-PC-2",
+      "intent": {
+        "name": "paper.create",
+        "summary": "Start a paper for a class and subject, to be filled from the bank. One step.",
+        "routesHere": [
+          "start a new maths paper for class 8",
+          {
+            "text": "class 8 ke liye naya maths ka paper banao",
+            "lang": "ur-Latn",
+            "gloss": "start a new maths paper for class 8"
+          },
+          {
+            "text": "naya paper shuru karo",
+            "lang": "ur-Latn",
+            "gloss": "start a new paper"
+          },
+          {
+            "text": "quiz ke liye paper banana hai",
+            "lang": "ur-Latn",
+            "gloss": "we need a paper for a quiz"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "paper mein sawal daal do",
+              "lang": "ur-Latn",
+              "gloss": "put questions into the paper"
+            },
+            "goesTo": "paper.question.add — UC-06-07-PC-3"
+          },
+          {
+            "request": {
+              "text": "paper pakka kar do",
+              "lang": "ur-Latn",
+              "gloss": "finalise the paper"
+            },
+            "goesTo": "paper.finalise — UC-06-07-PC-5"
+          },
+          {
+            "request": {
+              "text": "paper exam ke sath laga do",
+              "lang": "ur-Latn",
+              "gloss": "attach the paper to the exam"
+            },
+            "goesTo": "exam.paper.assign — UC-06-01-PC-2",
+            "note": "Assembling a paper and attaching it to a scheduled exam are different acts."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "paper.create",
+            "inputs": {
+              "class_id": "$request.class_phrase",
+              "subject_id": "$request.subject_phrase",
+              "title": "$request.title",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The class and subject fix which questions may be pulled into it — a question from another class or subject is refused (E5)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the paper in Draft, with the audit entry. It holds no questions yet and is used by nothing until it is finalised and reviewed (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "paper.create",
+          "method": "POST",
+          "path": "/api/v1/papers",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "class_id + subject_id + title, since a title identifies a paper within a subject",
+          "purpose": "Start a paper for a class and subject.",
+          "parameters": [
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class the paper is for."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. No subject matches, or it is not one the actor teaches.",
+                "onAmbiguous": "Ask, naming the subjects the actor may build for."
+              },
+              "notes": "The subject. A teacher works within their own subjects (BR-5)."
+            },
+            {
+              "name": "title",
+              "source": "request",
+              "sourceRef": "$request.title",
+              "required": true,
+              "type": "string",
+              "notes": "What the paper is called. The actor's."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The paper as started.",
+            "fields": [
+              {
+                "name": "paper_id",
+                "type": "string",
+                "description": "The paper."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft."
+              },
+              {
+                "name": "class_id",
+                "type": "string",
+                "description": "Its class."
+              },
+              {
+                "name": "subject_id",
+                "type": "string",
+                "description": "Its subject."
+              },
+              {
+                "name": "questions_count",
+                "type": "integer",
+                "description": "Zero. A paper is finalised only with questions in it (E6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SUBJECT_NOT_TAUGHT",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The subject is not one the acting teacher teaches.",
+              "written": "Nothing.",
+              "notWritten": "No paper created."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the class or the subject. They fix which questions can go into the paper (E5), and a paper started against the wrong class cannot be filled from the bank at all.",
+          "derivedFrom": [
+            "BR-4",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never describe a new paper as ready. It holds no questions, and a paper is reviewed and finalised before it is used for anything (BR-9, E6).",
+          "derivedFrom": [
+            "BR-9",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A draft paper is left unused rather than removed. Once finalised, a change produces a new version rather than altering one already sat (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "class 8 ke liye maths ka naya paper shuru karo",
+            "lang": "ur-Latn",
+            "gloss": "start a new maths paper for class 8"
+          },
+          "context": "Teacher, Johar Town branch, maths assigned to them.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.create",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"class 8\"",
+                "subject_id": "$request.subject_phrase → \"maths\"",
+                "title": "$request.title",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The paper stands in Draft with no questions. Report that questions are pulled from the bank next, and that it is used by nothing until it is finalised (PR-2)."
+        },
+        {
+          "request": {
+            "text": "physics ka paper banao",
+            "lang": "ur-Latn",
+            "gloss": "build a physics paper"
+          },
+          "context": "Teacher, Johar Town branch, who teaches maths only.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.create",
+              "inputs": {
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase → \"physics\"",
+                "title": "$request.title",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns SUBJECT_NOT_TAUGHT (E4)."
+            }
+          ],
+          "outcome": "Nothing is created. Report that a teacher works within their own subjects and that the Coordinator builds across the remit."
+        },
+        {
+          "request": {
+            "text": "paper banao aur bank se sawal bhi bhar do",
+            "lang": "ur-Latn",
+            "gloss": "create the paper and fill it with questions from the bank"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.create",
+              "inputs": {
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "title": "$request.title",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The paper only. Which questions go into it is the teacher's choice, question by question (PR-1)."
+            }
+          ],
+          "outcome": "The paper is started. Report that questions are searched by class and subject and pulled in deliberately — a paper filled automatically is a paper nobody set."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-07-PC-3",
+      "intent": {
+        "name": "paper.question.add",
+        "summary": "Pull a question from the bank into a paper, in its place and for its marks. One step.",
+        "routesHere": [
+          "add this question to the paper as question 4, worth 5",
+          {
+            "text": "paper mein ye sawal daal do",
+            "lang": "ur-Latn",
+            "gloss": "put this question into the paper"
+          },
+          {
+            "text": "bank se sawal utha kar paper mein lagao",
+            "lang": "ur-Latn",
+            "gloss": "take the question from the bank and put it in the paper"
+          },
+          {
+            "text": "sawal number 4 par rakho",
+            "lang": "ur-Latn",
+            "gloss": "place it as question 4"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "naya sawal likhna hai",
+              "lang": "ur-Latn",
+              "gloss": "we need to write a new question"
+            },
+            "goesTo": "question.create — UC-06-07-PC-1, then add it",
+            "note": "Writing a question and banking it are the same act (BR-6); adding it to the paper is the next one."
+          },
+          {
+            "request": {
+              "text": "paper pakka kar do",
+              "lang": "ur-Latn",
+              "gloss": "finalise the paper"
+            },
+            "goesTo": "paper.finalise — UC-06-07-PC-5"
+          },
+          {
+            "request": {
+              "text": "pakke paper mein sawal badal do",
+              "lang": "ur-Latn",
+              "gloss": "change a question in a finalised paper"
+            },
+            "goesTo": "paper.version.create — UC-06-07-PC-6",
+            "note": "A finalised paper's questions are fixed. Changing one produces a new version rather than altering a paper already sat (BR-10, E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "paper.question.add",
+            "inputs": {
+              "paper_id": "$request.paper_phrase",
+              "question_id": "$request.question_phrase",
+              "order": "$request.order",
+              "marks": "$request.marks",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A paper is built by searching the bank by class and subject and pulling in the questions wanted (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. A question from another class or subject, and any change to a finalised paper, arrive as errors.",
+        "atomicity": "One write: the question in its place in the paper, with the audit entry. The bank records that it has been used and where, so a teacher can avoid repeating it next term (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "paper.question.add",
+          "method": "POST",
+          "path": "/api/v1/papers/{paper_id}/questions",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "paper_id + question_id, since a question appears once in a paper",
+          "purpose": "Add one bank question to a paper at a given position and mark value.",
+          "parameters": [
+            {
+              "name": "paper_id",
+              "source": "resolved",
+              "sourceRef": "$request.paper_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "paper",
+                "fromPhrase": "$request.paper_phrase",
+                "onNoMatch": "Refuse. No paper matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates by title, class and subject — never by their questions."
+              },
+              "notes": "The paper being assembled. Its contents are never read into the plan or the reply (BR-12)."
+            },
+            {
+              "name": "question_id",
+              "source": "resolved",
+              "sourceRef": "$request.question_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "question",
+                "fromPhrase": "$request.question_phrase",
+                "onNoMatch": "Refuse. No question in the bank matches for that class and subject.",
+                "onAmbiguous": "Ask, naming the candidates by topic, type and marks — never by their text or answer."
+              },
+              "notes": "The question in the bank, matching the paper's class and subject (E5). Named by topic or reference, never by its text."
+            },
+            {
+              "name": "order",
+              "source": "request",
+              "sourceRef": "$request.order",
+              "required": false,
+              "type": "integer",
+              "notes": "Where it sits in the paper. Appended at the end where the actor did not say."
+            },
+            {
+              "name": "marks",
+              "source": "request",
+              "sourceRef": "$request.marks",
+              "required": false,
+              "type": "number",
+              "notes": "What the question is worth in this paper. Where omitted, the bank's own mark value is used — never a figure a planner chose."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The question as placed.",
+            "fields": [
+              {
+                "name": "paper_id",
+                "type": "string",
+                "description": "The paper."
+              },
+              {
+                "name": "question_id",
+                "type": "string",
+                "description": "The question."
+              },
+              {
+                "name": "order",
+                "type": "integer",
+                "description": "Its position."
+              },
+              {
+                "name": "marks",
+                "type": "number",
+                "description": "What it is worth here."
+              },
+              {
+                "name": "paper_total",
+                "type": "number",
+                "description": "The paper's total so far."
+              },
+              {
+                "name": "times_used",
+                "type": "integer",
+                "description": "How often this question has appeared in a paper or quiz (BR-11)."
+              },
+              {
+                "name": "last_used",
+                "type": "string",
+                "description": "Which paper or quiz used it most recently, so a teacher can avoid repeating it (BR-11)"
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WRONG_CLASS_OR_SUBJECT",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The question belongs to a different class or subject.",
+              "written": "Nothing.",
+              "notWritten": "Nothing added."
+            },
+            {
+              "code": "PAPER_FINALISED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The paper is finalised.",
+              "written": "Nothing.",
+              "notWritten": "Nothing added.",
+              "note": "A finalised paper's questions are fixed. A change produces a new version (BR-10)."
+            },
+            {
+              "code": "ALREADY_IN_PAPER",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The question is already in this paper.",
+              "written": "Nothing.",
+              "notWritten": "Nothing added."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose which questions make up a paper. A paper is what a class is examined on, and a planner that picked five questions on difficulty has set the exam.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply the mark value. Where the actor did not state one, omit it and the bank's own figure is used — a planner's number changes what the question is worth to every student who answers it.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never quote a question's text or answer while naming candidates. A readable bank is a leaked paper (BR-12) — identify questions by topic, type and marks.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report where a question was last used. Avoiding a repeat in consecutive terms is exactly what the bank records this for (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never edit a finalised paper. E9 is BR-10 working: a change produces a new version rather than altering one already sat.",
+          "derivedFrom": [
+            "BR-10",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A question is removed from a draft paper on the screen. Once the paper is finalised, a change is a new version (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "bank se algebra wala sawal paper mein chauthe number par daal do",
+            "lang": "ur-Latn",
+            "gloss": "put the algebra question from the bank into the paper as question four"
+          },
+          "context": "Teacher, Johar Town branch, on a draft maths paper for class 8.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.question.add",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "question_id": "$request.question_phrase → the algebra question",
+                "order": "4",
+                "marks": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The mark value is left to the bank's own (PR-2)."
+            }
+          ],
+          "outcome": "Added. Report the paper's total so far and that this question was last used in a named paper (PR-4) — worth knowing before it appears in consecutive terms."
+        },
+        {
+          "request": {
+            "text": "paper ke liye bank se 10 aasan sawal khud chun lo",
+            "lang": "ur-Latn",
+            "gloss": "choose 10 easy questions from the bank for the paper yourself"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.question.add",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "question_id": "$request.question_phrase — absent",
+                "order": "omitted",
+                "marks": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Which questions make up the paper is the teacher's (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is added. Offer to list the bank's easy questions for that class and subject by topic and marks so the teacher can choose — the list is a help, the choice is theirs."
+        },
+        {
+          "request": {
+            "text": "pakke paper mein doosra sawal badal do",
+            "lang": "ur-Latn",
+            "gloss": "change the second question in the finalised paper"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.question.add",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "question_id": "$request.question_phrase",
+                "order": "2",
+                "marks": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns PAPER_FINALISED (E9)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that a new version of the paper is made instead — a paper already sat is not altered underneath the students who sat it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-07-PC-4",
+      "intent": {
+        "name": "question.retire",
+        "summary": "Retire a question with the reason, keeping it attached to the papers that used it. Coordinator only, one step.",
+        "routesHere": [
+          "retire this question — the syllabus has changed",
+          {
+            "text": "ye sawal band kar do, syllabus badal gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "retire this question, the syllabus has changed"
+          },
+          {
+            "text": "sawal ghalat hai, ab istemal na ho",
+            "lang": "ur-Latn",
+            "gloss": "the question is wrong, it should not be used again"
+          },
+          {
+            "text": "bank se sawal hata do",
+            "lang": "ur-Latn",
+            "gloss": "remove the question from the bank"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "sawal wapas chalu kar do",
+              "lang": "ur-Latn",
+              "gloss": "bring the question back into use"
+            },
+            "goesTo": "question.retire, reversed on the screen",
+            "note": "A retired question is brought back into use by the Coordinator. It is a state, not a deletion."
+          },
+          {
+            "request": {
+              "text": "sawal ka matn theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the question's wording"
+            },
+            "goesTo": "Not offered.",
+            "note": "A question already sat is not rewritten underneath the papers that used it. It is retired and a new one written."
+          },
+          {
+            "request": {
+              "text": "puraane paper se sawal nikal do",
+              "lang": "ur-Latn",
+              "gloss": "remove the question from the old paper"
+            },
+            "goesTo": "Not offered.",
+            "note": "A retired question stays attached to the papers that used it. Deleting it would leave a past paper unreadable (BR-8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "question.retire",
+            "inputs": {
+              "question_id": "$request.question_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The question is retired rather than deleted, with a reason, and stays attached to the papers that used it (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. A retirement with no reason arrives as an error.",
+        "atomicity": "One write: the retirement, its reason and the audit entry together or not at all. The question stops appearing in searches and cannot be added to a new paper. Every paper that already used it still reads exactly as it did — deleting it would leave a past paper unreadable (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "question.retire",
+          "method": "POST",
+          "path": "/api/v1/question-bank/questions/{question_id}/retire",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "question_id, since a question is retired once",
+          "purpose": "Retire a question from the bank, with the reason.",
+          "parameters": [
+            {
+              "name": "question_id",
+              "source": "resolved",
+              "sourceRef": "$request.question_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "question",
+                "fromPhrase": "$request.question_phrase",
+                "onNoMatch": "Refuse. No question in the bank matches.",
+                "onAmbiguous": "Ask, naming the candidates by topic, type, marks and where they were last used."
+              },
+              "notes": "The question. Named by topic or reference, never by its text (BR-12)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters. Required (BR-8, E7). Why it is out of use — a wrong question and a changed syllabus are different things to whoever reads the bank next year."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The retirement.",
+            "fields": [
+              {
+                "name": "question_id",
+                "type": "string",
+                "description": "The question."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Retired. It can be brought back into use."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "papers_using_it",
+                "type": "integer",
+                "description": "Papers it stays attached to, which still read as they did (BR-8)."
+              },
+              {
+                "name": "times_used",
+                "type": "integer",
+                "description": "How often it had been used."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A question was retired with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing retired."
+            },
+            {
+              "code": "ALREADY_RETIRED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The question is already retired.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. A wrong question and a superseded one mean different things to whoever reads the bank next year, and only the Coordinator knows which this is.",
+          "derivedFrom": [
+            "BR-8",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never describe retirement as deletion. There is no delete control (E8), and the question stays attached to every paper that used it so a past paper still reads (BR-8).",
+          "derivedFrom": [
+            "BR-8",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report how many papers still carry it. Retiring a question used in a paper sat last week changes nothing about that paper, and that is worth saying plainly.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never retire a question in order to change it. A question already sat is not rewritten underneath the papers that used it — a new one is written instead.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "No capability undoes this. Bringing the question back into use is done on the screen, as the Coordinator's own act on the bank."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye sawal band kar do — syllabus se nikal gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "retire this question — it has come off the syllabus"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "question.retire",
+              "inputs": {
+                "question_id": "$request.question_phrase",
+                "reason": "The topic has come off the syllabus for this class.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Coordinator's own (PR-1)."
+            }
+          ],
+          "outcome": "Retired. Report how many papers still carry it and that each still reads exactly as it did (PR-3)."
+        },
+        {
+          "request": {
+            "text": "ye sawal bank se mita do",
+            "lang": "ur-Latn",
+            "gloss": "delete this question from the bank"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "question.retire",
+              "inputs": {
+                "question_id": "$request.question_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Retirement is planned rather than a deletion, and the reason is still asked for (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Report that questions are retired rather than deleted — it stops appearing in searches and cannot go into a new paper, while every paper that used it still reads. Then ask why it is going out of use."
+        },
+        {
+          "request": {
+            "text": "sawal mein ghalti hai, theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "there is a mistake in the question, correct it"
+          },
+          "context": "Coordinator, Johar Town branch, on a question used in a paper already sat.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "question.retire",
+              "inputs": {
+                "question_id": "$request.question_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted for an edit — there is no capability that rewrites a question in place (PR-4)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that the question is retired with the mistake as its reason and a corrected one written afresh — rewriting it would change what a class was asked after they had answered it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-07-PC-5",
+      "intent": {
+        "name": "paper.finalise",
+        "summary": "Finalise a reviewed paper, fixing its questions. Coordinator only, one step.",
+        "routesHere": [
+          "finalise the class 8 maths paper",
+          {
+            "text": "paper pakka kar do",
+            "lang": "ur-Latn",
+            "gloss": "finalise the paper"
+          },
+          {
+            "text": "paper dekh liya hai, final kar do",
+            "lang": "ur-Latn",
+            "gloss": "the paper has been reviewed, finalise it"
+          },
+          {
+            "text": "paper istemal ke liye tayyar kar do",
+            "lang": "ur-Latn",
+            "gloss": "make the paper ready for use"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "paper mein aur sawal daalne hain",
+              "lang": "ur-Latn",
+              "gloss": "we need to add more questions to the paper"
+            },
+            "goesTo": "paper.question.add — UC-06-07-PC-3",
+            "note": "Once finalised the questions are fixed (BR-10)."
+          },
+          {
+            "request": {
+              "text": "pakke paper mein tabdeeli karni hai",
+              "lang": "ur-Latn",
+              "gloss": "we need to change the finalised paper"
+            },
+            "goesTo": "paper.version.create — UC-06-07-PC-6"
+          },
+          {
+            "request": {
+              "text": "paper exam ke sath laga do",
+              "lang": "ur-Latn",
+              "gloss": "attach the paper to the exam"
+            },
+            "goesTo": "exam.paper.assign — UC-06-01-PC-2"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "paper.finalise",
+            "inputs": {
+              "paper_id": "$request.paper_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The paper is reviewed and finalised before it is used, whether for a printed exam, an online exam or a quiz (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. A paper with no questions arrives as an error.",
+        "atomicity": "One write: the paper's questions fixed, with the audit entry. From here a change produces a new version rather than altering a paper already sat (BR-10). Finalising makes it usable; it does not schedule it, attach it to an exam or show it to anybody."
+      },
+      "operations": [
+        {
+          "name": "paper.finalise",
+          "method": "POST",
+          "path": "/api/v1/papers/{paper_id}/finalise",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "paper_id, since a paper is finalised once",
+          "purpose": "Finalise a paper so its questions are fixed.",
+          "parameters": [
+            {
+              "name": "paper_id",
+              "source": "resolved",
+              "sourceRef": "$request.paper_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "paper",
+                "fromPhrase": "$request.paper_phrase",
+                "onNoMatch": "Refuse. No paper matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates by title, class and subject — never by their questions."
+              },
+              "notes": "The paper. Its contents are never read into the plan or the reply (BR-12)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The paper as finalised.",
+            "fields": [
+              {
+                "name": "paper_id",
+                "type": "string",
+                "description": "The paper."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Finalised."
+              },
+              {
+                "name": "questions_count",
+                "type": "integer",
+                "description": "Questions in it, now fixed (BR-10)."
+              },
+              {
+                "name": "paper_total",
+                "type": "number",
+                "description": "The sum of their marks."
+              },
+              {
+                "name": "retired_questions",
+                "type": "integer",
+                "description": "Questions in the paper since retired from the bank. They stay in it and still read (BR-8)."
+              },
+              {
+                "name": "finalised_by",
+                "type": "string",
+                "description": "The Coordinator."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_QUESTIONS",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The paper has no questions.",
+              "written": "Nothing.",
+              "notWritten": "Not finalised."
+            },
+            {
+              "code": "ALREADY_FINALISED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The paper is already finalised.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "A change produces a new version (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report the paper's total marks. Finalising fixes what a class will be examined on, and a total that does not match the exam's subject rule is cheapest to notice here.",
+          "derivedFrom": [
+            "BR-9",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never finalise as a step after adding questions. Review comes in between — a paper nobody reviewed reaching the hall unchecked is what BR-9 exists for.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe finalising as scheduling or releasing. It makes the paper usable and shows it to nobody (BR-9, BR-12).",
+          "derivedFrom": [
+            "BR-9",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report questions in the paper that have since been retired. They stay and still read (BR-8), but a Coordinator finalising a paper built on a retired question should know.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A finalised paper is not unfinalised. A change produces a new version, which leaves the one already sat intact (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "class 8 ka maths paper final kar do",
+            "lang": "ur-Latn",
+            "gloss": "finalise the class 8 maths paper"
+          },
+          "context": "Coordinator, Johar Town branch, on a reviewed draft.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.finalise",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Finalised. Report the question count and the total (PR-1) — if the exam's subject rule says 70 and this paper totals 65, now is when it is cheap to fix."
+        },
+        {
+          "request": {
+            "text": "sawal daal kar paper final bhi kar do",
+            "lang": "ur-Latn",
+            "gloss": "add the questions and finalise the paper too"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.finalise",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted for the chain. The review sits between assembling and finalising, and finalising is the Coordinator's (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is finalised. Report that the questions are added first and the Coordinator reviews and finalises — a paper nobody reviewed reaching the hall unchecked is what the review is for."
+        },
+        {
+          "request": {
+            "text": "khali paper final kar do, sawal baad mein daal denge",
+            "lang": "ur-Latn",
+            "gloss": "finalise the empty paper, we will add questions later"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.finalise",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns NO_QUESTIONS (E6)."
+            }
+          ],
+          "outcome": "Not finalised. Report that finalising fixes the questions — an empty paper finalised now would need a new version for every question added afterwards."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-07-PC-6",
+      "intent": {
+        "name": "paper.version.create",
+        "summary": "Make a new version of a finalised paper, leaving the one already sat intact. Coordinator only, one step.",
+        "routesHere": [
+          "make a new version of this paper — question 3 is wrong",
+          {
+            "text": "pakke paper ka naya version banao",
+            "lang": "ur-Latn",
+            "gloss": "make a new version of the finalised paper"
+          },
+          {
+            "text": "paper mein tabdeeli chahiye, naya version bana do",
+            "lang": "ur-Latn",
+            "gloss": "the paper needs a change, make a new version"
+          },
+          {
+            "text": "teesra sawal ghalat hai, paper theek karna hai",
+            "lang": "ur-Latn",
+            "gloss": "question three is wrong, the paper needs correcting"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "isi paper mein sawal badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the question in this paper"
+            },
+            "goesTo": "Not offered.",
+            "note": "A finalised paper's questions are fixed. Editing it directly is refused (BR-10, E9)."
+          },
+          {
+            "request": {
+              "text": "ghalat sawal bank se bhi hata do",
+              "lang": "ur-Latn",
+              "gloss": "retire the wrong question from the bank as well"
+            },
+            "goesTo": "question.retire — UC-06-07-PC-4",
+            "note": "A new version leaves the question in the bank. Taking it out of use there is a separate decision."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "paper.version.create",
+            "inputs": {
+              "paper_id": "$request.paper_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it produces a draft. The new version's questions are then changed and it is finalised in its own right (A6)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: a new draft version carrying the same questions, with the audit entry. The finalised paper is untouched — a paper already sat still reads exactly as the students saw it (BR-10), which is the whole reason a version exists rather than an edit."
+      },
+      "operations": [
+        {
+          "name": "paper.version.create",
+          "method": "POST",
+          "path": "/api/v1/papers/{paper_id}/versions",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "paper_id + version, since a version is created once per change",
+          "purpose": "Create a new draft version of a finalised paper.",
+          "parameters": [
+            {
+              "name": "paper_id",
+              "source": "resolved",
+              "sourceRef": "$request.paper_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "paper",
+                "fromPhrase": "$request.paper_phrase",
+                "onNoMatch": "Refuse. No paper matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates by title, class and subject — never by their questions."
+              },
+              "notes": "The paper. Its contents are never read into the plan or the reply (BR-12)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Why a new version is needed. It distinguishes a corrected paper from a differently-set one when both exist."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The new version.",
+            "fields": [
+              {
+                "name": "paper_id",
+                "type": "string",
+                "description": "The new version."
+              },
+              {
+                "name": "previous_paper_id",
+                "type": "string",
+                "description": "The finalised paper, untouched (BR-10)."
+              },
+              {
+                "name": "version",
+                "type": "integer",
+                "description": "Which version this is."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. Its questions are changed and it is finalised in its own right."
+              },
+              {
+                "name": "questions_count",
+                "type": "integer",
+                "description": "Carried over from the previous version."
+              },
+              {
+                "name": "previous_used_in",
+                "type": "object[]",
+                "description": "Where the previous version was used. Those uses still read against it."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_FINALISED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The paper is not finalised.",
+              "written": "Nothing.",
+              "notWritten": "No version created.",
+              "note": "A draft is changed directly; only a finalised paper needs a version."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never edit the finalised paper instead. A paper already sat is not altered underneath the students who sat it (BR-10, E9), and that is the entire point of a version.",
+          "derivedFrom": [
+            "BR-10",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the reason. It is what tells a corrected paper apart from a differently-set one when both exist in the bank.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where the previous version was used. Those uses still read against it, and somebody looking at last term's paper is looking at a different document from this one.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain the change and the finalisation. The new version is a draft, and what changes in it is the Coordinator's to decide question by question.",
+          "derivedFrom": [
+            "BR-9",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A version is not withdrawn. The previous one stays finalised and usable, so an unwanted version is simply left unused."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is paper ka naya version banao — teesra sawal ghalat hai",
+            "lang": "ur-Latn",
+            "gloss": "make a new version of this paper — question three is wrong"
+          },
+          "context": "Coordinator, Johar Town branch, on a finalised paper.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.version.create",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "reason": "Question three is wrong and has to be replaced.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Coordinator's (PR-2). Nothing about the finalised paper changes (PR-1)."
+            }
+          ],
+          "outcome": "A draft version exists carrying the same questions. Report where the previous version was used (PR-3) — those sittings still read against it. The replacement question is added and the version finalised in its own right."
+        },
+        {
+          "request": {
+            "text": "paper mein teesra sawal badal do",
+            "lang": "ur-Latn",
+            "gloss": "change question three in the paper"
+          },
+          "context": "Coordinator, Johar Town branch, on a finalised paper.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.version.create",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A version is planned rather than an edit, and the reason is asked for (PR-1)."
+            }
+          ],
+          "outcome": "Report first that a finalised paper is not edited — a new version is made and the change happens there. Then ask why, so the two versions can be told apart later."
+        },
+        {
+          "request": {
+            "text": "draft paper ka naya version banao",
+            "lang": "ur-Latn",
+            "gloss": "make a new version of the draft paper"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "paper.version.create",
+              "inputs": {
+                "paper_id": "$request.paper_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_FINALISED (E9)."
+            }
+          ],
+          "outcome": "No version is created. Report that a draft is changed directly — nobody has sat it, so there is nothing to leave intact."
+        }
+      ]
+    }
+  ]
+}

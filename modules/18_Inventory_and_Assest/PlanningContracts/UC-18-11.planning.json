@@ -1,0 +1,1384 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-18-11",
+    "name": "Retire an asset from the register with approval, recording how it went and what it does to the books",
+    "module": "Inventory, Assets & Point-of-Sale",
+    "file": "../UseCases/UC-18-11.json",
+    "featureRef": "18.11 Disposing of an asset"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-18-11-PC-1",
+      "intent": {
+        "name": "asset.disposal.raise",
+        "summary": "Raise a disposal against an asset, saying why and how it went. Nothing is retired until it is approved.",
+        "routesHere": [
+          "raise a disposal for the projector — beyond economic repair, being scrapped",
+          {
+            "text": "ye projector retire karna hai, marammat ke qabil nahi raha",
+            "lang": "ur-Latn",
+            "gloss": "we want to retire this projector, it is beyond repair"
+          },
+          {
+            "text": "ye purana laptop bech diya hai 25 hazaar mein",
+            "lang": "ur-Latn",
+            "gloss": "this old laptop has been sold for 25 thousand"
+          },
+          {
+            "text": "ye furniture ek sarkari school ko de diya hai",
+            "lang": "ur-Latn",
+            "gloss": "this furniture has been given to a government school"
+          },
+          "write off the microscope that was never found"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "asset ko register se mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete the asset from the register"
+            },
+            "goesTo": "Not offered.",
+            "note": "An asset is disposed of, never deleted. Its purchase, its assignments, its maintenance and its verifications all stay readable (BR-6, BR-10, E9)."
+          },
+          {
+            "request": {
+              "text": "marammat karwa lein pehle",
+              "lang": "ur-Latn",
+              "gloss": "get it repaired first"
+            },
+            "goesTo": "asset.maintenance.record — UC-18-09.",
+            "note": "A repair is a maintenance record with its own cost, and it may return the asset to service. The approver sees the maintenance total before deciding, precisely so that a repairable asset is not retired (BR-8)."
+          },
+          {
+            "request": {
+              "text": "khud hi retire kar dein, manzoori ki zaroorat nahi",
+              "lang": "ur-Latn",
+              "gloss": "just retire it, no approval needed"
+            },
+            "goesTo": "Refused.",
+            "note": "With no approval anybody holding the role could retire a vehicle worth two hundred thousand and nothing would stop them (BR-2, E6)."
+          },
+          {
+            "request": {
+              "text": "sab ko ek hi lafz mein likh dein",
+              "lang": "ur-Latn",
+              "gloss": "record them all as one thing"
+            },
+            "goesTo": "Not offered.",
+            "note": "The outcome is one of four rather than collapsed into one word: sold brings money in, scrapped brings nothing, donated brings nothing but is recorded, and lost is a write-off and probably an investigation (BR-3, BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.disposal.raise",
+            "inputs": {
+              "asset_id": "$request.asset_phrase",
+              "reason": "$request.reason",
+              "outcome": "$request.outcome",
+              "proceeds": "$request.proceeds",
+              "donated_to": "$request.donated_to",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it retires nothing. The asset stays on the register, still assigned, until the disposal is approved and completed (BR-2, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. An asset already disposed of, no reason, a sale with no proceeds, or a donation with no recipient each refuses the disposal outright.",
+        "atomicity": "One write. **The asset is untouched** — still on the register, still assigned, still counted. It is retired only when the disposal is approved and then completed (BR-2, BR-6, BR-7, E6)."
+      },
+      "operations": [
+        {
+          "name": "asset.disposal.raise",
+          "method": "POST",
+          "path": "/api/v1/asset-disposals",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "asset_id, since an asset carries one disposal and a repeat would raise a second against the same machine",
+          "purpose": "Raise a disposal against an asset for approval.",
+          "parameters": [
+            {
+              "name": "asset_id",
+              "source": "resolved",
+              "sourceRef": "$request.asset_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset",
+                "fromPhrase": "$request.asset_phrase",
+                "onNoMatch": "Refuse. No asset on the register matches, or it has already been disposed of (BR-9, E1).",
+                "onAmbiguous": "Ask, naming the assets that match with their identifiers, conditions and what each has cost in maintenance — that last figure is what the decision turns on (BR-8)."
+              },
+              "notes": "The asset being retired. One already disposed of cannot be disposed of again (BR-9, E1)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 1000 characters, the raiser's own. Why the asset is being retired (BR-1, E2). The approver reads it alongside the maintenance history."
+            },
+            {
+              "name": "outcome",
+              "source": "request",
+              "sourceRef": "$request.outcome",
+              "required": true,
+              "type": "enum: Sold|Scrapped|Donated|Lost",
+              "notes": "**One of four, each meaning something different to the books** (BR-3): sold brings money in and needs a receipt and a ledger entry; scrapped brings nothing; donated brings nothing but is recorded; lost is a write-off and, in the document's own words, probably an investigation (BR-11). Never collapsed into one word and never guessed."
+            },
+            {
+              "name": "proceeds",
+              "source": "request",
+              "sourceRef": "$request.proceeds",
+              "required": false,
+              "type": "money",
+              "notes": "The amount received. **Required where the outcome is sold** (E3) and refused on the other three — nothing comes in on a scrapping, a donation or a loss (BR-3, BR-5, E10)."
+            },
+            {
+              "name": "donated_to",
+              "source": "request",
+              "sourceRef": "$request.donated_to",
+              "required": false,
+              "type": "string",
+              "notes": "Who the asset was donated to. Required where the outcome is donated (E4) — recorded even though nothing comes in (BR-3)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The disposal, and what the approver will be looking at.",
+            "fields": [
+              {
+                "name": "disposal_id",
+                "type": "string",
+                "description": "The disposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. The asset is still on the register and still assigned (BR-2, BR-7)."
+              },
+              {
+                "name": "outcome",
+                "type": "string",
+                "description": "Sold, scrapped, donated or lost (BR-3)."
+              },
+              {
+                "name": "is_write_off",
+                "type": "boolean",
+                "description": "True where the outcome is lost. Flagged as such, since it is the outcome that most often needs looking into rather than merely recording — and **nothing follows the flag** (BR-11, OQ-2)."
+              },
+              {
+                "name": "purchase_value",
+                "type": "string",
+                "description": "What the asset cost, from the voucher on the register (UC-18-07 BR-3)."
+              },
+              {
+                "name": "total_maintenance_cost",
+                "type": "string",
+                "description": "What it has already cost to keep. The approver sees this before deciding — a disposal judged without it is a decision made blind (BR-8, UC-18-09 BR-6)."
+              },
+              {
+                "name": "remaining_book_value",
+                "type": "string",
+                "description": "**None.** Nothing in the system calculates depreciation, so no asset carries one — and the gain or loss cannot be computed without it (BR-4, E7, OQ-1)."
+              },
+              {
+                "name": "approver_required",
+                "type": "string",
+                "description": "Derived from the asset's value and the thresholds the Super Admin set, following the voucher thresholds. Never chosen — and the thresholds themselves are not stated anywhere (BR-2, OQ-3)."
+              },
+              {
+                "name": "still_assigned_to",
+                "type": "string",
+                "description": "Who or what holds it. The disposal ends the assignment when it completes, not now (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_DISPOSED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The asset has already been disposed of.",
+              "written": "Nothing.",
+              "notWritten": "No second disposal is raised (BR-9)."
+            },
+            {
+              "code": "NO_REASON",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No reason was recorded.",
+              "written": "Nothing.",
+              "notWritten": "The disposal is not raised (BR-1)."
+            },
+            {
+              "code": "SOLD_WITHOUT_PROCEEDS",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The outcome is sold and no proceeds were entered.",
+              "written": "Nothing.",
+              "notWritten": "It is not raised (BR-3)."
+            },
+            {
+              "code": "DONATED_WITHOUT_RECIPIENT",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "The outcome is donated and no recipient was recorded.",
+              "written": "Nothing.",
+              "notWritten": "It is not raised (BR-3)."
+            },
+            {
+              "code": "PROCEEDS_ON_NIL_OUTCOME",
+              "mapsTo": "E10",
+              "httpStatus": 400,
+              "meaning": "Proceeds were recorded for a scrapped, donated or lost asset.",
+              "written": "Nothing.",
+              "notWritten": "It is refused.",
+              "note": "Nothing comes in on those outcomes, and each produces a loss equal to the whole remaining book value (BR-3, BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the outcome. Sold, scrapped, donated and lost are four different facts about where a school's property went, and collapsing them is exactly what the rule forbids — a lost asset recorded as scrapped is a loss nobody will ever look into (BR-3, BR-11).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Give the maintenance total and the purchase value before anything is decided. A disposal judged without knowing what has already been spent on the thing is a decision made blind, and that is the reason the history is kept at all (BR-8, BR-5 of UC-18-09).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that raising retires nothing. The asset stays on the register, still assigned to whoever has it, until the disposal is approved and completed (BR-2, BR-6, BR-7, E6).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-6",
+            "BR-7",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say plainly that a loss is flagged and nothing follows the flag. The document calls it probably an investigation, and no process anywhere follows (BR-11, OQ-2).",
+          "derivedFrom": [
+            "BR-11",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that no asset carries a remaining book value. Nothing calculates depreciation anywhere in the system, so the gain or loss this use case exists to post cannot be computed — the disposal will not complete (BR-4, E7, OQ-1).",
+          "derivedFrom": [
+            "BR-4",
+            "E7",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "asset.disposal.return",
+        "statement": "A disposal awaiting approval is returned with a reason and the asset stays on the register — nothing has happened to it. A disposal raised and returned stays on the record, and neither the disposal nor the asset is ever deleted (BR-10, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye projector retire karna hai, marammat ke qabil nahi raha, scrap kar denge",
+            "lang": "ur-Latn",
+            "gloss": "we want to retire this projector, it is beyond repair, we will scrap it"
+          },
+          "context": "School Admin, Johar Town branch, projector at PKR 68,000 purchase with PKR 23,200 in maintenance.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.disposal.raise",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the Epson projector",
+                "reason": "as they gave it — beyond economic repair",
+                "outcome": "Scrapped",
+                "proceeds": "omitted — nothing comes in",
+                "donated_to": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Scrapped, because that is what they said (PR-1)."
+            }
+          ],
+          "outcome": "Raised, not done — the projector is still on the register and still in the physics laboratory. Give the approver what the decision turns on: PKR 68,000 to buy, PKR 23,200 already spent keeping it going, two lamp failures in eighteen months. Then the blocking fact: it carries no remaining book value, because nothing in the system calculates depreciation, so this disposal cannot be completed even once approved."
+        },
+        {
+          "request": {
+            "text": "ye purana laptop bech diya hai",
+            "lang": "ur-Latn",
+            "gloss": "this old laptop has been sold"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.disposal.raise",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the laptop",
+                "reason": "asked",
+                "outcome": "Sold",
+                "proceeds": "$request.proceeds — absent",
+                "donated_to": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. A sale needs the amount (PR-1)."
+            }
+          ],
+          "outcome": "Ask for the amount received and the reason for retiring it — a sale without the proceeds is money in with nothing recording it. Note too that nothing anywhere records who bought it: the proceeds are captured and the buyer is not, which the specification raises and leaves open."
+        },
+        {
+          "request": {
+            "text": "ye microscope mil hi nahi raha, scrap likh dein",
+            "lang": "ur-Latn",
+            "gloss": "this microscope cannot be found, record it as scrapped"
+          },
+          "context": "School Admin, asset raised from a verification exception.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.disposal.raise",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the microscope",
+                "reason": "asked",
+                "outcome": "Lost — not Scrapped",
+                "proceeds": "omitted",
+                "donated_to": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The outcome is what happened, not what is convenient to write (PR-1)."
+            }
+          ],
+          "outcome": "An asset nobody can find is **lost**, not scrapped. The two produce the same loss in the books and mean entirely different things: scrapped is a decision the school made, lost is property that has gone. Lost is flagged as a write-off for exactly that reason — though nothing in the system follows the flag, so if somebody is to look into it, a person has to decide that."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-11-PC-2",
+      "intent": {
+        "name": "asset.disposal.approve",
+        "summary": "Approve the retirement, having seen what the asset has already cost the school.",
+        "routesHere": [
+          "approve the disposal of the projector",
+          {
+            "text": "projector ki disposal manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve the projector's disposal"
+          },
+          {
+            "text": "ye asset retire karne ki ijazat de dein",
+            "lang": "ur-Latn",
+            "gloss": "approve retiring this asset"
+          },
+          "sign off the write-off on the missing microscope"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "manzoor nahi karna, dobara quotation lein",
+              "lang": "ur-Latn",
+              "gloss": "do not approve it, get another quotation"
+            },
+            "goesTo": "asset.disposal.return — this use case.",
+            "note": "It goes back with a reason and the asset stays on the register."
+          },
+          {
+            "request": {
+              "text": "manzoori ke saath retire bhi kar dein",
+              "lang": "ur-Latn",
+              "gloss": "approve it and retire it as well"
+            },
+            "goesTo": "Not offered.",
+            "note": "Approving permits the retirement; Accounts complete it, recording any proceeds and posting the gain or loss (BR-4, BR-6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.disposal.approve",
+            "inputs": {
+              "disposal_id": "$request.disposal_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it retires nothing. The asset comes off the register when the disposal is completed (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by the wrong role for the asset's value is refused, and the asset stays exactly where it was (E5).",
+        "atomicity": "One write. The asset is still on the register and still assigned — approving permits the retirement and Accounts carry it out (BR-4, BR-6, BR-7)."
+      },
+      "operations": [
+        {
+          "name": "asset.disposal.approve",
+          "method": "POST",
+          "path": "/api/v1/asset-disposals/{disposal_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "disposal_id, since a disposal carries one approval and a repeat is the same decision",
+          "purpose": "Approve a disposal, having seen the asset's maintenance history.",
+          "parameters": [
+            {
+              "name": "disposal_id",
+              "source": "resolved",
+              "sourceRef": "$request.disposal_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset_disposal",
+                "fromPhrase": "$request.disposal_phrase",
+                "onNoMatch": "Refuse. No disposal awaiting approval matches.",
+                "onAmbiguous": "Ask, naming the disposals that match with their assets, outcomes, purchase values and what each has cost in maintenance (BR-8)."
+              },
+              "notes": "The disposal, named by its asset."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision and what still has to happen.",
+            "fields": [
+              {
+                "name": "disposal_id",
+                "type": "string",
+                "description": "The disposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved. The asset is still on the register (BR-6)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "Who approved it, and in which role."
+              },
+              {
+                "name": "approver_required",
+                "type": "string",
+                "description": "Which role the asset's value required. Configuration set by the Super Admin, following the voucher thresholds — which are themselves not stated anywhere (BR-2, OQ-3)."
+              },
+              {
+                "name": "purchase_value",
+                "type": "string",
+                "description": "What it cost to buy."
+              },
+              {
+                "name": "total_maintenance_cost",
+                "type": "string",
+                "description": "What it has already cost to keep. Seen before deciding, because a disposal judged without it is a decision made blind (BR-8)."
+              },
+              {
+                "name": "outcome",
+                "type": "string",
+                "description": "Sold, scrapped, donated or lost (BR-3)."
+              },
+              {
+                "name": "is_write_off",
+                "type": "boolean",
+                "description": "True where the outcome is lost. Flagged and nothing follows the flag (BR-11, OQ-2)."
+              },
+              {
+                "name": "cannot_complete_reason",
+                "type": "string",
+                "description": "Where the asset carries no remaining book value the disposal cannot be completed, because the gain or loss cannot be computed. Nothing in the system calculates depreciation (BR-4, E7, OQ-1)."
+              },
+              {
+                "name": "next_step",
+                "type": "string",
+                "description": "Accounts complete it: record any proceeds, post the gain or loss and retire the asset (BR-4, BR-6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WRONG_APPROVER",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "The School Admin approved where the Principal is required.",
+              "written": "Nothing.",
+              "notWritten": "The asset stays on the register.",
+              "note": "Who approves is configuration following the voucher thresholds (BR-2)."
+            },
+            {
+              "code": "RETIRED_BEFORE_APPROVAL",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "An attempt was made to retire the asset before approval.",
+              "written": "Nothing.",
+              "notWritten": "There is no such route (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Put the maintenance total in front of the approver before anything else. The rule requires it, and the whole reason the maintenance history is kept is so that a retirement is not decided blind (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say what the outcome means in the books, in the approver's own terms. Scrapped, donated and lost all write off the whole remaining value; only a sale brings anything in (BR-3, BR-5).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never approve above the acting user's threshold. With no approval anybody holding the role could retire a vehicle worth two hundred thousand and nothing would stop them — the refusal is the control (BR-2, E5).",
+          "derivedFrom": [
+            "BR-2",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that approving retires nothing. Accounts complete it, and the asset stays on the register and on somebody's holdings until they do (BR-6, BR-7).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that it cannot be completed at all as the system stands. No asset carries a remaining book value, because nothing calculates depreciation, and the gain or loss cannot be computed without one (BR-4, E7, OQ-1).",
+          "derivedFrom": [
+            "BR-4",
+            "E7",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no unapprove in the lifecycle. Once completed the asset is retired and its assignment has ended (BR-6, BR-7); before completion the only route back is a return, which is the approver's other answer and has to be given instead of this one."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "projector ki disposal manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve the projector's disposal"
+          },
+          "context": "Principal, all branches, asset at PKR 68,000 with PKR 23,200 in maintenance, outcome Scrapped.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.disposal.approve",
+              "inputs": {
+                "disposal_id": "$request.disposal_phrase → the projector disposal",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The maintenance history goes in front of them first (PR-1)."
+            }
+          ],
+          "outcome": "Before approving: PKR 68,000 to buy, PKR 23,200 already spent, two lamp failures in eighteen months. Scrapping writes off the whole remaining value and brings nothing in. After: report that the projector is still on the register and still assigned — Accounts complete it — and that as things stand they cannot: the asset carries no remaining book value, so the gain or loss has nothing to be measured against."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-11-PC-3",
+      "intent": {
+        "name": "asset.disposal.return",
+        "summary": "Send a disposal back unapproved, with a reason. The asset stays on the register.",
+        "routesHere": [
+          "return the disposal — get a second quotation for repair first",
+          {
+            "text": "ye disposal wapas bhej dein, pehle marammat ka doosra quotation lein",
+            "lang": "ur-Latn",
+            "gloss": "return this disposal, get a second repair quotation first"
+          },
+          {
+            "text": "abhi retire na karein, wajah likh dein",
+            "lang": "ur-Latn",
+            "gloss": "do not retire it yet, put the reason in"
+          },
+          "send the write-off back for a better explanation"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "manzoor kar dein",
+              "lang": "ur-Latn",
+              "gloss": "approve it"
+            },
+            "goesTo": "asset.disposal.approve — this use case.",
+            "note": "The other answer, and it is the one that permits the retirement."
+          },
+          {
+            "request": {
+              "text": "disposal hi mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete the disposal"
+            },
+            "goesTo": "Not offered.",
+            "note": "A disposal is never deleted. One raised and returned stays on the record (BR-10, E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.disposal.return",
+            "inputs": {
+              "disposal_id": "$request.disposal_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It goes back to be resubmitted and the asset stays on the register (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. A return with no reason is refused — the raiser would have nothing to act on.",
+        "atomicity": "One state change. The asset is untouched: still registered, still assigned, still counted in the register's total (BR-6, BR-7)."
+      },
+      "operations": [
+        {
+          "name": "asset.disposal.return",
+          "method": "POST",
+          "path": "/api/v1/asset-disposals/{disposal_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "disposal_id, since a disposal carries one decision at a time",
+          "purpose": "Return a disposal unapproved, with the reason.",
+          "parameters": [
+            {
+              "name": "disposal_id",
+              "source": "resolved",
+              "sourceRef": "$request.disposal_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset_disposal",
+                "fromPhrase": "$request.disposal_phrase",
+                "onNoMatch": "Refuse. No disposal awaiting approval matches.",
+                "onAmbiguous": "Ask, naming the disposals that match with their assets, outcomes, purchase values and what each has cost in maintenance (BR-8)."
+              },
+              "notes": "The disposal, named by its asset."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters, the approver's own. Required to return a disposal — it is what the raiser is being asked to do, and \"not approved\" sends the same proposal back."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Where it goes and what stays true.",
+            "fields": [
+              {
+                "name": "disposal_id",
+                "type": "string",
+                "description": "The disposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It stays on the record and can be resubmitted (BR-10)."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "What the approver asked for, in their own words."
+              },
+              {
+                "name": "asset_status",
+                "type": "string",
+                "description": "Unchanged — on the register and still assigned (BR-6, BR-7)."
+              },
+              {
+                "name": "asset_condition",
+                "type": "string",
+                "description": "What the register says it is. Where it is unserviceable, returning the disposal leaves an unusable asset assigned to somebody and counted in the register (UC-18-09 BR-9)."
+              },
+              {
+                "name": "total_maintenance_cost",
+                "type": "string",
+                "description": "What has already been spent on it, which the return does not change (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": null,
+              "httpStatus": 400,
+              "meaning": "No reason was given.",
+              "written": "Nothing.",
+              "notWritten": "The disposal stays awaiting approval.",
+              "note": "The data field makes a reason required to return a disposal, but the use case writes no exception for its absence — unlike a disposal raised with no reason, which has E2."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. The approver is asking for something specific — another quotation, a better explanation — and the raiser gets only what is written (BR-1, BR-8).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say what the asset now is. An unserviceable machine whose disposal was returned stays on the register, still assigned to somebody, still counted in the register's total, and unusable (BR-6, BR-7).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the disposal stays on the record. One raised and returned is never deleted, so a pattern of retirements proposed and refused is visible (BR-10, E9).",
+          "derivedFrom": [
+            "BR-10",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "asset.disposal.approve",
+        "statement": "It is resubmitted and can be approved then. Nothing was undone, because nothing had happened to the asset (BR-6, BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye disposal wapas bhej dein, marammat ka doosra quotation le lein",
+            "lang": "ur-Latn",
+            "gloss": "return this disposal, get a second repair quotation"
+          },
+          "context": "Principal, all branches, projector unserviceable.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.disposal.return",
+              "inputs": {
+                "disposal_id": "$request.disposal_phrase → the projector disposal",
+                "return_reason": "as they put it — get a second quotation for repair before this is approved",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Returned, and the disposal stays on the record. The projector remains on the register, still assigned to the physics laboratory, still counted in its total value — and unserviceable. Nothing changes that until either a repair is recorded or the disposal comes back and is approved."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-11-PC-4",
+      "intent": {
+        "name": "asset.disposal.complete",
+        "summary": "Retire the asset: record any proceeds, post the gain or loss, and take it off the register.",
+        "routesHere": [
+          "complete the disposal of the projector",
+          {
+            "text": "disposal mukammal kar dein, asset retire kar dein",
+            "lang": "ur-Latn",
+            "gloss": "complete the disposal, retire the asset"
+          },
+          {
+            "text": "25 hazaar aa gaye hain, hisaab post kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the 25 thousand has come in, post the entry"
+          },
+          "finish the write-off and take it off the register"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "manzoori ke baghair mukammal kar dein",
+              "lang": "ur-Latn",
+              "gloss": "complete it without approval"
+            },
+            "goesTo": "Refused.",
+            "note": "It is approved before the asset is retired. With no approval anybody holding the role could retire a vehicle worth two hundred thousand (BR-2, E6)."
+          },
+          {
+            "request": {
+              "text": "register se mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete it from the register"
+            },
+            "goesTo": "Not offered.",
+            "note": "The asset is retired, never deleted. Its purchase, its assignments, its maintenance and its verifications all stay readable (BR-6, BR-10, E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.disposal.complete",
+            "inputs": {
+              "disposal_id": "$request.disposal_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step with three effects: the proceeds recorded where there are any, the gain or loss posted to the ledger, and the asset retired with its assignment ended (BR-4, BR-6, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. **This cannot run at all as the system stands**: the gain or loss is proceeds less remaining book value, and no asset carries a remaining book value because nothing calculates depreciation anywhere (BR-4, E7, OQ-1). Where the ledger posting fails, nothing is retired and the disposal stays approved (E8).",
+        "atomicity": "One act with three effects, together: proceeds in, gain or loss posted, asset retired and its assignment ended (BR-4, BR-6, BR-7). A scrapping, a donation or a loss produces a loss equal to the whole remaining book value, since nothing comes in against it (BR-5). Nothing is deleted — the asset's whole history stays readable (BR-6)."
+      },
+      "operations": [
+        {
+          "name": "asset.disposal.complete",
+          "method": "POST",
+          "path": "/api/v1/asset-disposals/{disposal_id}/complete",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "disposal_id, since a disposal completes once and a repeat would post the gain or loss to the ledger twice",
+          "purpose": "Record proceeds, post the gain or loss, and retire the asset.",
+          "parameters": [
+            {
+              "name": "disposal_id",
+              "source": "resolved",
+              "sourceRef": "$request.disposal_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset_disposal",
+                "fromPhrase": "$request.disposal_phrase",
+                "onNoMatch": "Refuse. No approved disposal matches.",
+                "onAmbiguous": "Ask, naming the approved disposals with their assets, outcomes and proceeds."
+              },
+              "notes": "The approved disposal. One not yet approved cannot be completed (BR-2, E6)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was posted and what left the register.",
+            "fields": [
+              {
+                "name": "disposal_id",
+                "type": "string",
+                "description": "The disposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Completed. Terminal (BR-6)."
+              },
+              {
+                "name": "outcome",
+                "type": "string",
+                "description": "Sold, scrapped, donated or lost (BR-3)."
+              },
+              {
+                "name": "proceeds",
+                "type": "string",
+                "description": "What came in. Zero on a scrapping, a donation or a loss (BR-3, BR-5)."
+              },
+              {
+                "name": "remaining_book_value",
+                "type": "string",
+                "description": "What the asset stood at. **Nothing produces this figure** — depreciation is calculated nowhere in the system (BR-4, E7, OQ-1)."
+              },
+              {
+                "name": "gain_or_loss",
+                "type": "string",
+                "description": "Proceeds less remaining book value, posted to the ledger (BR-4). Uncomputable without a book value."
+              },
+              {
+                "name": "asset_retired",
+                "type": "boolean",
+                "description": "The asset is off the register and its history stays — purchase, assignments, maintenance and verifications all readable (BR-6)."
+              },
+              {
+                "name": "assignment_ended",
+                "type": "string",
+                "description": "Who held it. It now appears on nobody's holdings and on no exit handover checklist (BR-7)."
+              },
+              {
+                "name": "write_off_flagged",
+                "type": "boolean",
+                "description": "True where the outcome is lost. Flagged as a write-off, and nothing follows the flag (BR-11, OQ-2)."
+              },
+              {
+                "name": "buyer",
+                "type": "string",
+                "description": "Not recorded anywhere. The proceeds are captured and who paid them is not (OQ-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_BOOK_VALUE",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The asset carries no remaining book value.",
+              "written": "Nothing.",
+              "notWritten": "The gain or loss cannot be computed and the disposal cannot complete.",
+              "note": "**Nothing in the system calculates depreciation.** Expected life is recorded on every asset and nothing uses it, so no asset has a book value and this use case cannot complete for any asset at all (BR-4, OQ-1)."
+            },
+            {
+              "code": "NOT_APPROVED",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The disposal has not been approved.",
+              "written": "Nothing.",
+              "notWritten": "The asset is not retired (BR-2)."
+            },
+            {
+              "code": "LEDGER_POSTING_FAILED",
+              "mapsTo": "E8",
+              "httpStatus": 502,
+              "meaning": "The ledger posting failed.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is retired and the disposal stays approved.",
+              "note": "The posting and the retirement hold together — an asset off the register with no entry against it is the failure this prevents (BR-4, BR-6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say before anything else that this cannot complete. No asset in the system carries a remaining book value because nothing calculates depreciation, and the gain or loss has nothing to be measured against — the use case says so itself (BR-4, E7, OQ-1). It is a gap in the specification, not a fault to work around.",
+          "derivedFrom": [
+            "BR-4",
+            "E7",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never invent a book value to make the arithmetic work. A figure nobody computed, posted to the ledger as a gain or a loss, is worse than a disposal that did not complete (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say what the outcome does to the books. A sale nets proceeds against book value; a scrapping, a donation and a loss each write off the whole of it, because nothing comes in (BR-3, BR-5).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that the assignment ends here. The asset comes off whoever's holdings and off every exit handover checklist at the moment of completion, and not when the disposal was approved (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that nothing is deleted. The asset leaves the register and its purchase, assignments, maintenance and verifications stay readable — a disposed asset is still answerable for (BR-6, BR-10, E9).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-10",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Say that the buyer is nowhere. On a sale the proceeds are recorded and who paid them is not, which the specification raises and does not settle (OQ-4).",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Completed is terminal. The asset is off the register, the entry has posted and the assignment has ended — a correction is a matter for the finance module's own route, and the asset cannot be brought back (BR-6, BR-9 of UC-18-08)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "projector ki disposal mukammal kar dein",
+            "lang": "ur-Latn",
+            "gloss": "complete the projector's disposal"
+          },
+          "context": "Accounts, Johar Town branch, disposal approved, outcome Scrapped.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.disposal.complete",
+              "inputs": {
+                "disposal_id": "$request.disposal_phrase → the approved projector disposal",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "It cannot post: there is no book value to measure the loss against (PR-1)."
+            }
+          ],
+          "outcome": "It cannot be completed, and this is not a permissions or a data problem. The gain or loss is proceeds less remaining book value, and no asset in this system carries a remaining book value — every asset records an expected life and nothing anywhere calculates depreciation from it. The use case declares this itself. Until the school decides how assets are depreciated, no disposal can be completed for any asset at all: the projector stays on the register, approved for retirement and not retired."
+        },
+        {
+          "request": {
+            "text": "laptop 25 hazaar mein bik gaya hai, hisaab mukammal kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the laptop sold for 25 thousand, complete the entry"
+          },
+          "context": "Accounts, Johar Town branch, disposal approved, outcome Sold, proceeds PKR 25,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.disposal.complete",
+              "inputs": {
+                "disposal_id": "$request.disposal_phrase → the approved laptop disposal",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The same block, with money already received (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "The PKR 25,000 has come in and the entry cannot be posted, because the gain or loss needs a remaining book value the system does not hold. Do not put a figure in to make it balance. Say plainly what the state is: cash received, asset still on the register, still assigned, and the disposal approved but not completed — and that nothing records who bought it either."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-11-PC-5",
+      "intent": {
+        "name": "asset.disposals.read",
+        "summary": "See what has left the school, how, for how much, and what is waiting to be retired.",
+        "routesHere": [
+          "what assets have we disposed of this year?",
+          {
+            "text": "is saal kaunse assets retire hue hain?",
+            "lang": "ur-Latn",
+            "gloss": "which assets were retired this year?"
+          },
+          {
+            "text": "kitni cheezein gum shuda likhi gayi hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many things have been written off as lost?"
+          },
+          {
+            "text": "kitni disposals manzoori ka intezaar kar rahi hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many disposals are waiting for approval?"
+          },
+          "show me what we sold and what it brought in"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye asset retire kar dein",
+              "lang": "ur-Latn",
+              "gloss": "retire this asset"
+            },
+            "goesTo": "asset.disposal.raise — this use case.",
+            "note": "Reading what has left and proposing a retirement are separate acts."
+          },
+          {
+            "request": {
+              "text": "abhi register par kya hai?",
+              "lang": "ur-Latn",
+              "gloss": "what is on the register now?"
+            },
+            "goesTo": "assets.read — UC-18-07.",
+            "note": "What the school still owns is the other question — and a disposed asset stays on the register, so a naive total counts it (BR-6)."
+          },
+          {
+            "request": {
+              "text": "gum shuda cheez ki tehqeeqat kaun karega?",
+              "lang": "ur-Latn",
+              "gloss": "who will investigate the missing item?"
+            },
+            "goesTo": "Not answerable here.",
+            "note": "A loss is flagged as a write-off and nothing follows the flag. Whether a lost asset is investigated, and by whom, is an open question this use case raises and does not answer (BR-11, OQ-2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.disposals.read",
+            "inputs": {
+              "outcome": "$request.outcome",
+              "from_date": "$request.from_date",
+              "to_date": "$request.to_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. Nothing is retired or posted by looking."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Neither a disposal nor an asset is ever deleted, so the record it reads is complete (BR-10, E9)."
+      },
+      "operations": [
+        {
+          "name": "asset.disposals.read",
+          "method": "GET",
+          "path": "/api/v1/asset-disposals",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return disposals with their outcomes, proceeds and where each stands.",
+          "parameters": [
+            {
+              "name": "outcome",
+              "source": "request",
+              "sourceRef": "$request.outcome",
+              "required": false,
+              "type": "enum: Sold|Scrapped|Donated|Lost",
+              "notes": "Where the question is about one kind — sold, scrapped, donated or lost. The four mean different things and only one of them is money in (BR-3)."
+            },
+            {
+              "name": "from_date",
+              "source": "request",
+              "sourceRef": "$request.from_date",
+              "required": false,
+              "type": "date",
+              "notes": "The start of the period asked about."
+            },
+            {
+              "name": "to_date",
+              "source": "request",
+              "sourceRef": "$request.to_date",
+              "required": false,
+              "type": "date",
+              "notes": "The end of it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What has left and what is stuck.",
+            "fields": [
+              {
+                "name": "disposals",
+                "type": "object[]",
+                "description": "Asset, reason, outcome, proceeds, approver, and where each stands."
+              },
+              {
+                "name": "by_outcome",
+                "type": "object[]",
+                "description": "Counts and values by sold, scrapped, donated and lost. Collapsing the four is what the rule forbids (BR-3)."
+              },
+              {
+                "name": "written_off_as_lost",
+                "type": "object[]",
+                "description": "Assets recorded as lost, with their purchase values. Each is flagged as a write-off and **nothing follows the flag** (BR-11, OQ-2)."
+              },
+              {
+                "name": "proceeds_total",
+                "type": "string",
+                "description": "What sales brought in. Who bought any of it is recorded nowhere (OQ-4)."
+              },
+              {
+                "name": "awaiting_approval",
+                "type": "object[]",
+                "description": "Disposals raised and not decided. The assets are still on the register and still assigned (BR-2, BR-7)."
+              },
+              {
+                "name": "approved_not_completed",
+                "type": "object[]",
+                "description": "Disposals approved and stuck. **Every one of them, in practice** — no asset carries a remaining book value, so the gain or loss cannot be computed and none can complete (BR-4, E7, OQ-1)."
+              },
+              {
+                "name": "returned",
+                "type": "object[]",
+                "description": "Disposals raised and refused. They stay on the record, and the assets stay on the register — where one was unserviceable it is still assigned to somebody and still unusable (BR-10)."
+              },
+              {
+                "name": "total_written_off",
+                "type": "string",
+                "description": "The value leaving the register across the period, at purchase value. Nothing depreciates it and nothing has posted it, because no disposal can complete (BR-4, E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the disposal screens.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned.",
+              "note": "The use case writes no exception for it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never collapse the four outcomes. Sold, scrapped, donated and lost are different facts about where school property went, and only one of them means somebody should be asking questions (BR-3, BR-11).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the disposals approved and not completed, and say why. In practice that is all of them: no asset carries a remaining book value, so nothing can be posted — those assets are approved for retirement and still on the register, still counted, still assigned (BR-4, E7, OQ-1).",
+          "derivedFrom": [
+            "BR-4",
+            "E7",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "List the assets written off as lost with their values, and say that nothing follows. Each is flagged and no process anywhere picks up the flag (BR-11, OQ-2).",
+          "derivedFrom": [
+            "BR-11",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that the proceeds have no buyer against them. What was received is recorded and who paid it is not (OQ-4).",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that a disposed asset stays on the register. Nothing is deleted, so a total taken off the register includes equipment that has already gone (BR-6, BR-10).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing. The record it reads is never deleted (BR-10, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is saal kaunse assets retire hue hain aur kitna paisa aaya?",
+            "lang": "ur-Latn",
+            "gloss": "which assets were retired this year and how much came in?"
+          },
+          "context": "Principal, all branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.disposals.read",
+              "inputs": {
+                "outcome": "omitted",
+                "from_date": "1 January",
+                "to_date": "today",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read across the year (PR-1)."
+            }
+          ],
+          "outcome": "Give it split four ways — sold, scrapped, donated, lost — never as one figure. Then the answer that matters more than the totals: **nothing has actually been retired.** Every approved disposal is stuck at completion, because the gain or loss needs a remaining book value and no asset in this system has one. All of them are still on the register, still counted in its value, and several still assigned to people."
+        },
+        {
+          "request": {
+            "text": "kitni cheezein gum shuda likhi gayi hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many things have been written off as lost?"
+          },
+          "context": "Principal, all branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.disposals.read",
+              "inputs": {
+                "outcome": "Lost",
+                "from_date": "the last two years",
+                "to_date": "today",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The write-offs alone (PR-3)."
+            }
+          ],
+          "outcome": "Give each with its purchase value and the total. Say plainly that every one is flagged as a write-off and that nothing in the system does anything with the flag — the specification calls a loss probably an investigation and no process follows it. If anybody is to look into these, a person has to decide that."
+        }
+      ]
+    }
+  ]
+}

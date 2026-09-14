@@ -1,0 +1,1177 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-04-15",
+  "featureRef": "4.15 Late fee policy",
+  "name": "Set an approved late fee policy and apply it automatically as invoices pass their due date",
+  "module": "Fee",
+  "alsoAffectsModules": [
+    "Finance",
+    "Messaging (SMS, WhatsApp, Email)"
+  ],
+  "priority": "MVP",
+  "priorityReason": "A penalty charged to a family must come from a rule somebody approved, not from a figure somebody typed.",
+  "goal": {
+    "actor": "Accounts and School Admin",
+    "capability": "to set a stepped late fee policy, have it approved, and let it apply itself",
+    "outcome": "every fine is the same rule applied to everybody, and every family knows why they were charged"
+  },
+  "primaryActor": "Accounts",
+  "secondaryActors": [
+    {
+      "actor": "School Admin",
+      "involvement": "Approves the policy before it goes live, and may waive a fine."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "involvement": "Is charged under the policy and is notified each time, with the updated challan."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "scheduled",
+        "description": "A daily job checks unpaid invoices against their due dates and applies the next step of the policy as each is reached.",
+        "source": "Fee scheduler"
+      },
+      {
+        "type": "event",
+        "description": "A payment settles an invoice, which stops any further fine accruing on it.",
+        "source": "UC-04-05"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "Issued invoices exist with due dates.",
+      "establishedBy": {
+        "id": "UC-04-02",
+        "name": "Issuing fee invoices at different scopes",
+        "link": "UC-04-02.json"
+      }
+    },
+    {
+      "condition": "An authenticated session exists. Setting a policy requires Accounts; approving it requires School Admin.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "A chart of accounts exists with a late fee income account mapped.",
+      "establishedBy": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    },
+    {
+      "condition": "For a fine to be applied at all, an approved policy is live. Without one nothing accrues (BR-2)."
+    }
+  ],
+  "postConditions": [
+    "An approved policy exists as a series of steps, and it is the only thing that produces a fine.",
+    "Each unpaid invoice carries the fines its age has earned, added as their own lines rather than folded into the original amount.",
+    "Every family charged has been notified and shown the updated challan, so nobody discovers a fine at the bank counter.",
+    "Students meeting an approved installment plan carry no fine, since a family paying as agreed is not late.",
+    "A fine removed by Accounts or School Admin carries a written reason, and both the fine and its removal remain on the record.",
+    "A settled invoice accrues nothing further, so a fine is never added to a bill already paid.",
+    "Nothing was fined at a figure somebody typed. Every amount comes from the approved policy."
+  ],
+  "screens": [
+    {
+      "name": "Late fee policy",
+      "route": "/fee/late-fee-policy",
+      "sidebar": "Fee",
+      "columns": [
+        "Step",
+        "Days after due date",
+        "Amount or percentage",
+        "Cap",
+        "Effective from",
+        "Status"
+      ],
+      "defaultSort": "Days after due date, ascending",
+      "actions": [
+        "Build policy",
+        "Add step",
+        "Submit for approval",
+        "Approve",
+        "Create new version"
+      ],
+      "visibleTo": [
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Late fees applied",
+      "route": "/fee/late-fees",
+      "sidebar": "Fee",
+      "columns": [
+        "Date applied",
+        "Student",
+        "Class",
+        "Invoice",
+        "Step",
+        "Amount",
+        "Running total",
+        "Status"
+      ],
+      "defaultSort": "Date applied, newest first",
+      "filters": [
+        "Date range",
+        "Class",
+        "Status",
+        "Step"
+      ],
+      "actions": [
+        "Open",
+        "Waive fine",
+        "Export"
+      ],
+      "visibleTo": [
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Waive late fee",
+      "route": "/fee/late-fees/{id}/waive",
+      "sidebar": "Fee",
+      "actions": [
+        "Enter reason",
+        "Waive"
+      ],
+      "visibleTo": [
+        "Accounts",
+        "School Admin"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Step number",
+      "type": "number",
+      "required": "yes",
+      "validation": "The order in which the steps apply. Each step is reached in turn (BR-3).",
+      "example": 1
+    },
+    {
+      "name": "Days after due date",
+      "type": "number",
+      "required": "yes",
+      "validation": "How many days past the due date this step applies at. Must be greater than the previous step's (BR-4).",
+      "example": 7
+    },
+    {
+      "name": "Charge type",
+      "type": "enum",
+      "required": "yes",
+      "validation": "A flat amount, or a percentage of the outstanding balance.",
+      "example": "Flat amount",
+      "enumValues": [
+        "Flat amount",
+        "Percentage of outstanding"
+      ]
+    },
+    {
+      "name": "Amount",
+      "type": "money",
+      "required": "conditional",
+      "validation": "Greater than zero.",
+      "example": "PKR 200",
+      "requiredWhen": "The charge type is Flat amount"
+    },
+    {
+      "name": "Percentage",
+      "type": "decimal",
+      "required": "conditional",
+      "validation": "Greater than zero and not more than 100.",
+      "example": 2.5,
+      "requiredWhen": "The charge type is Percentage of outstanding"
+    },
+    {
+      "name": "Cap per invoice",
+      "type": "money",
+      "required": "no",
+      "validation": "The most the fines on one invoice may total. Without it a debt can grow indefinitely (BR-8).",
+      "example": "PKR 1,000"
+    },
+    {
+      "name": "Effective from",
+      "type": "date",
+      "required": "yes",
+      "validation": "The date the policy applies from. It does not fine invoices whose steps were already passed before it (BR-6).",
+      "example": "01-08-2026"
+    },
+    {
+      "name": "Applies to",
+      "type": "enum",
+      "required": "yes",
+      "validation": "Which fee types the policy fines.",
+      "default": "All fee types",
+      "example": "All fee types",
+      "enumValues": [
+        "All fee types",
+        "Selected fee types"
+      ]
+    },
+    {
+      "name": "Version",
+      "type": "generated",
+      "required": "no",
+      "validation": "Incremented each time an approved policy is changed. Earlier versions are kept.",
+      "default": 1,
+      "example": 2
+    },
+    {
+      "name": "Waiver reason",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 500 characters. Required to remove a fine (BR-10).",
+      "example": "Bank was closed on the due date owing to a public holiday.",
+      "requiredWhen": "A fine is being waived"
+    },
+    {
+      "name": "Status",
+      "type": "generated",
+      "required": "no",
+      "validation": "See the lifecycle below.",
+      "default": "Draft",
+      "example": "Approved"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Late fee policy",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One per version, with its steps. Never deleted."
+    },
+    {
+      "entity": "Late fee policy step",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One row per step, with its trigger and its charge."
+    },
+    {
+      "entity": "Policy approval",
+      "operations": [
+        "create"
+      ],
+      "notes": "One row per approval or return, with who and when. Append only."
+    },
+    {
+      "entity": "Late fee",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One row per fine applied, held as its own invoice line. Waived rather than deleted (BR-10)."
+    },
+    {
+      "entity": "Invoice",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Read for the due date and outstanding balance; the fine is added as a line."
+    },
+    {
+      "entity": "Installment plan",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read to exclude students meeting an approved plan (BR-9)."
+    },
+    {
+      "entity": "General ledger voucher",
+      "operations": [
+        "create"
+      ],
+      "notes": "The posting for each fine, to the late fee income account."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Every policy change, every fine applied and every waiver."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Accounts",
+      "actions": [
+        "view",
+        "create",
+        "edit"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Builds the policy and submits it. May waive a fine with a reason. Cannot approve the policy (BR-5)."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "create",
+        "edit",
+        "approve"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "The only role that approves a policy. May also waive a fine."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches.",
+      "notes": "Reviews the policy and the fines applied."
+    },
+    {
+      "actor": "Staff",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Read only, since they answer counter questions about a fine."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own children's fines only.",
+      "notes": "Sees the fine on the invoice and the updated challan."
+    },
+    {
+      "actor": "Student",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own fines only."
+    },
+    {
+      "actor": "Coordinator, Teacher",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "A fine is applied automatically. Nobody types a penalty amount, because a fine that varies by who is at the desk is not a policy."
+    },
+    {
+      "id": "BR-2",
+      "rule": "No fine accrues without an approved policy that is live. A policy in draft or awaiting approval fines nobody."
+    },
+    {
+      "id": "BR-3",
+      "rule": "The policy is a series of steps. Each step is reached in turn as the invoice ages, and each adds its own charge on top of the previous one."
+    },
+    {
+      "id": "BR-4",
+      "rule": "Each step applies at more days past the due date than the one before it. Two steps at the same age is a policy nobody can explain."
+    },
+    {
+      "id": "BR-5",
+      "rule": "Accounts cannot approve their own policy. Setting a penalty and agreeing to it are separate acts by separate people."
+    },
+    {
+      "id": "BR-6",
+      "rule": "A policy applies from its effective date. It does not reach back and fine invoices whose steps were passed before it existed."
+    },
+    {
+      "id": "BR-7",
+      "rule": "A fine is added as its own line on the invoice, not folded into the original amount. A family must be able to see what is fee and what is penalty."
+    },
+    {
+      "id": "BR-8",
+      "rule": "Where a cap is set, the fines on one invoice stop at it. Without a cap a small debt grows without limit, which no school intends."
+    },
+    {
+      "id": "BR-9",
+      "rule": "A student meeting an approved installment plan is not fined while the plan is being met. Only a missed installment brings them back within the policy."
+    },
+    {
+      "id": "BR-10",
+      "rule": "A fine may be removed by Accounts or School Admin with a written reason. The fine and its removal both stay on the record, so a waiver granted at a counter is visible afterwards."
+    },
+    {
+      "id": "BR-11",
+      "rule": "On every fine the parent is notified and shown the updated challan, so nobody discovers a penalty at the bank counter."
+    },
+    {
+      "id": "BR-12",
+      "rule": "A settled invoice accrues nothing further. A fine is never added to a bill that has already been paid."
+    },
+    {
+      "id": "BR-13",
+      "rule": "Each fine posts to the late fee income account, separately from fee income, so the school can see how much of its income is penalty."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Late fee policy",
+      "states": [
+        "Draft",
+        "Awaiting approval",
+        "Approved",
+        "Returned",
+        "Superseded"
+      ],
+      "initial": "Draft",
+      "terminal": [
+        "Superseded"
+      ],
+      "transitions": [
+        {
+          "from": "Draft",
+          "to": "Awaiting approval",
+          "triggeredBy": "Accounts",
+          "condition": "Submitted with at least one step."
+        },
+        {
+          "from": "Awaiting approval",
+          "to": "Approved",
+          "triggeredBy": "School Admin",
+          "condition": "Approved. Only then does it go live (BR-2)."
+        },
+        {
+          "from": "Awaiting approval",
+          "to": "Returned",
+          "triggeredBy": "School Admin",
+          "condition": "Returned with a reason."
+        },
+        {
+          "from": "Returned",
+          "to": "Awaiting approval",
+          "triggeredBy": "Accounts",
+          "condition": "Corrected and resubmitted."
+        },
+        {
+          "from": "Approved",
+          "to": "Superseded",
+          "triggeredBy": "System",
+          "condition": "A later version is approved and its effective date arrives."
+        }
+      ]
+    },
+    {
+      "entity": "Late fee",
+      "states": [
+        "Applied",
+        "Paid",
+        "Waived"
+      ],
+      "initial": "Applied",
+      "terminal": [
+        "Paid",
+        "Waived"
+      ],
+      "transitions": [
+        {
+          "from": "Applied",
+          "to": "Paid",
+          "triggeredBy": "System",
+          "condition": "The invoice including the fine is settled."
+        },
+        {
+          "from": "Applied",
+          "to": "Waived",
+          "triggeredBy": "Accounts / School Admin",
+          "condition": "Removed with a written reason (BR-10)."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Accounts",
+      "navigation": "Login → Fee → Late fee policy → Build policy",
+      "userAction": "Sets the policy as a series of steps: after so many days late, add this amount; after a further period, add this further amount.",
+      "function": "buildLateFeePolicy(steps, effectiveFrom, appliesTo)",
+      "systemResponse": "Checks each step applies later than the one before, and that every charge is above zero.",
+      "rules": [
+        "BR-3",
+        "BR-4"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "Accounts",
+      "navigation": "Late fee policy → Submit for approval",
+      "userAction": "Submits the policy.",
+      "function": "submitLateFeePolicy(policyId)",
+      "systemResponse": "Sets it to Awaiting approval. Nothing is fined in the meantime.",
+      "rules": [
+        "BR-2",
+        "BR-5"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "School Admin",
+      "navigation": "Login → Fee → Late fee policy → Approve",
+      "userAction": "Reviews the steps and approves the policy.",
+      "function": "approveLateFeePolicy(policyId)",
+      "systemResponse": "Records the approval and makes the policy live from its effective date.",
+      "rules": [
+        "BR-2",
+        "BR-5",
+        "BR-6"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "applyLateFees(runDate)",
+      "systemResponse": "Checks unpaid invoices against their due dates and applies the next step of the policy as each is reached.",
+      "rules": [
+        "BR-1",
+        "BR-3",
+        "BR-9",
+        "BR-12"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "addLateFeeLine(invoiceId, stepId, amount)",
+      "systemResponse": "Adds the fine as its own line on the invoice, stops at the cap where one is set, and posts it to the late fee income account.",
+      "rules": [
+        "BR-7",
+        "BR-8",
+        "BR-13"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "notifyLateFee(invoiceId, lateFeeId)",
+      "systemResponse": "Notifies the parent and shows them the updated challan, so nobody discovers a fine at the bank counter.",
+      "rules": [
+        "BR-11"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "Accounts / School Admin",
+      "navigation": "Login → Fee → Late fees applied → Waive fine",
+      "userAction": "Removes a fine in an approved case, giving a written reason.",
+      "function": "waiveLateFee(lateFeeId, reason)",
+      "systemResponse": "Marks the fine waived, reverses its posting, and keeps both the fine and the waiver on the record.",
+      "rules": [
+        "BR-10"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 4,
+      "condition": "The invoice reaches a further step",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "The next step's charge is added on top of the previous fines, up to the cap where one is set (BR-3, BR-8).",
+      "function": "addLateFeeLine(invoiceId, nextStepId, amount)",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 4,
+      "condition": "The student is meeting an approved installment plan",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "No fine is applied while the plan is being met, since a family paying as agreed is not late (BR-9).",
+      "function": "applyLateFees(runDate)"
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 4,
+      "condition": "The student has missed an installment",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "They come back within the policy and are fined from the missed installment's due date.",
+      "function": "applyLateFees(runDate)",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 3,
+      "condition": "The School Admin does not accept the policy",
+      "actor": "School Admin",
+      "navigation": "Late fee policy → Return with a reason",
+      "behaviour": "It returns to Accounts and nothing is fined in the meantime, since only an approved policy is live (BR-2).",
+      "function": "returnLateFeePolicy(policyId, reason)",
+      "resumesAtStep": 1
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 1,
+      "condition": "The policy changes for the coming session",
+      "actor": "Accounts",
+      "navigation": "Late fee policy → Create new version",
+      "behaviour": "A new version is built with its own effective date and goes through the same approval. It does not reach back and fine invoices whose steps were already passed (BR-6).",
+      "function": "createLateFeePolicyVersion(policyId, steps, effectiveFrom)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 7,
+      "condition": "A family had a genuine reason for paying late",
+      "actor": "Accounts / School Admin",
+      "navigation": "Late fees applied → Waive fine",
+      "behaviour": "The fine is waived with a written reason. Both the fine and the waiver stay on the record, so a concession granted at a counter is visible afterwards (BR-10).",
+      "function": "waiveLateFee(lateFeeId, reason)"
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 1,
+      "condition": "A step applies at the same age as, or earlier than, the previous one",
+      "systemResponse": "The policy is not submitted (BR-4).",
+      "messageShown": "Step 2 must apply later than step 1.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E2",
+      "atStep": 1,
+      "condition": "A step carries a charge of zero or less",
+      "systemResponse": "The policy is not submitted.",
+      "messageShown": "Enter a charge greater than zero.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E3",
+      "atStep": 3,
+      "condition": "Accounts attempt to approve their own policy",
+      "systemResponse": "The approval is refused (BR-5).",
+      "messageShown": "Only a School Admin can approve a late fee policy.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 4,
+      "condition": "No approved policy is live",
+      "systemResponse": "Nothing is fined (BR-2).",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E5",
+      "atStep": 5,
+      "condition": "The cap has already been reached on an invoice",
+      "systemResponse": "No further fine is added, and the invoice is left at the cap (BR-8).",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E6",
+      "atStep": 5,
+      "condition": "The invoice was settled between the check and the posting",
+      "systemResponse": "No fine is added. A fine is never added to a bill already paid (BR-12).",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E7",
+      "atStep": 7,
+      "condition": "A fine is waived with no reason",
+      "systemResponse": "The waiver is not recorded (BR-10).",
+      "messageShown": "Give a reason for removing this fine.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E8",
+      "atStep": 7,
+      "condition": "A waiver is attempted on a fine already paid",
+      "systemResponse": "It is refused. Money received is returned through a refund, not by waiving the charge it settled.",
+      "messageShown": "This fine has been paid. A refund is the route, not a waiver.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E9",
+      "atStep": 5,
+      "condition": "The ledger posting for a fine fails",
+      "systemResponse": "That fine is rolled back entirely and the invoice is left unchanged. The run continues for every other invoice.",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Late fee applied",
+      "recipient": "Parent / Guardian",
+      "channels": [
+        "whatsapp",
+        "sms"
+      ],
+      "template": "LATE_FEE_APPLIED",
+      "contents": [
+        "Student name",
+        "Original amount",
+        "Late fee added",
+        "New total payable",
+        "Link to the updated challan"
+      ],
+      "retry": "Per the Messaging module policy.",
+      "blocking": false
+    },
+    {
+      "event": "Policy submitted for approval",
+      "recipient": "School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "LATE_FEE_POLICY_AWAITING_APPROVAL",
+      "contents": [
+        "Steps",
+        "Cap",
+        "Effective from",
+        "Submitted by"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Fine waived",
+      "recipient": "School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "LATE_FEE_WAIVED",
+      "contents": [
+        "Student",
+        "Amount",
+        "Waived by",
+        "The reason given"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "The invoice's outstanding balance rises, which changes what the overdue list shows.",
+      "affects": {
+        "id": "UC-04-06",
+        "name": "Overdue-fee tracking",
+        "link": "UC-04-06.json"
+      }
+    },
+    {
+      "effect": "An outstanding challan is superseded and a fresh one is produced for the higher amount.",
+      "affects": {
+        "id": "UC-04-04",
+        "name": "Printable payment slips and challans",
+        "link": "UC-04-04.json"
+      }
+    },
+    {
+      "effect": "The fine posts to the late fee income account, separately from fee income.",
+      "affects": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    },
+    {
+      "effect": "A settled invoice stops accruing fines.",
+      "affects": {
+        "id": "UC-04-05",
+        "name": "Recording a payment and issuing the receipt",
+        "link": "UC-04-05.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Late fees applied",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Date applied",
+        "Student",
+        "Class",
+        "Invoice",
+        "Step",
+        "Amount",
+        "Running total",
+        "Status"
+      ],
+      "grouping": "By class",
+      "totals": "Fines applied, paid and waived in the period"
+    },
+    {
+      "name": "Waivers",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Date",
+        "Student",
+        "Amount waived",
+        "Waived by",
+        "Reason"
+      ],
+      "grouping": "By person who waived",
+      "totals": "Total waived in the period"
+    },
+    {
+      "name": "Late fee policy",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Step",
+        "Days after due date",
+        "Charge",
+        "Cap",
+        "Effective from",
+        "Version",
+        "Approved by"
+      ],
+      "grouping": "By version",
+      "totals": "Steps in the live policy"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "A policy adding PKR 200 after 7 days and a further PKR 300 after 21 days, approved and live",
+      "when": "an invoice reaches 7 days overdue",
+      "then": "PKR 200 is added as its own line and the parent is notified with the updated challan"
+    },
+    {
+      "id": "AC-2",
+      "given": "The same invoice at 21 days overdue",
+      "when": "the daily run executes",
+      "then": "a further PKR 300 is added, so the fines total PKR 500"
+    },
+    {
+      "id": "AC-3",
+      "given": "A policy with a cap of PKR 1,000 and fines already totalling PKR 1,000",
+      "when": "the next step is reached",
+      "then": "no further fine is added"
+    },
+    {
+      "id": "AC-4",
+      "given": "A policy submitted but not yet approved",
+      "when": "invoices pass their due dates",
+      "then": "nothing is fined"
+    },
+    {
+      "id": "AC-5",
+      "given": "Accounts who built a policy",
+      "when": "they attempt to approve it",
+      "then": "the approval is refused and School Admin is named"
+    },
+    {
+      "id": "AC-6",
+      "given": "A student meeting an approved installment plan",
+      "when": "their invoice passes its due date",
+      "then": "no fine is applied"
+    },
+    {
+      "id": "AC-7",
+      "given": "The same student after missing an installment",
+      "when": "the run executes",
+      "then": "the fine is applied"
+    },
+    {
+      "id": "AC-8",
+      "given": "An invoice settled this morning",
+      "when": "the run executes this evening",
+      "then": "no fine is added"
+    },
+    {
+      "id": "AC-9",
+      "given": "A fine waived by School Admin with a reason",
+      "when": "the record is opened",
+      "then": "both the fine and the waiver are visible, with the reason and who granted it"
+    },
+    {
+      "id": "AC-10",
+      "given": "An invoice with a fine",
+      "when": "the family opens it",
+      "then": "the fee and the fine are separate lines, not one combined figure"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-04-02",
+        "name": "Issuing fee invoices at different scopes",
+        "link": "UC-04-02.json",
+        "why": "Supplies the invoices and their due dates."
+      },
+      {
+        "id": "UC-04-05",
+        "name": "Recording a payment and issuing the receipt",
+        "link": "UC-04-05.json",
+        "why": "Settling an invoice stops further fines."
+      },
+      {
+        "id": "UC-04-14",
+        "name": "Payment plans and installment billing",
+        "link": "UC-04-14.json",
+        "why": "Supplies the plans that exempt a student.",
+        "optional": true
+      },
+      {
+        "id": "UC-04-04",
+        "name": "Printable payment slips and challans",
+        "link": "UC-04-04.json",
+        "why": "Produces the updated challan shown to the parent."
+      },
+      {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json",
+        "why": "Receives the postings."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Keeps policy approval separate from policy building."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      }
+    ],
+    "masterData": [
+      "Chart of accounts with a late fee income account",
+      "Fee types the policy applies to"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Producing the overdue list",
+      "handledBy": {
+        "id": "UC-04-06",
+        "name": "Overdue-fee tracking",
+        "link": "UC-04-06.json"
+      }
+    },
+    {
+      "item": "Reminding families about an overdue fee",
+      "handledBy": {
+        "id": "UC-04-07",
+        "name": "Fee reminders",
+        "link": "UC-04-07.json"
+      }
+    },
+    {
+      "item": "Cancelling the original charge",
+      "handledBy": {
+        "id": "UC-04-08",
+        "name": "Cancelling a wrong unpaid charge",
+        "link": "UC-04-08.json"
+      }
+    },
+    {
+      "item": "Writing off a debt including its fines",
+      "handledBy": {
+        "id": "UC-04-09",
+        "name": "Writing off an uncollectable debt",
+        "link": "UC-04-09.json"
+      }
+    },
+    {
+      "item": "Refunding a fine already paid",
+      "handledBy": {
+        "id": "UC-04-11",
+        "name": "Refunding an unused credit on withdrawal",
+        "link": "UC-04-11.json"
+      }
+    },
+    {
+      "item": "Agreeing an installment plan that exempts a family",
+      "handledBy": {
+        "id": "UC-04-14",
+        "name": "Payment plans and installment billing",
+        "link": "UC-04-14.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Run integrity",
+        "requirement": "The daily run is safe to execute more than once in a day. An invoice never receives the same step's fine twice."
+      },
+      {
+        "aspect": "Volume",
+        "requirement": "The run covers 10,000 unpaid invoices within 5 minutes and posts each fine atomically."
+      },
+      {
+        "aspect": "Explainability",
+        "requirement": "Every fine names the step that produced it and the policy version in force, so a family asking why can be answered exactly."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Policies, their versions, every fine and every waiver are retained 7 years as financial records."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "What are the school's actual steps — days and amounts?",
+      "assumption": "Not specified, and the policy cannot go live without them.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Is there a cap per invoice, and what is it?",
+      "assumption": "Not specified. Without one a small debt grows without limit (BR-8).",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should Accounts be able to waive a fine alone, or should every waiver need School Admin approval?",
+      "assumption": "Either may waive, per the feature. A waiver at a counter with no second pair of eyes is a risk.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Does the policy apply to every fee type, or only tuition?",
+      "assumption": "All fee types by default. Not confirmed.",
+      "confirmWith": "Accounts",
+      "blocksBuild": false
+    },
+    {
+      "question": "Should a percentage-based fine be calculated on the original amount or on the outstanding balance?",
+      "assumption": "On the outstanding balance. Not confirmed, and the two differ once a part payment is made.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "money",
+      "area": "Money",
+      "rule": "All monetary values are stored as fixed-point decimals in the smallest currency unit, never as floating point. Displayed as PKR with a thousands separator and two decimal places. Rounding is half-up at the line."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "bulk-actions",
+      "area": "Bulk actions",
+      "rule": "Any bulk operation reports a per-row result, commits valid rows and lists rejected rows with the reason. A bulk action never fails as a whole because of one bad row."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

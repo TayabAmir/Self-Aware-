@@ -1,0 +1,2212 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-13-03",
+    "name": "Issue the appointment letter to a selected candidate, have it accepted, and let acceptance authorise the staff record on joining",
+    "module": "ID cards and certificates",
+    "file": "../UseCases/UC-13-03.json",
+    "featureRef": "13.3 Appointment letter"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-13-03-PC-1",
+      "intent": {
+        "name": "appointment.letter.prepare",
+        "summary": "Prepare an appointment letter for a selected candidate, carrying the approved salary and the terms. One step, and nothing is issued by it.",
+        "routesHere": [
+          "prepare the appointment letter — start date 1 October, one month's notice",
+          {
+            "text": "muntakhab umeedwar ka appointment letter tayyar karo",
+            "lang": "ur-Latn",
+            "gloss": "prepare the appointment letter for the selected candidate"
+          },
+          {
+            "text": "1 October se joining, ek mahine ka notice period",
+            "lang": "ur-Latn",
+            "gloss": "joining from 1 October, one month's notice period"
+          },
+          {
+            "text": "letter mein probation bhi likh do",
+            "lang": "ur-Latn",
+            "gloss": "include the probation in the letter"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "staff record bana do",
+              "lang": "ur-Latn",
+              "gloss": "create the staff record"
+            },
+            "goesTo": "staff.record.open — UC-12-01-PC-1",
+            "note": "The staff record is created on the joining date from the accepted letter, not on acceptance — so a candidate who accepts and does not arrive never appears on the payroll (BR-8, E6)."
+          },
+          {
+            "request": {
+              "text": "tankhwah manzoor karwa do",
+              "lang": "ur-Latn",
+              "gloss": "get the salary approved"
+            },
+            "goesTo": "salary.approve — UC-12-16-PC-3",
+            "note": "The salary on the letter is approved before the letter is issued. A letter carrying an unapproved figure commits the school to something nobody agreed (BR-2, E2)."
+          },
+          {
+            "request": {
+              "text": "certificate jari kar do",
+              "lang": "ur-Latn",
+              "gloss": "issue a certificate"
+            },
+            "goesTo": "certificate.request — UC-13-02",
+            "note": "The offer letter is not one of the certificate types. It is issued before an employee exists (UC-13-02 BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "appointment.letter.prepare",
+            "inputs": {
+              "candidate_id": "$request.candidate_phrase",
+              "salary_id": "$request.salary_phrase",
+              "start_date": "$request.start_date",
+              "notice_period": "$request.notice_period",
+              "probation_period": "$request.probation_period",
+              "confirm_by": "$request.confirm_by",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The letter is filled from the candidate record rather than a staff record, since no employee exists yet — it is the document that causes the staff record, not one produced from it (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report. A candidate not selected and approved in recruitment, an unapproved salary, a missing confirmation date and an actor who cannot see salary are all refused.",
+        "atomicity": "One write: the letter in Draft and the audit entry together or not at all. Nothing is issued and the candidate is told nothing. The letter is visible only to the roles permitted to see salary, since it carries the agreed figure (BR-3)."
+      },
+      "operations": [
+        {
+          "name": "appointment.letter.prepare",
+          "method": "POST",
+          "path": "/api/v1/appointment-letters",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "candidate_id, since a candidate carries one live letter",
+          "purpose": "Prepare an appointment letter for an approved candidate.",
+          "parameters": [
+            {
+              "name": "candidate_id",
+              "source": "resolved",
+              "sourceRef": "$request.candidate_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "job_candidate",
+                "fromPhrase": "$request.candidate_phrase",
+                "onNoMatch": "Refuse. No approved candidate matches. A letter cannot be prepared for a candidate recruitment has not selected (BR-1, E1).",
+                "onAmbiguous": "Ask, naming the approved candidates with their role and the vacancy they applied to."
+              },
+              "notes": "A candidate selected and approved in recruitment (BR-1, E1). No letter can be prepared for anybody else."
+            },
+            {
+              "name": "salary_id",
+              "source": "resolved",
+              "sourceRef": "$request.salary_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "salary",
+                "fromPhrase": "$request.salary_phrase",
+                "onNoMatch": "Refuse. No approved salary matches for that candidate. The letter cannot carry an unapproved figure (BR-2).",
+                "onAmbiguous": "Ask, naming the salary records with their status and effective date — never the amounts, unless the actor holds the right to see them (BR-3)."
+              },
+              "notes": "The approved salary the letter carries (BR-2, E2). Approved under the salary use case before the letter is issued — a letter carrying an unapproved figure commits the school to something nobody agreed."
+            },
+            {
+              "name": "start_date",
+              "source": "request",
+              "sourceRef": "$request.start_date",
+              "required": true,
+              "type": "date",
+              "notes": "The joining date the letter commits to. The candidate resigns elsewhere against it, so it is never assumed."
+            },
+            {
+              "name": "notice_period",
+              "source": "request",
+              "sourceRef": "$request.notice_period",
+              "required": true,
+              "type": "string",
+              "notes": "The notice period that will apply, carried onto the staff record (BR-10). It is what a resignation and a termination both read later."
+            },
+            {
+              "name": "probation_period",
+              "source": "request",
+              "sourceRef": "$request.probation_period",
+              "required": false,
+              "type": "string",
+              "notes": "Any probation, carried onto the staff record (BR-10)."
+            },
+            {
+              "name": "confirm_by",
+              "source": "request",
+              "sourceRef": "$request.confirm_by",
+              "required": true,
+              "type": "date",
+              "notes": "The date by which the candidate must confirm. The letter expires after it — an offer open indefinitely is not an offer (BR-9, E4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The letter as prepared.",
+            "fields": [
+              {
+                "name": "letter_id",
+                "type": "string",
+                "description": "The letter."
+              },
+              {
+                "name": "letter_number",
+                "type": "string",
+                "description": "Unique, filed against the candidate (BR-12)."
+              },
+              {
+                "name": "candidate",
+                "type": "string",
+                "description": "Who it is for."
+              },
+              {
+                "name": "role",
+                "type": "string",
+                "description": "Carried from the candidate record and the vacancy (BR-1)."
+              },
+              {
+                "name": "start_date",
+                "type": "date",
+                "description": "The joining date it commits to."
+              },
+              {
+                "name": "notice_period",
+                "type": "string",
+                "description": "Carried onto the staff record on joining (BR-10)."
+              },
+              {
+                "name": "confirm_by",
+                "type": "date",
+                "description": "After which it expires (BR-9)."
+              },
+              {
+                "name": "salary_approved",
+                "type": "boolean",
+                "description": "True. An unapproved figure cannot be carried (BR-2)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. Nothing is issued and the candidate knows nothing."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CANDIDATE_NOT_APPROVED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The candidate has not been selected and approved in recruitment.",
+              "written": "Nothing.",
+              "notWritten": "No letter prepared.",
+              "note": "The letter is filled from the candidate record, and recruitment produces the approval it rests on (BR-1)."
+            },
+            {
+              "code": "SALARY_NOT_APPROVED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The salary on the letter has not been approved.",
+              "written": "Nothing.",
+              "notWritten": "The letter cannot be issued.",
+              "note": "A letter carrying an unapproved figure commits the school to something nobody agreed (BR-2)."
+            },
+            {
+              "code": "NO_CONFIRM_BY",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No confirmation date is set.",
+              "written": "Nothing.",
+              "notWritten": "The letter is not prepared.",
+              "note": "An offer open indefinitely is not an offer (BR-9)."
+            },
+            {
+              "code": "CANNOT_SEE_SALARY",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "The acting role cannot see salary.",
+              "written": "Nothing.",
+              "notWritten": "The letter cannot be prepared.",
+              "note": "It carries the agreed figure and is visible only to the roles permitted to see salary (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the start date. A candidate resigns from another post against it (BR-4), and a date a planner picked is when somebody hands in their notice elsewhere.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply the notice or probation period. Both carry onto the staff record and are read at resignation and at termination (BR-10) — they decide somebody's last day years later.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never set the confirmation date. It is when the offer expires (BR-9, E4), and a candidate who misses it because a planner chose a short window has lost the post.",
+          "derivedFrom": [
+            "BR-9",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never carry an unapproved salary. E2 is BR-2 working — the letter is the written terms a candidate resigns against, and a figure nobody approved is one the school may not honour.",
+          "derivedFrom": [
+            "BR-2",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never state the salary to an actor who may not see it. The letter is visible only to the roles permitted to see salary (BR-3, E3).",
+          "derivedFrom": [
+            "BR-3",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never describe a prepared letter as an offer. It is a draft; the candidate is told nothing until it is approved, signed and issued (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An appointment letter is never deleted (BR-12). A draft that will not be issued is left unissued, and a revised letter supersedes the original with both remaining visible (BR-13)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "muntakhab umeedwar ka letter tayyar karo — 1 October se joining, ek mahine ka notice",
+            "lang": "ur-Latn",
+            "gloss": "prepare the selected candidate's letter — joining 1 October, one month's notice"
+          },
+          "context": "School Admin, Johar Town branch, salary approved, confirmation date given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.prepare",
+              "inputs": {
+                "candidate_id": "$request.candidate_phrase",
+                "salary_id": "$request.salary_phrase",
+                "start_date": "2026-10-01",
+                "notice_period": "one month, as stated",
+                "probation_period": "$request.probation_period",
+                "confirm_by": "$request.confirm_by",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The date, the notice and the confirmation date are all the School Admin's (PR-1, PR-2, PR-3)."
+            }
+          ],
+          "outcome": "Prepared in Draft. Report the letter number and that the candidate has been told nothing (PR-6) — it is approved and signed before it is issued. The salary is not repeated back (PR-5)."
+        },
+        {
+          "request": {
+            "text": "letter tayyar karo, tankhwah 72,000 likh do",
+            "lang": "ur-Latn",
+            "gloss": "prepare the letter, put the salary at 72,000"
+          },
+          "context": "School Admin, Johar Town branch, with no approved salary record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.prepare",
+              "inputs": {
+                "candidate_id": "$request.candidate_phrase",
+                "salary_id": "$request.salary_phrase — no approved salary",
+                "start_date": "$request.start_date",
+                "notice_period": "$request.notice_period",
+                "probation_period": "omitted",
+                "confirm_by": "$request.confirm_by",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The figure is not typed onto the letter (PR-4)."
+            }
+          ],
+          "outcome": "Nothing is prepared. Report that the salary is recorded and approved under the salary use case first, and the letter then carries the approved figure — a letter with a number typed onto it commits the school to terms nobody approved, and the candidate resigns elsewhere against it."
+        },
+        {
+          "request": {
+            "text": "letter tayyar karo, confirm karne ki tareekh tum rakh lo",
+            "lang": "ur-Latn",
+            "gloss": "prepare the letter, you set the confirmation date"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.prepare",
+              "inputs": {
+                "candidate_id": "$request.candidate_phrase",
+                "salary_id": "$request.salary_phrase",
+                "start_date": "$request.start_date",
+                "notice_period": "$request.notice_period",
+                "probation_period": "omitted",
+                "confirm_by": "$request.confirm_by — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-3)."
+            }
+          ],
+          "outcome": "Nothing is prepared. Ask by when the candidate must confirm — the letter expires after it, so a window chosen for the school is one a candidate may miss while they are working out their notice somewhere else."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-03-PC-2",
+      "intent": {
+        "name": "appointment.letter.approve",
+        "summary": "Approve and sign an appointment letter. The configured approver, one step, and it is not yet with the candidate.",
+        "routesHere": [
+          "approve and sign this appointment letter",
+          {
+            "text": "appointment letter manzoor kar ke dastakhat kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve and sign the appointment letter"
+          },
+          {
+            "text": "letter par manzoori de do",
+            "lang": "ur-Latn",
+            "gloss": "approve the letter"
+          },
+          {
+            "text": "Principal ke dastakhat ho gaye hain",
+            "lang": "ur-Latn",
+            "gloss": "the Principal has signed it"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "letter manzoor nahi",
+              "lang": "ur-Latn",
+              "gloss": "the letter is not approved"
+            },
+            "goesTo": "appointment.letter.return — UC-13-03-PC-3"
+          },
+          {
+            "request": {
+              "text": "umeedwar ko bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send it to the candidate"
+            },
+            "goesTo": "appointment.letter.issue — UC-13-03-PC-4",
+            "note": "Issue is refused before approval (BR-7, E5), and issuing is what puts it in the candidate's hands."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "appointment.letter.approve",
+            "inputs": {
+              "letter_id": "$request.letter_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Who approves and signs is configuration set by the Super Admin; by default the Principal approves and signs (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the approval, the signature and the audit entry together or not at all. The candidate is told nothing — issuing is the separate act that puts the letter in their hands (BR-4). The salary on it is already approved, which is what makes the terms the school's rather than one person's (BR-2)."
+      },
+      "operations": [
+        {
+          "name": "appointment.letter.approve",
+          "method": "POST",
+          "path": "/api/v1/appointment-letters/{letter_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "letter_id, since a letter is approved once",
+          "purpose": "Approve and sign the appointment letter.",
+          "parameters": [
+            {
+              "name": "letter_id",
+              "source": "resolved",
+              "sourceRef": "$request.letter_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "appointment_letter",
+                "fromPhrase": "$request.letter_phrase",
+                "onNoMatch": "Refuse. No appointment letter matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the letters with the candidate, the role, the start date and the status — never the salary, unless the actor holds the right to see it (BR-3)."
+              },
+              "notes": "The appointment letter, resolved from the candidate and its state."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval.",
+            "fields": [
+              {
+                "name": "letter_id",
+                "type": "string",
+                "description": "The letter."
+              },
+              {
+                "name": "letter_number",
+                "type": "string",
+                "description": "Filed against the candidate (BR-12)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved and signed, ready to issue. Not yet with the candidate (BR-4)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "Whichever role the Super Admin configured; by default the Principal (BR-7)."
+              },
+              {
+                "name": "start_date",
+                "type": "date",
+                "description": "The joining date the letter commits to."
+              },
+              {
+                "name": "confirm_by",
+                "type": "date",
+                "description": "After which it expires (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SALARY_NOT_APPROVED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The salary on the letter is not approved.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "A letter carrying an unapproved figure commits the school to something nobody agreed (BR-2)."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The letter is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never chain the issue onto the approval. Issuing is what a candidate resigns against (BR-4), and it is a separate act by design.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Read the terms back before approving — role, start date, notice period, probation and confirmation date. This is the last check before written terms leave the school, and the salary is only stated to an actor entitled to see it (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never approve where the salary is unapproved. E2 is BR-2 working, and the letter is the document the figure paid is later checked against (UC-12-01 BR-2).",
+          "derivedFrom": [
+            "BR-2",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. A letter that will not now be issued is withdrawn with a reason, or revised — and a revision supersedes rather than replaces (BR-13)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye appointment letter manzoor kar ke dastakhat kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve and sign this appointment letter"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.approve",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only. The issue is not chained (PR-1)."
+            }
+          ],
+          "outcome": "Approved and signed. Report the role, start date, notice period and confirmation date as they stand (PR-2), and that the candidate has not seen it — issuing is next, and that is the point at which they may resign elsewhere."
+        },
+        {
+          "request": {
+            "text": "manzoor kar ke foran umeedwar ko bhej do",
+            "lang": "ur-Latn",
+            "gloss": "approve it and send it to the candidate straight away"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.approve",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only (PR-1)."
+            }
+          ],
+          "outcome": "Approved. Report that issuing is the next act and worth taking deliberately — the letter is issued as soon as the decision is made rather than held until the joining date, precisely so a candidate resigning from another post does so against written terms."
+        },
+        {
+          "request": {
+            "text": "letter manzoor kar do, tankhwah baad mein manzoor ho jayegi",
+            "lang": "ur-Latn",
+            "gloss": "approve the letter, the salary will be approved later"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.approve",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns SALARY_NOT_APPROVED (E2)."
+            }
+          ],
+          "outcome": "Not approved. Report that the salary is approved before the letter — the candidate will resign against this figure, and the payroll will later pay whatever the letter carried, so an unapproved number here becomes a real salary by default."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-03-PC-3",
+      "intent": {
+        "name": "appointment.letter.return",
+        "summary": "Return an appointment letter unapproved, with the reason. One step, and the candidate knows nothing.",
+        "routesHere": [
+          "return this letter — the start date is wrong",
+          {
+            "text": "ye letter wapas bhej do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "return this letter with the reason"
+          },
+          {
+            "text": "shara-it durust nahi, dobara dekho",
+            "lang": "ur-Latn",
+            "gloss": "the terms are not right, look again"
+          },
+          {
+            "text": "letter manzoor nahi kar sakta",
+            "lang": "ur-Latn",
+            "gloss": "I cannot approve this letter"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "letter manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the letter"
+            },
+            "goesTo": "appointment.letter.approve — UC-13-03-PC-2"
+          },
+          {
+            "request": {
+              "text": "shara-it badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the terms"
+            },
+            "goesTo": "appointment.letter.revise — UC-13-03-PC-8",
+            "note": "A revision supersedes the original rather than replacing it, and both remain visible (BR-13). Before issue, a returned draft is simply corrected."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "appointment.letter.return",
+            "inputs": {
+              "letter_id": "$request.letter_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing has been issued and the candidate has seen nothing."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. It goes back as a draft. The candidate knows nothing, so nothing has to be retracted — and the letter stays on record, since one is never deleted (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "appointment.letter.return",
+          "method": "POST",
+          "path": "/api/v1/appointment-letters/{letter_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "letter_id, since a letter sits in one place at a time",
+          "purpose": "Return the letter unapproved with the reason.",
+          "parameters": [
+            {
+              "name": "letter_id",
+              "source": "resolved",
+              "sourceRef": "$request.letter_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "appointment_letter",
+                "fromPhrase": "$request.letter_phrase",
+                "onNoMatch": "Refuse. No appointment letter matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the letters with the candidate, the role, the start date and the status — never the salary, unless the actor holds the right to see it (BR-3)."
+              },
+              "notes": "The appointment letter, resolved from the candidate and its state."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Why it is not approved. Whoever prepared it works from this."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "letter_id",
+                "type": "string",
+                "description": "The letter."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. It sits with whoever prepared it."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The configured approver."
+              },
+              {
+                "name": "candidate_notified",
+                "type": "boolean",
+                "description": "False. Nothing has been issued (BR-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "A letter was returned with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The letter is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "An issued letter is withdrawn or revised, not returned (BR-13)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. Whoever prepared the letter corrects it from this, and a candidate is waiting to hear.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never notify the candidate. Nothing has been issued, and telling them a letter was refused would be the first they had heard of an offer (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that a candidate is waiting. Recruitment told them they were selected, and a letter stuck in return is somebody deciding whether to accept another post.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never return an issued letter. One already with the candidate is withdrawn with a reason or revised, and a revision supersedes rather than replaces (BR-13).",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. The letter is corrected and submitted again, and it stays on record throughout (BR-12)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye letter wapas bhej do — joining ki tareekh ghalat hai",
+            "lang": "ur-Latn",
+            "gloss": "return this letter — the joining date is wrong"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.return",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "reason": "The start date is a public holiday. Set it to the following working day and resubmit.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the approver's own (PR-1)."
+            }
+          ],
+          "outcome": "Returned as a draft. The candidate knows nothing (PR-2). Report that they were told they were selected and are waiting (PR-3) — a letter left in return is a candidate weighing another offer."
+        },
+        {
+          "request": {
+            "text": "letter wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return the letter"
+          },
+          "context": "Principal, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.return",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what should change — the letter comes back unchanged otherwise, and a candidate is waiting on it."
+        },
+        {
+          "request": {
+            "text": "jo letter bhej diya hai wo wapas le lo",
+            "lang": "ur-Latn",
+            "gloss": "take back the letter we already sent"
+          },
+          "context": "Principal, Johar Town branch, on an issued letter.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.return",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_AWAITING_APPROVAL (E5)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that a letter the candidate holds is withdrawn with a reason, or revised — and a revision supersedes the original with both remaining visible, so the candidate can see what changed between the terms they first read and the terms they are being asked to accept."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-03-PC-4",
+      "intent": {
+        "name": "appointment.letter.issue",
+        "summary": "Issue an approved letter to the candidate. One step, and it is the moment they may resign elsewhere.",
+        "routesHere": [
+          "issue the letter to the candidate",
+          {
+            "text": "letter umeedwar ko bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the letter to the candidate"
+          },
+          {
+            "text": "appointment letter jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "issue the appointment letter"
+          },
+          {
+            "text": "offer bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the offer"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "joining ke din de denge",
+              "lang": "ur-Latn",
+              "gloss": "we will hand it over on the joining day"
+            },
+            "goesTo": "Not offered as a delay.",
+            "note": "The letter is issued as soon as the decision is made rather than held until the joining date, so that a candidate resigning from another post does so against written terms rather than a figure agreed by telephone (BR-4)."
+          },
+          {
+            "request": {
+              "text": "staff record bana do",
+              "lang": "ur-Latn",
+              "gloss": "create the staff record"
+            },
+            "goesTo": "staff.record.open — UC-12-01-PC-1",
+            "note": "The record is created on the joining date from the accepted letter, not on acceptance (BR-8, E6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "appointment.letter.issue",
+            "inputs": {
+              "letter_id": "$request.letter_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches the candidate. Issue before approval is refused (BR-7, E5)."
+          }
+        ],
+        "onFailure": "Stop and report. A letter that cannot be delivered is marked undelivered rather than assumed received.",
+        "atomicity": "One write: the issue, the date and the delivery together or not at all. From here the candidate may resign from another post against written terms (BR-4). The letter records both the date it was issued and the date it was accepted, which may be the same day where the candidate signs on joining (BR-5). It expires after the confirmation date — an offer open indefinitely is not an offer (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "appointment.letter.issue",
+          "method": "POST",
+          "path": "/api/v1/appointment-letters/{letter_id}/issue",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "letter_id, since a letter is issued once and a repeat must not send a second offer",
+          "purpose": "Issue the approved letter to the candidate.",
+          "parameters": [
+            {
+              "name": "letter_id",
+              "source": "resolved",
+              "sourceRef": "$request.letter_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "appointment_letter",
+                "fromPhrase": "$request.letter_phrase",
+                "onNoMatch": "Refuse. No appointment letter matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the letters with the candidate, the role, the start date and the status — never the salary, unless the actor holds the right to see it (BR-3)."
+              },
+              "notes": "The appointment letter, resolved from the candidate and its state."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The issue.",
+            "fields": [
+              {
+                "name": "letter_id",
+                "type": "string",
+                "description": "The letter."
+              },
+              {
+                "name": "letter_number",
+                "type": "string",
+                "description": "Filed against the candidate (BR-12)."
+              },
+              {
+                "name": "issued_on",
+                "type": "date",
+                "description": "When it was issued (BR-4, BR-5)."
+              },
+              {
+                "name": "confirm_by",
+                "type": "date",
+                "description": "After which it expires (BR-9)."
+              },
+              {
+                "name": "start_date",
+                "type": "date",
+                "description": "The joining date it commits to."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Issued. With the candidate."
+              },
+              {
+                "name": "delivery_status",
+                "type": "string",
+                "description": "Delivered, or undelivered — marked rather than assumed received (E9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_APPROVED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "Issue was attempted before approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing issued.",
+              "note": "Who approves and signs is configuration (BR-7)."
+            },
+            {
+              "code": "UNDELIVERED",
+              "mapsTo": "E9",
+              "httpStatus": 200,
+              "meaning": "The letter could not be delivered to the candidate.",
+              "written": "The letter is issued.",
+              "notWritten": "The candidate has not received it.",
+              "treatedAsSuccess": true,
+              "note": "Marked as undelivered rather than assumed received. A candidate who never got the letter is not deciding about it (E9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never issue an unapproved letter. E5 is BR-7 working, and this is the document a candidate resigns against.",
+          "derivedFrom": [
+            "BR-7",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report a failed delivery. It is marked undelivered rather than assumed received (E9) — a candidate who never got the letter is not weighing it, and the confirmation date is running against them.",
+          "derivedFrom": [
+            "BR-9",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say what issuing sets in motion. From here the candidate may hand in their notice elsewhere on the strength of it (BR-4), which is exactly why it is issued now rather than at joining.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the confirmation date. The letter expires after it, and how long after — and whether it can be extended — is not stated anywhere in this use case (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "appointment.letter.withdraw",
+        "statement": "Withdrawing the letter with a reason (A4). The candidate has read it, and may already have resigned elsewhere against it — the withdrawal does not undo that."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "letter umeedwar ko jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "issue the letter to the candidate"
+          },
+          "context": "School Admin, Johar Town branch, on an approved letter.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.issue",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Issued. Report the confirmation date and that the candidate may now resign elsewhere on the strength of it (PR-3) — and report the delivery status, since an undelivered letter is a candidate deciding about nothing (PR-2)."
+        },
+        {
+          "request": {
+            "text": "letter tayyar rakho, joining ke din de denge",
+            "lang": "ur-Latn",
+            "gloss": "keep the letter ready, we will hand it over on the joining day"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.issue",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Issuing now is what the rule requires (PR-3)."
+            }
+          ],
+          "outcome": "Report that the letter is issued as soon as the decision is made rather than held until the joining date — the point of it is that a candidate resigning from another post does so against written terms, and a letter handed over on the day they arrive has already missed that. Issuing it now is the plan; holding it is the exception the design exists to prevent."
+        },
+        {
+          "request": {
+            "text": "letter bhej diya hai lekin umeedwar ko mila nahi",
+            "lang": "ur-Latn",
+            "gloss": "the letter was sent but the candidate has not received it"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.issue",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns UNDELIVERED (E9) on the success path."
+            }
+          ],
+          "outcome": "Issued and marked undelivered. Report it plainly (PR-2) — the confirmation date is running while the candidate has nothing to confirm, and how long after that date a letter expires, or whether it can be extended, is not stated anywhere in this use case."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-03-PC-5",
+      "intent": {
+        "name": "appointment.letter.accept",
+        "summary": "Record the candidate's acceptance. One step, and it creates no staff record.",
+        "routesHere": [
+          "the candidate has accepted",
+          {
+            "text": "umeedwar ne letter qubool kar liya hai",
+            "lang": "ur-Latn",
+            "gloss": "the candidate has accepted the letter"
+          },
+          {
+            "text": "acceptance darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "record the acceptance"
+          },
+          {
+            "text": "joining ke din hi sign kar diya hai",
+            "lang": "ur-Latn",
+            "gloss": "they signed on the joining day itself"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "staff record bana do",
+              "lang": "ur-Latn",
+              "gloss": "create the staff record"
+            },
+            "goesTo": "staff.record.open — UC-12-01-PC-1",
+            "note": "The staff record is created on the joining date, not on acceptance, so that a candidate who accepts and does not arrive never appears on the payroll (BR-8, E6)."
+          },
+          {
+            "request": {
+              "text": "umeedwar ne inkar kar diya",
+              "lang": "ur-Latn",
+              "gloss": "the candidate has declined"
+            },
+            "goesTo": "appointment.letter.decline — UC-13-03-PC-6"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "appointment.letter.accept",
+            "inputs": {
+              "letter_id": "$request.letter_phrase",
+              "accepted_on": "$request.accepted_on",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It records the acceptance and nothing else — the staff record follows on the joining date (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. An expired or withdrawn letter cannot be accepted.",
+        "atomicity": "One write: the acceptance and its date together or not at all. **No staff record is created and nobody is on the payroll.** The record is created on the joining date from the accepted letter, so a candidate who accepts and does not arrive never appears on it (BR-8, E6). The letter records both dates, which may be the same day where the candidate signs on joining (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "appointment.letter.accept",
+          "method": "POST",
+          "path": "/api/v1/appointment-letters/{letter_id}/accept",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "letter_id, since a letter is accepted once",
+          "purpose": "Record the candidate's acceptance of the letter.",
+          "parameters": [
+            {
+              "name": "letter_id",
+              "source": "resolved",
+              "sourceRef": "$request.letter_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "appointment_letter",
+                "fromPhrase": "$request.letter_phrase",
+                "onNoMatch": "Refuse. No appointment letter matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the letters with the candidate, the role, the start date and the status — never the salary, unless the actor holds the right to see it (BR-3)."
+              },
+              "notes": "The appointment letter, resolved from the candidate and its state."
+            },
+            {
+              "name": "accepted_on",
+              "source": "request",
+              "sourceRef": "$request.accepted_on",
+              "required": true,
+              "type": "date",
+              "notes": "When the candidate confirmed. May be the same day as the issue where they sign on joining (BR-5). The actual date, not the date of recording."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The acceptance.",
+            "fields": [
+              {
+                "name": "letter_id",
+                "type": "string",
+                "description": "The letter."
+              },
+              {
+                "name": "issued_on",
+                "type": "date",
+                "description": "When it was issued (BR-5)."
+              },
+              {
+                "name": "accepted_on",
+                "type": "date",
+                "description": "When it was accepted (BR-5)."
+              },
+              {
+                "name": "start_date",
+                "type": "date",
+                "description": "The joining date. The staff record is created then, not now (BR-8)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Accepted."
+              },
+              {
+                "name": "staff_record_created",
+                "type": "boolean",
+                "description": "False. It is created on the joining date (BR-8, E6)."
+              },
+              {
+                "name": "terms_to_carry",
+                "type": "object",
+                "description": "Role, salary, pay basis, start date, notice period and probation, which carry across on joining rather than being typed again (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "LETTER_EXPIRED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The confirmation date has passed and the letter expired.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "An offer open indefinitely is not an offer (BR-9). Whether it can be extended is not stated."
+            },
+            {
+              "code": "LETTER_WITHDRAWN",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The letter has been withdrawn.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never create a staff record on acceptance. E6 is BR-8 working — a candidate who accepts and does not arrive would otherwise appear on the payroll for a month they never worked.",
+          "derivedFrom": [
+            "BR-8",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply the acceptance date. It may be the day of issue or the joining day, and the letter records both (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the terms that will carry across on joining. Role, salary, pay basis, start date, notice period and probation come from the letter rather than being typed again, so the figure paid is the figure agreed (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say plainly that nobody is employed yet. The record, the payroll and the roster all begin on the joining date (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An acceptance is not withdrawn. Where the candidate accepts and does not arrive, the letter is marked accepted but not joined and no staff record is created (BR-11, A3)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "umeedwar ne letter qubool kar liya hai",
+            "lang": "ur-Latn",
+            "gloss": "the candidate has accepted the letter"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.accept",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "accepted_on": "the date they confirmed, as stated",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Recorded. Report that no staff record exists and nobody is on the payroll (PR-4) — the record is created on the joining date, when the person actually attends, and the letter's terms carry across then (PR-3)."
+        },
+        {
+          "request": {
+            "text": "umeedwar ne haan kar di hai, record bana kar payroll par laga do",
+            "lang": "ur-Latn",
+            "gloss": "the candidate has said yes, create the record and put them on payroll"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.accept",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "accepted_on": "$request.accepted_on",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The acceptance only. No record is created (PR-1)."
+            }
+          ],
+          "outcome": "Recorded. Report that the staff record is created on the joining date from this letter — a candidate who accepts and does not arrive would otherwise be on the payroll for a month they never worked, which is exactly what the rule exists to prevent."
+        },
+        {
+          "request": {
+            "text": "umeedwar ab qubool kar rahe hain, tareekh guzar chuki hai",
+            "lang": "ur-Latn",
+            "gloss": "the candidate is accepting now, the date has passed"
+          },
+          "context": "School Admin, Johar Town branch, past the confirmation date.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.accept",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "accepted_on": "$request.accepted_on",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns LETTER_EXPIRED (E9)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the letter expired at the confirmation date, and that whether it can be extended — or must be revised and reissued — is not stated anywhere in this use case. A revision would supersede the original with both remaining visible, which is the nearest route the documents describe."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-03-PC-6",
+      "intent": {
+        "name": "appointment.letter.decline",
+        "summary": "Record that the candidate declined. One step, and recruitment returns to the remaining shortlist.",
+        "routesHere": [
+          "the candidate has declined the offer",
+          {
+            "text": "umeedwar ne inkar kar diya hai",
+            "lang": "ur-Latn",
+            "gloss": "the candidate has declined"
+          },
+          {
+            "text": "wo doosri jagah ja rahe hain",
+            "lang": "ur-Latn",
+            "gloss": "they are going elsewhere"
+          },
+          {
+            "text": "offer qubool nahi kiya, darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "the offer was not accepted, record it"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "doosre umeedwar ko offer bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the offer to the next candidate"
+            },
+            "goesTo": "vacancy.outcome.recommend — UC-12-11-PC-7",
+            "note": "Where the selected candidate declines, an alternative is recommended afresh with its own approval (BR-11, UC-12-11 A4)."
+          },
+          {
+            "request": {
+              "text": "offer wapas le lo",
+              "lang": "ur-Latn",
+              "gloss": "withdraw the offer"
+            },
+            "goesTo": "appointment.letter.withdraw — UC-13-03-PC-7",
+            "note": "Declining is the candidate's act; withdrawing is the school's."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "appointment.letter.decline",
+            "inputs": {
+              "letter_id": "$request.letter_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. No staff record is created and recruitment returns to the remaining shortlist (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the decline and the audit entry together or not at all. No staff record exists and none is created (BR-11). The letter stays on record with its number, since one is never deleted (BR-12) — the post is open again and recruitment picks up from the remaining shortlist."
+      },
+      "operations": [
+        {
+          "name": "appointment.letter.decline",
+          "method": "POST",
+          "path": "/api/v1/appointment-letters/{letter_id}/decline",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "letter_id, since a letter carries one outcome",
+          "purpose": "Record that the candidate declined the letter.",
+          "parameters": [
+            {
+              "name": "letter_id",
+              "source": "resolved",
+              "sourceRef": "$request.letter_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "appointment_letter",
+                "fromPhrase": "$request.letter_phrase",
+                "onNoMatch": "Refuse. No appointment letter matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the letters with the candidate, the role, the start date and the status — never the salary, unless the actor holds the right to see it (BR-3)."
+              },
+              "notes": "The appointment letter, resolved from the candidate and its state."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decline.",
+            "fields": [
+              {
+                "name": "letter_id",
+                "type": "string",
+                "description": "The letter."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Declined. Terminal."
+              },
+              {
+                "name": "candidate",
+                "type": "string",
+                "description": "Who declined."
+              },
+              {
+                "name": "role",
+                "type": "string",
+                "description": "The post, now open again."
+              },
+              {
+                "name": "staff_record_created",
+                "type": "boolean",
+                "description": "False. None is created (BR-11)."
+              },
+              {
+                "name": "remaining_shortlist",
+                "type": "integer",
+                "description": "Candidates recruitment can return to (BR-11, UC-12-11 A4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_ISSUED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The letter was not issued to the candidate.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "There is nothing for them to decline."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never record a decline the candidate did not give. It closes a post and sends recruitment back to the shortlist.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the remaining shortlist. Where the candidate declines, an alternative is recommended afresh — with its own approval and its own joining date (BR-11, UC-12-11 A4).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain a fresh recommendation. Selecting another candidate is recruitment's act, and it carries outcomes for every applicant again.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A decline is terminal. A candidate who changes their mind is a fresh recommendation and a fresh letter (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "umeedwar ne inkar kar diya hai",
+            "lang": "ur-Latn",
+            "gloss": "the candidate has declined"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.decline",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Recorded. Report that the post is open again and how many candidates remain on the shortlist (PR-2) — recommending one is recruitment's act, with its own approval and joining date."
+        },
+        {
+          "request": {
+            "text": "inkar darj kar ke agle umeedwar ko letter bhej do",
+            "lang": "ur-Latn",
+            "gloss": "record the decline and send the letter to the next candidate"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.decline",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The decline only. The next candidate is recruitment's decision (PR-3)."
+            }
+          ],
+          "outcome": "Recorded. Report that the alternative is recommended through recruitment and approved by the Principal, who sets the joining date — and only then is a letter prepared, with its own approved salary."
+        },
+        {
+          "request": {
+            "text": "umeedwar jawab nahi de rahe, inkar likh do",
+            "lang": "ur-Latn",
+            "gloss": "the candidate is not responding, record it as declined"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.decline",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Silence is not a decline (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that a letter with no answer expires at its confirmation date on its own — recording a decline says the candidate refused, which is a different fact and one they did not state. Check the delivery status too, since an undelivered letter is a candidate who never saw it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-03-PC-7",
+      "intent": {
+        "name": "appointment.letter.withdraw",
+        "summary": "Withdraw an issued letter, with the reason. One step, and the candidate may already have resigned elsewhere.",
+        "routesHere": [
+          "withdraw the offer — the post is no longer available",
+          {
+            "text": "offer wapas le lo, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "withdraw the offer with the reason"
+          },
+          {
+            "text": "ab ye asami nahi rahi",
+            "lang": "ur-Latn",
+            "gloss": "the post no longer exists"
+          },
+          {
+            "text": "letter mansookh kar do",
+            "lang": "ur-Latn",
+            "gloss": "cancel the letter"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "shara-it badalni hain",
+              "lang": "ur-Latn",
+              "gloss": "the terms need changing"
+            },
+            "goesTo": "appointment.letter.revise — UC-13-03-PC-8",
+            "note": "A revision supersedes the original and both remain visible, so the candidate can see what changed (BR-13)."
+          },
+          {
+            "request": {
+              "text": "umeedwar ne khud inkar kar diya",
+              "lang": "ur-Latn",
+              "gloss": "the candidate declined themselves"
+            },
+            "goesTo": "appointment.letter.decline — UC-13-03-PC-6"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "appointment.letter.withdraw",
+            "inputs": {
+              "letter_id": "$request.letter_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. No staff record is created and recruitment returns to the remaining shortlist (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the withdrawal, its reason and the audit entry together or not at all. **It does not undo what the candidate has already done.** The letter was issued so they could resign elsewhere against written terms (BR-4), and they may have. The letter stays on record with its number and its reason (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "appointment.letter.withdraw",
+          "method": "POST",
+          "path": "/api/v1/appointment-letters/{letter_id}/withdraw",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "letter_id, since a letter carries one outcome",
+          "purpose": "Withdraw an issued appointment letter with the reason.",
+          "parameters": [
+            {
+              "name": "letter_id",
+              "source": "resolved",
+              "sourceRef": "$request.letter_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "appointment_letter",
+                "fromPhrase": "$request.letter_phrase",
+                "onNoMatch": "Refuse. No appointment letter matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the letters with the candidate, the role, the start date and the status — never the salary, unless the actor holds the right to see it (BR-3)."
+              },
+              "notes": "The appointment letter, resolved from the candidate and its state."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required to withdraw an issued letter. The candidate is told it, and they may have resigned a post on the strength of the letter."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The withdrawal.",
+            "fields": [
+              {
+                "name": "letter_id",
+                "type": "string",
+                "description": "The letter."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Withdrawn. Terminal."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given, and told to the candidate."
+              },
+              {
+                "name": "issued_on",
+                "type": "date",
+                "description": "When the candidate received it. They have had it since then (BR-4)."
+              },
+              {
+                "name": "accepted",
+                "type": "boolean",
+                "description": "Whether they had already accepted."
+              },
+              {
+                "name": "candidate_notified",
+                "type": "string",
+                "description": "Delivery status."
+              },
+              {
+                "name": "remaining_shortlist",
+                "type": "integer",
+                "description": "Candidates recruitment can return to (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E9",
+              "httpStatus": 400,
+              "meaning": "A letter was withdrawn with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing withdrawn."
+            },
+            {
+              "code": "NOT_ISSUED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The letter was never issued.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "An unissued draft is simply not issued."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. The candidate is told it, and they may have handed in their notice somewhere on the strength of this letter (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say plainly what withdrawal does not undo. The letter was issued precisely so a candidate could resign elsewhere against written terms (BR-4) — withdrawing it takes the offer back, not their resignation.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report how long they have held it and whether they had accepted. Both change what withdrawing means to the person on the other end.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never withdraw where the terms are simply changing. A revision supersedes the original and both stay visible, so the candidate sees what changed (BR-13).",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A withdrawal is terminal. A candidate to be appointed after all is recommended afresh with a new letter (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "offer wapas le lo — ye asami ab nahi rahi",
+            "lang": "ur-Latn",
+            "gloss": "withdraw the offer — the post no longer exists"
+          },
+          "context": "School Admin, Johar Town branch, letter issued three weeks ago and accepted.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.withdraw",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "reason": "The post has been withdrawn following a change to the staffing plan.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the School Admin's own (PR-1)."
+            }
+          ],
+          "outcome": "Withdrawn and the candidate is told. Report that they accepted three weeks ago and have held written terms since (PR-3) — the letter exists so people resign against it, and withdrawing it does not undo a resignation they may have handed in (PR-2)."
+        },
+        {
+          "request": {
+            "text": "tankhwah kam karni hai, letter wapas le kar naya bhej denge",
+            "lang": "ur-Latn",
+            "gloss": "the salary has to come down, withdraw the letter and send a new one"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.withdraw",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No withdrawal is planned for a change of terms (PR-4)."
+            }
+          ],
+          "outcome": "Report that a revision is the route — it supersedes the original and both remain visible, so the candidate can see what changed between the terms they first read and the terms they are now being asked to accept. Withdrawing and reissuing would hide that comparison, which BR-13 exists to preserve."
+        },
+        {
+          "request": {
+            "text": "letter wapas le lo",
+            "lang": "ur-Latn",
+            "gloss": "withdraw the letter"
+          },
+          "context": "School Admin, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.withdraw",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the candidate should be told — they hold written terms from the school and may have acted on them, and a withdrawal with no explanation is the worst version of this for the person on the other end."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-03-PC-8",
+      "intent": {
+        "name": "appointment.letter.revise",
+        "summary": "Revise an issued letter, superseding the original with both remaining visible. One step.",
+        "routesHere": [
+          "revise the letter — the start date has moved",
+          {
+            "text": "letter mein tabdeeli karo, joining ki tareekh badal gayi hai",
+            "lang": "ur-Latn",
+            "gloss": "revise the letter, the joining date has changed"
+          },
+          {
+            "text": "naye shara-it ke sath letter dobara bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send the letter again with the new terms"
+          },
+          {
+            "text": "purana letter bhi nazar aata rahe",
+            "lang": "ur-Latn",
+            "gloss": "the original should stay visible"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "purana letter badal do",
+              "lang": "ur-Latn",
+              "gloss": "replace the original letter"
+            },
+            "goesTo": "Not offered.",
+            "note": "A revised letter supersedes the original rather than replacing it, and both remain visible. A candidate must be able to see what changed between the terms they first read and the terms they accepted (BR-13, E10)."
+          },
+          {
+            "request": {
+              "text": "offer hi wapas le lo",
+              "lang": "ur-Latn",
+              "gloss": "withdraw the offer altogether"
+            },
+            "goesTo": "appointment.letter.withdraw — UC-13-03-PC-7"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "appointment.letter.revise",
+            "inputs": {
+              "letter_id": "$request.letter_phrase",
+              "changes": "$request.changes",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The revision supersedes the original and both remain visible (BR-13), and it goes through approval again before it is issued (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A revision that replaces the original is refused — there is no such control.",
+        "atomicity": "One write: the revised letter with its own number, the original marked superseded, and both readable together or not at all (BR-13). The revision is a fresh draft: it is approved and signed, then issued, exactly as the original was (BR-7). Where the salary changes, the new figure is approved first (BR-2)."
+      },
+      "operations": [
+        {
+          "name": "appointment.letter.revise",
+          "method": "POST",
+          "path": "/api/v1/appointment-letters/{letter_id}/revise",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "letter_id + changes, since a revision is created once per change",
+          "purpose": "Create a revised letter superseding the original.",
+          "parameters": [
+            {
+              "name": "letter_id",
+              "source": "resolved",
+              "sourceRef": "$request.letter_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "appointment_letter",
+                "fromPhrase": "$request.letter_phrase",
+                "onNoMatch": "Refuse. No appointment letter matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the letters with the candidate, the role, the start date and the status — never the salary, unless the actor holds the right to see it (BR-3)."
+              },
+              "notes": "The appointment letter, resolved from the candidate and its state."
+            },
+            {
+              "name": "changes",
+              "source": "request",
+              "sourceRef": "$request.changes",
+              "required": true,
+              "type": "object",
+              "notes": "The terms that change — the start date, the notice period, the probation, the confirmation date, or the approved salary. Only what the actor named: every changed term is one the candidate has already read and may have acted on."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The revision.",
+            "fields": [
+              {
+                "name": "letter_id",
+                "type": "string",
+                "description": "The revised letter, with its own number (BR-12)."
+              },
+              {
+                "name": "supersedes",
+                "type": "string",
+                "description": "The original, which remains visible (BR-13)."
+              },
+              {
+                "name": "changes",
+                "type": "object",
+                "description": "Each term, from what to what — what the candidate compares."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. It is approved and signed before it is issued (BR-7)."
+              },
+              {
+                "name": "salary_approved",
+                "type": "boolean",
+                "description": "Where the salary changed, whether the new figure is approved (BR-2)."
+              },
+              {
+                "name": "original_status",
+                "type": "string",
+                "description": "Superseded, and still readable (BR-13)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REPLACES_ORIGINAL",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "A revision was made that replaces the original.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "There is no such control. A revision supersedes and both remain visible (BR-13)."
+            },
+            {
+              "code": "SALARY_NOT_APPROVED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The revised salary has not been approved.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "A letter carrying an unapproved figure commits the school to something nobody agreed (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Change only the terms the actor named. Every one is a term the candidate has already read and may have resigned a post against (BR-4, BR-13).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never replace the original. A revision supersedes it and both remain visible, so the candidate can see what changed between the terms they first read and the terms they accepted (BR-13, E10).",
+          "derivedFrom": [
+            "BR-13",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the changes as from-and-to. That comparison is the point of keeping both letters (BR-13), and it should be in the reply as well as on the record.",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never carry a revised salary that is not approved. The same rule holds as for the original (BR-2, E2).",
+          "derivedFrom": [
+            "BR-2",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that the revision goes through approval again. It is a draft until it is approved, signed and issued (BR-7) — the candidate holds the original meanwhile.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A revision is not withdrawn. A further change is another revision, each superseding the last, and every version stays readable (BR-13)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "letter mein tabdeeli karo — joining ab 15 October se hai",
+            "lang": "ur-Latn",
+            "gloss": "revise the letter — joining is now 15 October"
+          },
+          "context": "School Admin, Johar Town branch, on an issued letter.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.revise",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "changes": "start date: 1 October → 15 October",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the start date is in the change (PR-1)."
+            }
+          ],
+          "outcome": "A revised letter exists with its own number, and the original stays readable as superseded. Report the change as from-and-to (PR-3), and that the revision is approved and signed before it is issued — the candidate holds the original meanwhile (PR-5)."
+        },
+        {
+          "request": {
+            "text": "purane letter mein hi tareekh badal do",
+            "lang": "ur-Latn",
+            "gloss": "just change the date on the original letter"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.revise",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "changes": "$request.changes",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A revision is planned rather than an edit. There is no control that replaces the original (PR-2)."
+            }
+          ],
+          "outcome": "Report that the original stays as it is and a revision supersedes it — the candidate has read those terms and may have resigned a post against them, and being able to see exactly what changed is what the rule protects."
+        },
+        {
+          "request": {
+            "text": "tankhwah 78,000 kar ke letter dobara bhej do",
+            "lang": "ur-Latn",
+            "gloss": "raise the salary to 78,000 and reissue the letter"
+          },
+          "context": "School Admin, Johar Town branch, with no approved salary at that figure.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "appointment.letter.revise",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "changes": "$request.changes",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns SALARY_NOT_APPROVED (E2)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the new figure is recorded and approved under the salary use case first — the revised letter then carries an approved figure, and the candidate can compare it against the one they first read."
+        }
+      ]
+    }
+  ]
+}

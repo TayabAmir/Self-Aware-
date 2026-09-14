@@ -1,0 +1,879 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-18",
+    "name": "Open the books and read them, tracing any entry back to what caused it",
+    "module": "Finance",
+    "file": "../UseCases/UC-04-18.json",
+    "featureRef": "4.18 Reading the books: ledger, trial balance and journals"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-18-PC-1",
+      "intent": {
+        "name": "finance.ledger.read",
+        "summary": "Read an account's ledger over a period — every entry, both sides, and the running balance. One step, and nothing is posted.",
+        "routesHere": [
+          "show me the bank account ledger for September",
+          {
+            "text": "bank account ka ledger dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show the bank account ledger"
+          },
+          {
+            "text": "fee income account mein September mein kya aaya?",
+            "lang": "ur-Latn",
+            "gloss": "what came into the fee income account in September?"
+          },
+          {
+            "text": "is account ka balance kya hai?",
+            "lang": "ur-Latn",
+            "gloss": "what is this account's balance?"
+          },
+          "open the late fee income ledger for the year"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "trial balance nikaalo",
+              "lang": "ur-Latn",
+              "gloss": "produce the trial balance"
+            },
+            "goesTo": "finance.trialbalance.read — UC-04-18-PC-2"
+          },
+          {
+            "request": {
+              "text": "ye entry kahan se aayi?",
+              "lang": "ur-Latn",
+              "gloss": "where did this entry come from?"
+            },
+            "goesTo": "finance.voucher.trace — UC-04-18-PC-3"
+          },
+          {
+            "request": {
+              "text": "entry theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix the entry"
+            },
+            "goesTo": "Not offered.",
+            "note": "No entry is ever edited or deleted. A correction is a voucher or one of the reversal use cases, never a change to a line in the ledger (BR-5)."
+          },
+          {
+            "request": {
+              "text": "entry daal do",
+              "lang": "ur-Latn",
+              "gloss": "post an entry"
+            },
+            "goesTo": "finance.voucher.create — UC-04-19-PC-1",
+            "note": "Nothing is posted here. Entries arrive because something else happened (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.ledger.read",
+            "inputs": {
+              "account_id": "$request.account_phrase",
+              "date_from": "$request.date_from",
+              "date_to": "$request.date_to",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every amount is calculated from the entries already posted — nothing is typed here (BR-2, BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing chart of accounts, an empty range and a range longer than the system will render are all enforced by the API and arrive as errors or as empty results.",
+        "atomicity": "A read that writes one thing: an audit entry, because the ledger carries the school's whole financial position (BR-11). Nothing is posted, edited or deleted (BR-4, BR-5). A closed period is readable but not postable — reading history is always permitted (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "finance.ledger.read",
+          "method": "GET",
+          "path": "/api/v1/ledger/accounts/{account_id}",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return an account's entries over a period with both sides and a running balance in date order.",
+          "parameters": [
+            {
+              "name": "account_id",
+              "source": "resolved",
+              "sourceRef": "$request.account_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "ledger_account",
+                "fromPhrase": "$request.account_phrase",
+                "onNoMatch": "Refuse. No such account in the chart of accounts.",
+                "onAmbiguous": "Ask, naming the candidates with account code and name."
+              },
+              "notes": "An account from the chart of accounts. No feature creates one, and it must exist before anything here can be read (BR-1, E1)."
+            },
+            {
+              "name": "date_from",
+              "source": "request",
+              "sourceRef": "$request.date_from",
+              "required": true,
+              "type": "date",
+              "notes": "The start of the period. Within the financial year, or spanning several (BR-10)."
+            },
+            {
+              "name": "date_to",
+              "source": "request",
+              "sourceRef": "$request.date_to",
+              "required": true,
+              "type": "date",
+              "notes": "The end of the period."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The account's entries and its position.",
+            "fields": [
+              {
+                "name": "account_name",
+                "type": "string",
+                "description": "From the chart of accounts."
+              },
+              {
+                "name": "opening_balance",
+                "type": "string",
+                "description": "The balance at the start of the range."
+              },
+              {
+                "name": "entries",
+                "type": "object[]",
+                "description": "date, debit, credit, running_balance, source — never typed (BR-2, BR-7)."
+              },
+              {
+                "name": "closing_balance",
+                "type": "string",
+                "description": "At the end of the range."
+              },
+              {
+                "name": "produced_at",
+                "type": "datetime",
+                "description": "When the figure was produced, so a number quoted an hour later can be dated (BR-8)."
+              },
+              {
+                "name": "period_closed",
+                "type": "boolean",
+                "description": "True where the range falls in a closed period — readable, not postable (BR-9)."
+              },
+              {
+                "name": "financial_year",
+                "type": "string",
+                "description": "The year the ledger runs against, which is not the academic session (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_CHART_OF_ACCOUNTS",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "No chart of accounts exists.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned.",
+              "note": "No feature in the specification creates one. The books cannot be read until it exists (BR-1)."
+            },
+            {
+              "code": "NO_ENTRIES",
+              "mapsTo": "E3",
+              "httpStatus": 200,
+              "meaning": "The date range spans no posted entry.",
+              "written": "The audit entry for the read.",
+              "notWritten": "Nothing else.",
+              "treatedAsSuccess": true,
+              "note": "The opening balance is still returned. An answer, not a failure."
+            },
+            {
+              "code": "RANGE_TOO_LONG",
+              "mapsTo": "E4",
+              "httpStatus": 200,
+              "meaning": "The range is longer than the system will render at once.",
+              "written": "The audit entry.",
+              "notWritten": "Nothing else.",
+              "treatedAsSuccess": true,
+              "note": "Narrow the range. Narrowing is the actor's choice."
+            },
+            {
+              "code": "BEFORE_FINANCIAL_YEAR",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "The date falls before the financial year begins.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            }
+          ],
+          "writesOnRead": "Reading the ledger writes an audit entry naming the actor and the time, because these figures carry the school's whole financial position (BR-11)."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compute a balance. Every figure comes from the entries posted, with the running balance in date order (BR-2, BR-7) — a total worked out in a reply is a second set of books.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-7",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never offer to post, edit or delete an entry. Nothing is posted here, and no entry is ever edited or deleted anywhere (BR-4, BR-5) — a correction is a voucher or a reversal use case.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Quote every figure with its produced_at. A trial balance or a balance quoted in a meeting an hour later has to be datable (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report a closed period as readable but not postable. Reading history is always permitted; changing it is not (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never confuse the financial year with the academic session. The ledger runs against a financial year, which is not necessarily the academic session and is defined nowhere in the specification (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse. The audit entry it writes is deliberate and never editable."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "bank account ka September ka ledger dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show the bank account ledger for September"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.ledger.read",
+              "inputs": {
+                "account_id": "$request.account_phrase → the main bank account",
+                "date_from": "2026-09-01",
+                "date_to": "2026-09-30",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Opening balance, every entry with both sides and a running balance in date order, and the closing balance — each with produced_at (PR-3). Every entry names its source, so any of them can be traced."
+        },
+        {
+          "request": {
+            "text": "fee income account ka saal bhar ka dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show the fee income account for the whole year"
+          },
+          "context": "Accounts, Johar Town branch, over a range the system will not render at once.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.ledger.read",
+              "inputs": {
+                "account_id": "$request.account_phrase → fee income",
+                "date_from": "$request.date_from",
+                "date_to": "$request.date_to",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns RANGE_TOO_LONG (E4) on the success path."
+            }
+          ],
+          "outcome": "Report that the range is too long to render and offer to narrow it — by month, or by quarter. Narrowing is the actor's choice, not the planner's (PR-1 does not apply here; the range came from them)."
+        },
+        {
+          "request": {
+            "text": "pichle saal ka ledger dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show last year's ledger"
+          },
+          "context": "Accounts, Johar Town branch, on a closed financial period.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.ledger.read",
+              "inputs": {
+                "account_id": "$request.account_phrase",
+                "date_from": "$request.date_from",
+                "date_to": "$request.date_to",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The entries come back with period_closed true. Report that it is readable but not postable — reading history is always permitted, changing it is not (PR-4)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-18-PC-2",
+      "intent": {
+        "name": "finance.trialbalance.read",
+        "summary": "Produce the trial balance as at a date and prove the two columns agree. One step.",
+        "routesHere": [
+          "produce the trial balance as at 30 September",
+          {
+            "text": "trial balance nikaalo",
+            "lang": "ur-Latn",
+            "gloss": "produce the trial balance"
+          },
+          {
+            "text": "30 September tak ka trial balance chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need the trial balance as at 30 September"
+          },
+          {
+            "text": "kitab barabar hai ya nahi?",
+            "lang": "ur-Latn",
+            "gloss": "do the books balance or not?"
+          },
+          "run the trial balance for the year end"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ek account ka ledger dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show one account's ledger"
+            },
+            "goesTo": "finance.ledger.read — UC-04-18-PC-1"
+          },
+          {
+            "request": {
+              "text": "farq theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix the difference"
+            },
+            "goesTo": "Not offered.",
+            "note": "Where the columns do not agree the difference is shown rather than hidden, because that is the one thing this use case exists to reveal (BR-3)."
+          },
+          {
+            "request": {
+              "text": "budget se compare karo",
+              "lang": "ur-Latn",
+              "gloss": "compare it against the budget"
+            },
+            "goesTo": "finance.budget.variance.read — UC-04-20",
+            "note": "A budget is a plan set alongside the books, not part of them (UC-04-20 BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.trialbalance.read",
+            "inputs": {
+              "as_at_date": "$request.as_at_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The two columns are totalled from what is posted, and where they do not agree the difference is shown rather than hidden (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. A date before the financial year begins is enforced by the API and arrives as an error. Columns that do not agree are not an error — they are the finding (E2).",
+        "atomicity": "A read that writes an audit entry, because the trial balance carries the school's whole position (BR-11). Nothing is posted or adjusted. Where the columns disagree the difference is reported, never forced to zero."
+      },
+      "operations": [
+        {
+          "name": "finance.trialbalance.read",
+          "method": "GET",
+          "path": "/api/v1/ledger/trial-balance",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return the trial balance as at a date, with both column totals and any difference between them.",
+          "parameters": [
+            {
+              "name": "as_at_date",
+              "source": "request",
+              "sourceRef": "$request.as_at_date",
+              "required": true,
+              "type": "date",
+              "notes": "The date the trial balance is produced as at. Not before the financial year begins (E7)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The two columns and whether they agree.",
+            "fields": [
+              {
+                "name": "rows",
+                "type": "object[]",
+                "description": "account, debit, credit — every account with a balance."
+              },
+              {
+                "name": "total_debits",
+                "type": "string",
+                "description": "The debit column."
+              },
+              {
+                "name": "total_credits",
+                "type": "string",
+                "description": "The credit column, which must equal it (BR-3)."
+              },
+              {
+                "name": "difference",
+                "type": "string",
+                "description": "Zero where they agree. Shown rather than hidden where they do not (BR-3)."
+              },
+              {
+                "name": "balances",
+                "type": "boolean",
+                "description": "Whether the two columns agree."
+              },
+              {
+                "name": "produced_at",
+                "type": "datetime",
+                "description": "So a figure quoted an hour later can be dated (BR-8)."
+              },
+              {
+                "name": "as_at_date",
+                "type": "date",
+                "description": "What it is produced as at."
+              },
+              {
+                "name": "financial_year",
+                "type": "string",
+                "description": "The year it runs against (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "COLUMNS_DISAGREE",
+              "mapsTo": "E2",
+              "httpStatus": 200,
+              "meaning": "The two columns do not agree.",
+              "written": "The audit entry for the read.",
+              "notWritten": "Nothing adjusted.",
+              "treatedAsSuccess": true,
+              "note": "The difference is shown rather than hidden — this is the one thing the trial balance exists to reveal (BR-3), so it is a finding rather than a failure."
+            },
+            {
+              "code": "BEFORE_FINANCIAL_YEAR",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "The date falls before the financial year begins.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            },
+            {
+              "code": "NO_CHART_OF_ACCOUNTS",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "No chart of accounts exists.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            }
+          ],
+          "writesOnRead": "Producing a trial balance writes an audit entry, because it carries the school's whole financial position (BR-11)."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never total the columns yourself, and never reconcile them in a reply. Both come from what is posted, and a figure worked out anywhere else is a second set of books.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report a difference as the finding, not as a failure. Where the columns do not agree the difference is shown rather than hidden, because that is the one thing this use case exists to reveal (BR-3) — and it means something is wrong in the books, which somebody needs to know.",
+          "derivedFrom": [
+            "BR-3",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never offer to adjust anything to make it balance. Nothing is posted here (BR-4), and an adjusting entry that forces agreement hides exactly what the trial balance was run to find.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Quote it with its produced_at and its as-at date. A trial balance quoted in a meeting an hour later has to be datable (BR-8), and the two dates are different things.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "30 September tak ka trial balance nikaalo",
+            "lang": "ur-Latn",
+            "gloss": "produce the trial balance as at 30 September"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.trialbalance.read",
+              "inputs": {
+                "as_at_date": "2026-09-30",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Both columns totalling PKR 8,412,900 with a difference of zero, produced at 08-09-2026 10:14. Quote both dates — the as-at date and when it was produced (PR-4)."
+        },
+        {
+          "request": {
+            "text": "kitab barabar hai?",
+            "lang": "ur-Latn",
+            "gloss": "do the books balance?"
+          },
+          "context": "Accounts, Johar Town branch, where debits exceed credits by PKR 4,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.trialbalance.read",
+              "inputs": {
+                "as_at_date": "$request.as_at_date",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns COLUMNS_DISAGREE (E2) on the success path."
+            }
+          ],
+          "outcome": "Report the difference of PKR 4,000 plainly as a finding: something is wrong in the books. Never offer to adjust it away (PR-3) — the correction is a voucher or a reversal use case, and finding it is the next piece of work."
+        },
+        {
+          "request": {
+            "text": "pichle financial year se pehle ka trial balance dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show the trial balance from before the last financial year"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.trialbalance.read",
+              "inputs": {
+                "as_at_date": "$request.as_at_date",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as stated. The API returns BEFORE_FINANCIAL_YEAR (E7)."
+            }
+          ],
+          "outcome": "Nothing is produced. Report that the date falls before the financial year begins — and note that the financial year is not the academic session and is defined nowhere in the specification (PR-5 of the ledger contract)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-18-PC-3",
+      "intent": {
+        "name": "finance.voucher.trace",
+        "summary": "Trace a ledger entry back to what caused it — the invoice, the payment, the correction or the voucher, and from there to the student or supplier behind it. One step.",
+        "routesHere": [
+          "what caused this entry?",
+          {
+            "text": "ye entry kahan se aayi?",
+            "lang": "ur-Latn",
+            "gloss": "where did this entry come from?"
+          },
+          {
+            "text": "is voucher ke peeche kya hai?",
+            "lang": "ur-Latn",
+            "gloss": "what is behind this voucher?"
+          },
+          {
+            "text": "ye 5000 kis ka hai?",
+            "lang": "ur-Latn",
+            "gloss": "whose is this 5000?"
+          },
+          "trace this ledger line back to its source"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ledger dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show the ledger"
+            },
+            "goesTo": "finance.ledger.read — UC-04-18-PC-1"
+          },
+          {
+            "request": {
+              "text": "entry theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix the entry"
+            },
+            "goesTo": "finance.voucher.create — UC-04-19-PC-1",
+            "note": "A correction is a further voucher, never a change to a line in the ledger (BR-5)."
+          },
+          {
+            "request": {
+              "text": "student ka record kholo",
+              "lang": "ur-Latn",
+              "gloss": "open the student's record"
+            },
+            "goesTo": "student.read — UC-03-01",
+            "note": "Tracing reaches the student; opening their record is a separate act."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.voucher.trace",
+            "inputs": {
+              "entry_id": "$request.entry_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every entry can be traced to what caused it, and from there to the student, supplier or payment behind it — an entry nobody can trace is an entry nobody can defend (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. A source document that has since been deactivated is reported rather than hidden.",
+        "atomicity": "A read that writes an audit entry (BR-11). Nothing is posted or changed."
+      },
+      "operations": [
+        {
+          "name": "finance.voucher.trace",
+          "method": "GET",
+          "path": "/api/v1/ledger/entries/{entry_id}/source",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return what caused a ledger entry and the record behind it.",
+          "parameters": [
+            {
+              "name": "entry_id",
+              "source": "resolved",
+              "sourceRef": "$request.entry_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "ledger_entry",
+                "fromPhrase": "$request.entry_phrase",
+                "onNoMatch": "Refuse. No entry matches.",
+                "onAmbiguous": "Ask, naming the candidates with account, date, amount and source type."
+              },
+              "notes": "The ledger entry, resolved from how the actor named it — the voucher number, or the account, date and amount."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What caused the entry, and what lies behind that.",
+            "fields": [
+              {
+                "name": "entry_id",
+                "type": "string",
+                "description": "The entry."
+              },
+              {
+                "name": "source_type",
+                "type": "string",
+                "description": "Invoice, payment, correction, voucher, credit, write-off or refund (BR-4)."
+              },
+              {
+                "name": "source_reference",
+                "type": "string",
+                "description": "The invoice number, receipt number or voucher number."
+              },
+              {
+                "name": "subject",
+                "type": "object",
+                "description": "The student, household or supplier behind it (BR-6)."
+              },
+              {
+                "name": "raised_by",
+                "type": "string",
+                "description": "Who caused it, and when."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "Who approved it, where the source required approval."
+              },
+              {
+                "name": "source_deactivated",
+                "type": "boolean",
+                "description": "True where the source document has since been deactivated (E5). Reported, not hidden."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SOURCE_DEACTIVATED",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "The source document has been deactivated.",
+              "written": "The audit entry for the read.",
+              "notWritten": "Nothing else.",
+              "treatedAsSuccess": true,
+              "note": "The entry still traces to it. A deactivated source is reported, because an entry nobody can trace is an entry nobody can defend (BR-6)."
+            }
+          ],
+          "writesOnRead": "Tracing an entry writes an audit entry, because it reaches the student, household or supplier behind the money (BR-11)."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never infer a source. Every entry carries what caused it (BR-6), and a guess about which invoice a figure came from is exactly the kind of thing the trace exists to make unnecessary.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report a deactivated source as deactivated. The entry still traces to it, and hiding that leaves a figure nobody can account for (BR-6, E5).",
+          "derivedFrom": [
+            "BR-6",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never offer to correct the entry. A correction is a voucher or one of the reversal use cases, never a change to a ledger line (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain a read of the student or supplier record. Tracing reaches them; opening their record is a separate act with its own permissions.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye 5000 ki entry kahan se aayi?",
+            "lang": "ur-Latn",
+            "gloss": "where did this 5000 entry come from?"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.trace",
+              "inputs": {
+                "entry_id": "$request.entry_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The entry traces to receipt RCP/LHR/2026/0417 against Ayesha Khan's September invoice, recorded by Accounts on 08-09-2026. Report the chain as given — never infer it (PR-1)."
+        },
+        {
+          "request": {
+            "text": "is voucher ke peeche kya hai?",
+            "lang": "ur-Latn",
+            "gloss": "what is behind this voucher?"
+          },
+          "context": "Accounts, Johar Town branch, on a hand-entered payment voucher.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.trace",
+              "inputs": {
+                "entry_id": "$request.entry_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "It traces to a payment voucher, its payee, its description and who approved it. Where the voucher carries a supporting document, that is what an auditor asks for (UC-04-19 BR-12)."
+        },
+        {
+          "request": {
+            "text": "ye entry trace karo",
+            "lang": "ur-Latn",
+            "gloss": "trace this entry"
+          },
+          "context": "Accounts, Johar Town branch, where the source invoice was cancelled.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.voucher.trace",
+              "inputs": {
+                "entry_id": "$request.entry_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "It traces to the cancelled invoice, with source_deactivated true. Report that plainly (PR-2) — the entry still stands in the books, and the cancellation posted its own balancing entry alongside it."
+        }
+      ]
+    }
+  ]
+}

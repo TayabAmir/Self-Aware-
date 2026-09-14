@@ -1,0 +1,1783 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-30-04",
+    "name": "Work a staff complaint and close it, with a confidential one never reaching the desk",
+    "module": "Help Desk & Complaints",
+    "file": "../UseCases/UC-30-04.json",
+    "featureRef": "30.4 Working and closing a staff complaint"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-30-04-PC-1",
+      "intent": {
+        "name": "complaint.staff.takeup",
+        "summary": "Take an ordinary staff complaint up from the queue. The desk never sees a confidential one.",
+        "routesHere": [
+          "take up the overtime complaint",
+          {
+            "text": "overtime wali shikayat main le leta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I will take the overtime complaint"
+          },
+          {
+            "text": "staff ki agli shikayat utha lein",
+            "lang": "ur-Latn",
+            "gloss": "pick up the next staff complaint"
+          },
+          "assign the workload complaint to me"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "confidential shikayat School Admin ko bhej dein",
+              "lang": "ur-Latn",
+              "gloss": "send the confidential complaint to the School Admin"
+            },
+            "goesTo": "Refused.",
+            "note": "A confidential complaint never reaches the desk or the School Admin, and cannot leave the Principal (BR-4, E4)."
+          },
+          {
+            "request": {
+              "text": "isay confidential se aam bana dein",
+              "lang": "ur-Latn",
+              "gloss": "make it ordinary instead of confidential"
+            },
+            "goesTo": "Not offered.",
+            "note": "The confidentiality of a complaint is never changed in the course of working it. It was the raiser's choice at the moment of raising and remains so (BR-8, E5)."
+          },
+          {
+            "request": {
+              "text": "ye shikayat mere baare mein hai, main dekh leta hoon",
+              "lang": "ur-Latn",
+              "gloss": "this complaint is about me, I will handle it"
+            },
+            "goesTo": "Refused.",
+            "note": "Nobody takes up a complaint that names them (BR-3, E2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.staff.takeup",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Only ordinary complaints not naming the acting user are offered, and the raiser is told who holds it (BR-1, BR-3, BR-12)."
+          }
+        ],
+        "onFailure": "Stop and report. A complaint naming the acting user is refused, and a confidential one is never offered at all (E1, E2).",
+        "atomicity": "One state change and one message to the raiser. Every action from here is recorded against the complaint (BR-1, BR-12)."
+      },
+      "operations": [
+        {
+          "name": "complaint.staff.takeup",
+          "method": "POST",
+          "path": "/api/v1/staff-complaints/{complaint_id}/take-up",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "complaint_id, since a complaint is taken up once",
+          "purpose": "Take an open ordinary staff complaint up and tell the raiser who holds it.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. No open ordinary complaint the acting user may see matches. A confidential complaint is never visible to the desk, and a complaint naming the acting user is not offered to them (BR-3, BR-4).",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, categories, days open and who holds each."
+              },
+              "notes": "The staff complaint, named by its reference or its subject."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The acting member of staff. Checked against the person the complaint names (BR-3)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who holds it now.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Taken up."
+              },
+              {
+                "name": "held_by",
+                "type": "string",
+                "description": "The acting member of staff, told to the raiser at once (BR-12)."
+              },
+              {
+                "name": "names_a_role",
+                "type": "string",
+                "description": "None, School Admin or Principal. **How the system knows a free-text complaint names anybody is not specified anywhere** (BR-3, OQ-3)."
+              },
+              {
+                "name": "days_open",
+                "type": "integer",
+                "description": "How long it sat before anybody took it. Nothing sets a limit (OQ-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CONFIDENTIAL",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "A desk staff member opened a confidential complaint.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned (BR-4)."
+            },
+            {
+              "code": "NAMES_ACTING_USER",
+              "mapsTo": "E2",
+              "httpStatus": 403,
+              "meaning": "The acting user is the person the complaint names.",
+              "written": "Nothing.",
+              "notWritten": "It is not taken up (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never take up a complaint for somebody it names (BR-3, E2).",
+          "derivedFrom": [
+            "BR-3",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never refer to a confidential complaint in anything the desk sees — not its existence, not a count. It never reaches the desk or the School Admin (BR-4, E1).",
+          "derivedFrom": [
+            "BR-4",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the naming check rests on something undefined. Nothing specifies how a free-text complaint is known to name a person or a role (OQ-3).",
+          "derivedFrom": [
+            "OQ-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that the raiser is told who holds it (BR-12).",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Raise the question the use case raises itself. Whether the IT desk is the right first stop for a complaint about pay, workload or management is flagged as needing a decision — more sharply here than on the parent side (OQ-2).",
+          "derivedFrom": [
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "complaint.staff.redirect",
+        "statement": "There is no un-take. A complaint the desk cannot resolve goes on to the School Admin with a reason (BR-2)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "overtime wali shikayat main le leta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I will take the overtime complaint"
+          },
+          "context": "Help desk, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.takeup",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the overtime complaint",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-4)."
+            }
+          ],
+          "outcome": "Taken up, and the teacher has been told it is with you. It concerns pay — the use case itself asks whether the IT desk is the right place for that, so if it needs payroll's hands it will likely be a redirect."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-04-PC-2",
+      "intent": {
+        "name": "complaint.staff.action.record",
+        "summary": "Record an action taken on a staff complaint. Every action stays; nothing is edited.",
+        "routesHere": [
+          "record that I checked the Saturday rota against payroll",
+          {
+            "text": "shikayat par note likh dein — rota aur payroll milaya",
+            "lang": "ur-Latn",
+            "gloss": "write a note on the complaint — compared the rota with payroll"
+          },
+          "log what I did on the workload complaint"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "pichla note theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "correct the previous note"
+            },
+            "goesTo": "Not offered.",
+            "note": "Every action recorded stays. Nothing is edited or removed — a wrong entry is followed by a further one (BR-9, E8)."
+          },
+          {
+            "request": {
+              "text": "isay confidential se aam bana dein",
+              "lang": "ur-Latn",
+              "gloss": "make it ordinary instead of confidential"
+            },
+            "goesTo": "Not offered.",
+            "note": "The confidentiality of a complaint is never changed in the course of working it. It was the raiser's choice at the moment of raising and remains so (BR-8, E5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.staff.action.record",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "action": "$request.action",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The action is appended; nothing already recorded changes (BR-1, BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One append. Every action stays (BR-9, E8)."
+      },
+      "operations": [
+        {
+          "name": "complaint.staff.action.record",
+          "method": "POST",
+          "path": "/api/v1/staff-complaints/{complaint_id}/actions",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "complaint_id + the action text + minute, so a double press does not append the same action twice",
+          "purpose": "Append an action taken on a staff complaint.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. No staff complaint the acting user may see matches. A confidential complaint is not visible to the desk or the School Admin at all (BR-4, E1).",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, categories, days open and who holds each."
+              },
+              "notes": "The staff complaint, named by its reference or its subject."
+            },
+            {
+              "name": "action",
+              "source": "request",
+              "sourceRef": "$request.action",
+              "required": true,
+              "type": "string",
+              "notes": "10 to 2000 characters, the holder's own. The record of how the complaint was handled (BR-1, BR-9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The action and the record it joins.",
+            "fields": [
+              {
+                "name": "action_id",
+                "type": "string",
+                "description": "The action."
+              },
+              {
+                "name": "recorded_by",
+                "type": "string",
+                "description": "Who recorded it."
+              },
+              {
+                "name": "editable",
+                "type": "boolean",
+                "description": "False, always (BR-9, E8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "EDIT_ATTEMPTED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "An action already recorded was edited.",
+              "written": "Nothing.",
+              "notWritten": "There is no such control (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the action for them. It is the record of what was actually done (BR-1, BR-9).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never offer to edit a previous entry (BR-9, E8).",
+          "derivedFrom": [
+            "BR-9",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An action is never removed. A wrong one is followed by a further action (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "shikayat par likh dein ke Saturday ka rota September se November ki payroll se milaya",
+            "lang": "ur-Latn",
+            "gloss": "write on the complaint that I compared the Saturday rota with the September to November payroll"
+          },
+          "context": "Help desk, holding the overtime complaint.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.action.record",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the overtime complaint",
+                "action": "as they said it",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Recorded. It is permanent — ask whether to add what the comparison showed."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-04-PC-3",
+      "intent": {
+        "name": "complaint.staff.redirect",
+        "summary": "Pass an ordinary staff complaint the desk cannot resolve to the School Admin, with the reason.",
+        "routesHere": [
+          "redirect the overtime complaint to the School Admin, it is a payroll policy question",
+          {
+            "text": "ye shikayat School Admin ko bhej dein",
+            "lang": "ur-Latn",
+            "gloss": "send this complaint to the School Admin"
+          },
+          "escalate the workload complaint"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "confidential shikayat School Admin ko bhej dein",
+              "lang": "ur-Latn",
+              "gloss": "send the confidential complaint to the School Admin"
+            },
+            "goesTo": "Refused.",
+            "note": "A confidential complaint never reaches the desk or the School Admin, and cannot leave the Principal (BR-4, E4)."
+          },
+          {
+            "request": {
+              "text": "School Admin ke khilaf shikayat unhi ko bhej dein",
+              "lang": "ur-Latn",
+              "gloss": "send the complaint against the School Admin to them"
+            },
+            "goesTo": "Refused.",
+            "note": "A complaint naming the School Admin goes to the Principal instead (BR-3, A3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.staff.redirect",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "redirect_reason": "$request.redirect_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The School Admin takes it on and the raiser is told (BR-2, BR-12)."
+          }
+        ],
+        "onFailure": "Stop and report. A redirect with no reason is refused (E3), and a confidential complaint cannot be redirected at all (E4).",
+        "atomicity": "One state change and one message to the raiser, so a redirect does not look like silence (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "complaint.staff.redirect",
+          "method": "POST",
+          "path": "/api/v1/staff-complaints/{complaint_id}/redirect",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "complaint_id, since a complaint is redirected once",
+          "purpose": "Redirect an ordinary staff complaint the desk cannot resolve to the School Admin.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. No staff complaint the acting user may see matches. A confidential complaint is not visible to the desk or the School Admin at all (BR-4, E1).",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, categories, days open and who holds each."
+              },
+              "notes": "The staff complaint, named by its reference or its subject."
+            },
+            {
+              "name": "redirect_reason",
+              "source": "request",
+              "sourceRef": "$request.redirect_reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters, the desk's own. Required (BR-2, E3)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who holds it now.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "held_by",
+                "type": "string",
+                "description": "The School Admin — or the Principal where it names the School Admin (BR-2, BR-3)."
+              },
+              {
+                "name": "raiser_told",
+                "type": "boolean",
+                "description": "True (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A redirect was made with no reason.",
+              "written": "Nothing.",
+              "notWritten": "It is not redirected (BR-2)."
+            },
+            {
+              "code": "CONFIDENTIAL",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "A confidential complaint was redirected to the School Admin.",
+              "written": "Nothing.",
+              "notWritten": "There is no such route.",
+              "note": "A confidential complaint cannot leave the Principal (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. The School Admin reads it first (BR-2, E3).",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never redirect a confidential complaint. It cannot leave the Principal, and the School Admin is one of the people the raiser chose to avoid (BR-4, E4).",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never redirect a complaint to the person it names (BR-3, A3).",
+          "derivedFrom": [
+            "BR-3",
+            "A3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no route back down to the desk. The School Admin works it from here (BR-2)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "overtime wali shikayat School Admin ko bhej dein, ye payroll ki policy ka masla hai",
+            "lang": "ur-Latn",
+            "gloss": "send the overtime complaint to the School Admin, it is a payroll policy matter"
+          },
+          "context": "Help desk, holding the overtime complaint.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.redirect",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the overtime complaint",
+                "redirect_reason": "as they gave it",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Redirected to the School Admin and the teacher has been told who holds it now."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-04-PC-4",
+      "intent": {
+        "name": "complaint.staff.confidential.access.grant",
+        "summary": "Let somebody else read a confidential complaint. Only the Principal can, and the grant is recorded.",
+        "routesHere": [
+          "let the HR officer read the confidential pay complaint",
+          {
+            "text": "is confidential shikayat ko HR ko dikhane ki ijazat de dein",
+            "lang": "ur-Latn",
+            "gloss": "give HR permission to see this confidential complaint"
+          },
+          {
+            "text": "Vice Principal ko ye shikayat parhne dein",
+            "lang": "ur-Latn",
+            "gloss": "let the Vice Principal read this complaint"
+          },
+          "share the confidential complaint with the investigating officer"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "School Admin ko bhi dikha dein",
+              "lang": "ur-Latn",
+              "gloss": "show it to the School Admin as well"
+            },
+            "goesTo": "Possible, and say what it undoes.",
+            "note": "Nothing in the use case limits whom the Principal may permit. But the School Admin and the desk are exactly the people a confidential complaint exists to keep out, and permitting them reverses the raiser's choice in everything but name (BR-4, BR-8)."
+          },
+          {
+            "request": {
+              "text": "isay confidential se aam bana dein",
+              "lang": "ur-Latn",
+              "gloss": "make it ordinary instead of confidential"
+            },
+            "goesTo": "Not offered.",
+            "note": "The confidentiality of a complaint is never changed in the course of working it. It was the raiser's choice at the moment of raising and remains so (BR-8, E5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.staff.confidential.access.grant",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "grantee_id": "$request.grantee_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The named person may read it, and the grant is recorded (BR-4, A7)."
+          }
+        ],
+        "onFailure": "Stop and report. Only the Principal may grant this; anybody else acting on a confidential complaint is refused (E1).",
+        "atomicity": "One write. The complaint stays confidential in name — **but every person granted access is somebody the raiser did not choose** (BR-4, BR-8)."
+      },
+      "operations": [
+        {
+          "name": "complaint.staff.confidential.access.grant",
+          "method": "POST",
+          "path": "/api/v1/staff-complaints/{complaint_id}/readers",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "complaint_id + grantee, since a person is granted access to a complaint once",
+          "purpose": "Grant a named person read access to a confidential complaint.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. No confidential complaint held by this Principal matches.",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, categories, days open and who holds each."
+              },
+              "notes": "The confidential complaint."
+            },
+            {
+              "name": "grantee_id",
+              "source": "resolved",
+              "sourceRef": "$request.grantee_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.grantee_phrase",
+                "onNoMatch": "Refuse. No member of staff matches.",
+                "onAmbiguous": "Ask, naming the candidates with their roles — and whether any is the School Admin, on the desk, or named in the complaint, since each of those defeats the raiser's choice."
+              },
+              "notes": "The named person being permitted to read it. Never a role, never the desk as a whole (BR-4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who can now read it.",
+            "fields": [
+              {
+                "name": "grant_id",
+                "type": "string",
+                "description": "The grant."
+              },
+              {
+                "name": "readers_now",
+                "type": "object[]",
+                "description": "Everybody who can read the complaint (BR-4)."
+              },
+              {
+                "name": "grantee_role",
+                "type": "string",
+                "description": "Their role. Where it is the School Admin or the desk, the raiser's choice has been undone (BR-4, BR-8)."
+              },
+              {
+                "name": "grantee_named_in_complaint",
+                "type": "boolean",
+                "description": "Whether the person being granted access is somebody the complaint is about."
+              },
+              {
+                "name": "recorded",
+                "type": "boolean",
+                "description": "True. The grant is on the record (A7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_THE_PRINCIPAL",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "Somebody other than the Principal attempted to act on a confidential complaint.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned or granted (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say who the grantee is before granting. Where they are the School Admin, on the desk, or named in the complaint, granting them access reverses the raiser's choice in everything but name — and nothing in the use case stops it (BR-4, BR-8).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never grant to a role or a group. Access is permitted to a named person, and the list of readers is the whole of what the raiser's confidentiality now means (BR-4, A7).",
+          "derivedFrom": [
+            "BR-4",
+            "A7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that nobody tells the raiser. Nothing in the use case informs them who has been permitted to read what they raised in confidence (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "The use case describes granting read access to a confidential complaint and describes no revoking of it. Whatever has been read has been read (A7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is confidential pay wali shikayat ko HR officer ko dikhane ki ijazat de dein",
+            "lang": "ur-Latn",
+            "gloss": "give the HR officer permission to see this confidential pay complaint"
+          },
+          "context": "Principal, holding a confidential complaint about unpaid overtime.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.confidential.access.grant",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the pay complaint",
+                "grantee_id": "$request.grantee_phrase → the HR officer",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A named person, checked first (PR-1)."
+            }
+          ],
+          "outcome": "Granted, and recorded. The HR officer is not the School Admin or on the desk and is not named in it, so the raiser's choice holds. Two things to know: the teacher is not told who can now read it, and the use case describes no way to take a grant back."
+        },
+        {
+          "request": {
+            "text": "School Admin ko bhi ye confidential shikayat dikha dein",
+            "lang": "ur-Latn",
+            "gloss": "show this confidential complaint to the School Admin too"
+          },
+          "context": "Principal, holding a confidential complaint about the School Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.confidential.access.grant",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the complaint",
+                "grantee_id": "$request.grantee_phrase → the School Admin",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Possible, and it should not happen blind (PR-1)."
+            }
+          ],
+          "outcome": "Stop before granting: the School Admin is the person this complaint is about, and the raiser chose confidential precisely so that it would not reach them. Nothing in the specification prevents the grant — but it would expose the raiser to exactly the person they chose to avoid, and nothing tells the raiser it happened. The decision is the Principal's, with that in front of them."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-04-PC-5",
+      "intent": {
+        "name": "complaint.staff.outcome.record",
+        "summary": "Record what was done about a staff complaint. The raiser is told it, and it does not close until they confirm.",
+        "routesHere": [
+          "record the outcome on the overtime complaint — the hours are added to November payroll",
+          {
+            "text": "overtime wali shikayat ka nateeja likh dein",
+            "lang": "ur-Latn",
+            "gloss": "record the outcome of the overtime complaint"
+          },
+          {
+            "text": "confidential shikayat ka faisla darj kar dein",
+            "lang": "ur-Latn",
+            "gloss": "record the decision on the confidential complaint"
+          },
+          "tell the teacher what was done about their complaint"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "nateeja likh kar band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "record the outcome and close it"
+            },
+            "goesTo": "Not offered.",
+            "note": "The raiser confirms the outcome, and that is what closes it (BR-6, BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.staff.outcome.record",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "outcome": "$request.outcome",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The outcome is sent to the raiser, who confirms it or reopens it once (BR-5, BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. An outcome with no detail is refused (E6).",
+        "atomicity": "One write and one message to the raiser. The complaint stays at outcome recorded until they confirm — and never closes if they do not (BR-6, E10)."
+      },
+      "operations": [
+        {
+          "name": "complaint.staff.outcome.record",
+          "method": "POST",
+          "path": "/api/v1/staff-complaints/{complaint_id}/outcome",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "complaint_id + the round, so a double press does not send the raiser the same outcome twice",
+          "purpose": "Record the outcome of a staff complaint and send it to the raiser.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. No staff complaint the acting user may see matches. A confidential complaint is not visible to the desk or the School Admin (BR-4).",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, days open and who holds each."
+              },
+              "notes": "The staff complaint, named by its reference or its subject."
+            },
+            {
+              "name": "outcome",
+              "source": "request",
+              "sourceRef": "$request.outcome",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 2000 characters, the holder's own. The raiser is told it word for word (BR-5, E6)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was recorded and what happens next.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Outcome recorded. Not closed (BR-6)."
+              },
+              {
+                "name": "recorded_by",
+                "type": "string",
+                "description": "The holder — the desk, the School Admin, or the Principal on a confidential complaint (BR-4)."
+              },
+              {
+                "name": "confidential_names_principal",
+                "type": "boolean",
+                "description": "True where a confidential complaint names the Principal — who is then recording the outcome of a complaint about themselves. **The use case has no answer for this** and calls it the largest gap in the module (E11, OQ-1)."
+              },
+              {
+                "name": "closes_when",
+                "type": "string",
+                "description": "The raiser confirms it. It never closes on their silence (E10, OQ-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_DETAIL",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "The outcome was recorded with no detail.",
+              "written": "Nothing.",
+              "notWritten": "It is not recorded (BR-5)."
+            },
+            {
+              "code": "CONFIDENTIAL_NAMES_PRINCIPAL",
+              "mapsTo": "E11",
+              "httpStatus": 200,
+              "meaning": "A confidential complaint names the Principal.",
+              "written": "It is held by the Principal.",
+              "notWritten": "There is no further route.",
+              "treatedAsSuccess": true,
+              "note": "It goes to the Principal by definition. The use case states it has nowhere else to go (OQ-1)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the outcome. The raiser is told it word for word (BR-5, E6).",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say plainly when the Principal is recording the outcome of a complaint about themselves. A confidential complaint naming the Principal has nowhere else to go, and the use case names this as the largest gap in the module rather than resolving it (E11, OQ-1).",
+          "derivedFrom": [
+            "E11",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that it does not close until the raiser confirms, and never closes on their silence (BR-6, E10, OQ-5).",
+          "derivedFrom": [
+            "BR-6",
+            "E10",
+            "OQ-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A recorded outcome is not withdrawn. The raiser confirms it or reopens once (BR-6)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "confidential shikayat ka nateeja likh dein",
+            "lang": "ur-Latn",
+            "gloss": "record the outcome of the confidential complaint"
+          },
+          "context": "Principal, holding a confidential complaint that names the Principal.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.outcome.record",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the complaint",
+                "outcome": "as the Principal gives it",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "It can be recorded; the conflict should be named first (PR-2)."
+            }
+          ],
+          "outcome": "Before recording: this complaint is about the Principal, and the Principal is the one deciding its outcome. The specification names this as the largest gap in the module and gives no alternative route — a confidential complaint cannot go anywhere else. Recording is possible; say on the record that the person named decided it, because nothing else will."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-04-PC-6",
+      "intent": {
+        "name": "complaint.staff.outcome.confirm",
+        "summary": "Accept the outcome of your complaint. This is what closes it.",
+        "routesHere": [
+          "I accept the outcome of my overtime complaint",
+          {
+            "text": "mujhe shikayat ka nateeja manzoor hai",
+            "lang": "ur-Latn",
+            "gloss": "I accept the outcome of my complaint"
+          },
+          "confirm the outcome"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mujhe nateeja manzoor nahi",
+              "lang": "ur-Latn",
+              "gloss": "I do not accept the outcome"
+            },
+            "goesTo": "complaint.staff.reopen — this use case.",
+            "note": "Not accepting is a reopening, once (BR-6, BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.staff.outcome.confirm",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it closes the complaint (BR-6, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. There is nothing to confirm until an outcome has been recorded (E9).",
+        "atomicity": "One state change. Closed is terminal (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "complaint.staff.outcome.confirm",
+          "method": "POST",
+          "path": "/api/v1/staff-complaints/{complaint_id}/confirm",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "complaint_id, since a complaint closes once",
+          "purpose": "Accept the recorded outcome, closing the staff complaint.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. None of this person's complaints has an outcome awaiting confirmation.",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, days open and who holds each."
+              },
+              "notes": "The raiser's own complaint."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The raiser's own record. Only the person who raised the complaint confirms or reopens it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What closed.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Closed. Terminal (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_OUTCOME",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "No outcome has been recorded.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is closed (BR-5, BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that confirming closes it for good, and that reopening — once — is the other answer (BR-6, BR-7).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never confirm on the raiser's behalf (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "staff_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Closed is terminal (BR-7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mujhe nateeja manzoor hai, ghante November mein aa gaye",
+            "lang": "ur-Latn",
+            "gloss": "I accept the outcome, the hours came through in November"
+          },
+          "context": "Teacher, outcome recorded.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.outcome.confirm",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the overtime complaint",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-1)."
+            }
+          ],
+          "outcome": "Confirmed and closed. It stays on their record and cannot be reopened now."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-04-PC-7",
+      "intent": {
+        "name": "complaint.staff.reopen",
+        "summary": "Refuse the outcome and reopen your complaint — once.",
+        "routesHere": [
+          "I don't accept the outcome of my complaint",
+          {
+            "text": "nateeja manzoor nahi, shikayat dobara kholein",
+            "lang": "ur-Latn",
+            "gloss": "I do not accept the outcome, reopen the complaint"
+          },
+          "reopen my complaint"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "doosri baar khol dein",
+              "lang": "ur-Latn",
+              "gloss": "reopen it a second time"
+            },
+            "goesTo": "Refused.",
+            "note": "A complaint can be reopened once. A second refusal does not reopen it again (BR-10, E7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.staff.reopen",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. An ordinary complaint is then held by the School Admin; a confidential one stays with the Principal (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. A second reopening is refused (E7).",
+        "atomicity": "One state change. Reopened once; who holds it depends on whether it is confidential (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "complaint.staff.reopen",
+          "method": "POST",
+          "path": "/api/v1/staff-complaints/{complaint_id}/reopen",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "complaint_id, since a complaint is reopened once",
+          "purpose": "Reopen a staff complaint whose outcome the raiser does not accept.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. None of this person's complaints has an outcome they can reopen.",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, days open and who holds each."
+              },
+              "notes": "The raiser's own complaint."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The raiser's own record. Only the person who raised the complaint confirms or reopens it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who holds it now.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Reopened (BR-6)."
+              },
+              {
+                "name": "held_by",
+                "type": "string",
+                "description": "The School Admin for an ordinary complaint; the Principal for a confidential one, since it can go nowhere else (BR-11). **An ordinary complaint naming the School Admin still goes to the School Admin here** — the reopening rule is not reconciled with the rule that a complaint about somebody never goes to that somebody (BR-3, BR-11)."
+              },
+              {
+                "name": "reopenings_left",
+                "type": "integer",
+                "description": "Zero (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_REOPENED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The raiser attempted to reopen a second time.",
+              "written": "Nothing.",
+              "notWritten": "It is refused (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say this is the only reopening (BR-6, BR-10).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say who will hold it, and flag the collision. A reopened ordinary complaint goes to the School Admin even where it names the School Admin, which the rule that a complaint about somebody is not handled by that somebody forbids (BR-3, BR-11).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that a reopened confidential complaint stays with the Principal, because it can go nowhere else — including where it names the Principal (BR-11, E11).",
+          "derivedFrom": [
+            "BR-11",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "staff_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-reopen. A further outcome is recorded from here (BR-6)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "nateeja manzoor nahi, Saturday ke ghante ab bhi nahi aaye",
+            "lang": "ur-Latn",
+            "gloss": "I do not accept the outcome, the Saturday hours still have not come through"
+          },
+          "context": "Teacher, ordinary complaint, first outcome recorded.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.reopen",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the overtime complaint",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-1)."
+            }
+          ],
+          "outcome": "Reopened and now held by the School Admin. This is the only reopening — the next outcome is the last."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-04-PC-8",
+      "intent": {
+        "name": "complaint.staff.close",
+        "summary": "Close a reopened staff complaint after its further outcome. It cannot be reopened again.",
+        "routesHere": [
+          "close the reopened overtime complaint",
+          {
+            "text": "dobara khuli shikayat band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "close the reopened complaint"
+          },
+          "close this complaint after the second outcome"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "bina nateeje ke band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "close it without an outcome"
+            },
+            "goesTo": "Refused.",
+            "note": "A complaint is not closed without an outcome recorded (BR-5, BR-7, E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.staff.close",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, after the further outcome (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. Closing without an outcome is refused (E9).",
+        "atomicity": "One state change. It cannot be reopened again, and may close over the raiser's objection (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "complaint.staff.close",
+          "method": "POST",
+          "path": "/api/v1/staff-complaints/{complaint_id}/close",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "complaint_id, since a complaint closes once",
+          "purpose": "Close a reopened staff complaint after its further outcome.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. No reopened complaint with a further outcome recorded matches.",
+                "onAmbiguous": "Ask, naming the complaints that match with their subjects, days open and who holds each."
+              },
+              "notes": "The staff complaint, named by its reference or its subject."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What closed and on what terms.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Closed. Terminal (BR-7, BR-10)."
+              },
+              {
+                "name": "raiser_accepted",
+                "type": "boolean",
+                "description": "Whether the raiser accepted the further outcome. It closes either way (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_OUTCOME",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The complaint was closed with no outcome recorded.",
+              "written": "Nothing.",
+              "notWritten": "It is not closed (BR-5, BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say whether the raiser accepted it. It closes either way after a reopening (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never close without an outcome recorded (BR-5, E9).",
+          "derivedFrom": [
+            "BR-5",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Closed is terminal and cannot be reopened again (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "dobara khuli overtime wali shikayat band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "close the reopened overtime complaint"
+          },
+          "context": "School Admin, further outcome recorded, raiser has not accepted it.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.close",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the overtime complaint",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Closes over the raiser's objection (PR-1)."
+            }
+          ],
+          "outcome": "Before closing: the teacher has not accepted the second outcome and there is no further reopening. It can close — say that it closes over their objection, which stays on the record with both outcomes."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-04-PC-9",
+      "intent": {
+        "name": "complaints.staff.read",
+        "summary": "See the staff complaint queue — and, for the Principal alone, the confidential complaints.",
+        "routesHere": [
+          "what staff complaints are open?",
+          {
+            "text": "staff ki kitni shikayatein khuli hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many staff complaints are open?"
+          },
+          {
+            "text": "kaunsi confidential shikayatein mere paas hain?",
+            "lang": "ur-Latn",
+            "gloss": "which confidential complaints are with me?"
+          },
+          {
+            "text": "kaunsi shikayat jawab ka intezaar kar rahi hai?",
+            "lang": "ur-Latn",
+            "gloss": "which complaint is waiting for a reply?"
+          },
+          "show me the staff complaints nobody has taken up"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "confidential shikayatein desk ko dikhayein",
+              "lang": "ur-Latn",
+              "gloss": "show the confidential complaints to the desk"
+            },
+            "goesTo": "Refused.",
+            "note": "A confidential complaint never reaches the desk or the School Admin, in any list, report or export (BR-4)."
+          },
+          {
+            "request": {
+              "text": "kis ne shikayat ki, gumnaam rakhein",
+              "lang": "ur-Latn",
+              "gloss": "keep who complained anonymous"
+            },
+            "goesTo": "Not offered.",
+            "note": "The raiser is always named to whoever holds it. Confidential is not anonymous (UC-30-03)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaints.staff.read",
+            "inputs": {
+              "status": "$request.status",
+              "names_role": "$request.names_role",
+              "confidential_only": "$request.confidential_only",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. What it returns depends on who is asking: confidential complaints exist in it only for the Principal and those the Principal permits (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written."
+      },
+      "operations": [
+        {
+          "name": "complaints.staff.read",
+          "method": "GET",
+          "path": "/api/v1/staff-complaints",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List staff complaints the acting user may see.",
+          "parameters": [
+            {
+              "name": "status",
+              "source": "request",
+              "sourceRef": "$request.status",
+              "required": false,
+              "type": "string",
+              "notes": "One of the lifecycle states, carried as written rather than as an enum."
+            },
+            {
+              "name": "names_role",
+              "source": "request",
+              "sourceRef": "$request.names_role",
+              "required": false,
+              "type": "enum: None|School Admin|Principal",
+              "notes": "Complaints naming the School Admin or the Principal, which route above that role (BR-3)."
+            },
+            {
+              "name": "confidential_only",
+              "source": "request",
+              "sourceRef": "$request.confidential_only",
+              "required": false,
+              "type": "boolean",
+              "notes": "The Principal's confidential complaints. Meaningless to anybody else, who never sees one (BR-4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What is open, stuck or waiting.",
+            "fields": [
+              {
+                "name": "complaints",
+                "type": "object[]",
+                "description": "Reference, subject, category, held by, days open and status."
+              },
+              {
+                "name": "confidential",
+                "type": "object[]",
+                "description": "For the Principal and those they permit only. Absent — not hidden — for everybody else (BR-4)."
+              },
+              {
+                "name": "not_taken_up",
+                "type": "object[]",
+                "description": "Open and held by nobody, with days open. No time limit exists (OQ-4)."
+              },
+              {
+                "name": "awaiting_confirmation",
+                "type": "object[]",
+                "description": "Outcome recorded and the raiser has not answered. These never close by themselves (E10, OQ-5)."
+              },
+              {
+                "name": "confidential_naming_principal",
+                "type": "object[]",
+                "description": "For the Principal: confidential complaints about themselves, which have nowhere else to go (E11, OQ-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CONFIDENTIAL",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "A desk staff member sought a confidential complaint.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never mention a confidential complaint to anybody but the Principal and those they permit — not a count, not its existence (BR-4, E1).",
+          "derivedFrom": [
+            "BR-4",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "For the Principal, name any confidential complaint that is about them. It has nowhere else to go and the Principal is the one holding it (E11, OQ-1).",
+          "derivedFrom": [
+            "E11",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name what nobody has taken up and what is waiting on a raiser. Neither has any limit and the second never closes on its own (E10, OQ-4, OQ-5).",
+          "derivedFrom": [
+            "E10",
+            "OQ-4",
+            "OQ-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "kaunsi confidential shikayatein mere paas hain?",
+            "lang": "ur-Latn",
+            "gloss": "which confidential complaints are with me?"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaints.staff.read",
+              "inputs": {
+                "status": "omitted",
+                "names_role": "omitted",
+                "confidential_only": "true",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The Principal's own (PR-2)."
+            }
+          ],
+          "outcome": "List them with days open and who else has been permitted to read each. Name separately any that are about the Principal — those have nowhere else to go, and the Principal is the one deciding them."
+        },
+        {
+          "request": {
+            "text": "staff ki kitni shikayatein khuli hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many staff complaints are open?"
+          },
+          "context": "Help desk, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaints.staff.read",
+              "inputs": {
+                "status": "omitted",
+                "names_role": "omitted",
+                "confidential_only": "false",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The ordinary queue only (PR-1)."
+            }
+          ],
+          "outcome": "Give the ordinary queue: open, not taken up (with days), and waiting on a raiser. Nothing about confidential complaints appears — not even whether any exist."
+        }
+      ]
+    }
+  ]
+}

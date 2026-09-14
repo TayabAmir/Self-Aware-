@@ -1,0 +1,307 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-12-15",
+    "name": "Control who can see an employee's salary and who can see the full staff record, everywhere it could appear",
+    "module": "HR and payroll",
+    "file": "../UseCases/UC-12-15.json",
+    "featureRef": "12.15 Salary and staff-record visibility"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-12-15-PC-1",
+      "intent": {
+        "name": "staff.visibility.right.set",
+        "summary": "Set which roles hold a staff-record or salary visibility right. Super Admin only, one step, and it takes effect at once.",
+        "routesHere": [
+          "give Accounts the right to see any salary",
+          {
+            "text": "Accounts ko har tankhwah dekhne ka haq de do",
+            "lang": "ur-Latn",
+            "gloss": "give Accounts the right to see any salary"
+          },
+          {
+            "text": "School Admin se tankhwah dekhne ka haq wapas le lo",
+            "lang": "ur-Latn",
+            "gloss": "take the salary-viewing right away from the School Admin"
+          },
+          {
+            "text": "poora staff record kaun dekh sakta hai, wo set karo",
+            "lang": "ur-Latn",
+            "gloss": "set who can see the full staff record"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ek mulazim ki tankhwah dekhni hai",
+              "lang": "ur-Latn",
+              "gloss": "I want to see one employee's salary"
+            },
+            "goesTo": "Not offered here.",
+            "note": "This sets who holds a right. It does not grant a look at a particular record."
+          },
+          {
+            "request": {
+              "text": "apni tankhwah dekhni hai",
+              "lang": "ur-Latn",
+              "gloss": "I want to see my own salary"
+            },
+            "goesTo": "Always permitted.",
+            "note": "An employee's own salary is always visible to them, whatever the configuration says. A person is entitled to know what they are paid (BR-9)."
+          },
+          {
+            "request": {
+              "text": "report se tankhwah ka column hata do",
+              "lang": "ur-Latn",
+              "gloss": "remove the salary column from the report"
+            },
+            "goesTo": "Not offered.",
+            "note": "Where a report would contain a salary the requester may not see, the column is omitted automatically and the rest of the report is still produced (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.visibility.right.set",
+            "inputs": {
+              "right": "$request.right",
+              "roles": "$request.roles",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it applies everywhere at once. The configuration is read at the moment of each request, so a change takes effect immediately rather than at the next sign-in (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. A change that would make payroll impossible, and one that would remove the Super Admin's own right, are both refused.",
+        "atomicity": "One write: the roles holding the right, with who changed it and when (BR-7). It applies wherever a salary can appear — the staff record, a payroll run, a list, a report or an export (BR-5). Hiding is not filtering after the fact: a role without the right never receives the figure, rather than receiving it and having it hidden in the interface (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "staff.visibility.right.set",
+          "method": "PUT",
+          "path": "/api/v1/staff/visibility-configuration/{right}",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "right, since a right carries one set of roles",
+          "purpose": "Set which roles hold one visibility right.",
+          "parameters": [
+            {
+              "name": "right",
+              "source": "request",
+              "sourceRef": "$request.right",
+              "required": true,
+              "type": "enum: See the full staff record | See any salary | Maintain the general record | See own salary only",
+              "notes": "Which right is being configured (BR-6). The rights are not written into the software."
+            },
+            {
+              "name": "roles",
+              "source": "request",
+              "sourceRef": "$request.roles",
+              "required": true,
+              "type": "string[]",
+              "notes": "The roles that hold it. The complete list, not an addition — a role absent from it loses the right. Every name is the Super Admin's, because this decides who sees what people are paid."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The right as configured.",
+            "fields": [
+              {
+                "name": "right",
+                "type": "string",
+                "description": "Which right."
+              },
+              {
+                "name": "roles",
+                "type": "string[]",
+                "description": "Who holds it now."
+              },
+              {
+                "name": "roles_added",
+                "type": "string[]",
+                "description": "Roles that did not hold it before."
+              },
+              {
+                "name": "roles_removed",
+                "type": "string[]",
+                "description": "Roles that held it and now do not."
+              },
+              {
+                "name": "changed_by",
+                "type": "string",
+                "description": "The Super Admin (BR-7)."
+              },
+              {
+                "name": "effective",
+                "type": "string",
+                "description": "At once. The configuration is read at the moment of each request (BR-11)."
+              },
+              {
+                "name": "surfaces",
+                "type": "string[]",
+                "description": "Everywhere it is enforced — the record, a payroll run, a list, a report and an export (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "PAYROLL_WOULD_BE_IMPOSSIBLE",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The change would leave no role able to run payroll.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Payroll would then be impossible (E2)."
+            },
+            {
+              "code": "NOT_SUPER_ADMIN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "A non-Super Admin attempted to change the configuration.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "The Super Admin sets which roles hold each right (BR-6)."
+            },
+            {
+              "code": "WOULD_LOCK_OUT_SUPER_ADMIN",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The Super Admin removed their own right to see the record.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Nobody could then restore the configuration (E6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never add or remove a role the actor did not name. The list is complete rather than incremental, and a role dropped in passing loses sight of every salary in the school from that moment (BR-6, BR-11).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the roles added and removed, by name. A configuration change is stated as a list, and what actually changed is the part that matters.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that it takes effect at once. The configuration is read at each request, so somebody loses or gains sight of salaries immediately rather than at their next sign-in (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never describe the rule as hiding a figure in the interface. A role without the right never receives it (BR-8) — that is what makes an export as safe as a screen (BR-5).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-8",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never plan a change that leaves payroll unrunnable or the Super Admin locked out. E2 and E6 exist because a configuration nobody can operate or restore is worse than any leak it prevents.",
+          "derivedFrom": [
+            "E2",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A right is set again rather than withdrawn, and every change is recorded with who made it and when (BR-7). A change nobody can trace is a change nobody can question."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Accounts ko har tankhwah dekhne ka haq de do",
+            "lang": "ur-Latn",
+            "gloss": "give Accounts the right to see any salary"
+          },
+          "context": "Super Admin. Accounts and the Principal are to hold it.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.visibility.right.set",
+              "inputs": {
+                "right": "See any salary",
+                "roles": "the complete list the Super Admin named — Principal and Accounts",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The list is complete, not an addition to what was there (PR-1)."
+            }
+          ],
+          "outcome": "Set. Report which roles were added and which lost the right (PR-2), and that it applies at once on the record, on payroll runs, on lists, on reports and on exports (PR-3)."
+        },
+        {
+          "request": {
+            "text": "Accounts ko bhi shamil kar lo",
+            "lang": "ur-Latn",
+            "gloss": "add Accounts as well"
+          },
+          "context": "Super Admin, on a right currently held by the Principal alone.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.visibility.right.set",
+              "inputs": {
+                "right": "$request.right",
+                "roles": "$request.roles — the complete list, which the actor has not stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted until the full list is confirmed (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is set. Report who holds the right now and confirm the complete list — the call replaces the list, so sending Accounts alone would take the right away from the Principal."
+        },
+        {
+          "request": {
+            "text": "School Admin ko bhi tankhwah dekhne do, un ko kaam ke liye chahiye",
+            "lang": "ur-Latn",
+            "gloss": "let the School Admin see salaries too, they need it for their work"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.visibility.right.set",
+              "inputs": {
+                "right": "See any salary",
+                "roles": "the complete list including School Admin, as stated",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Set as asked. Worth reporting that the School Admin is also the role that sets salaries in the salary use case, and that the same document says the two cannot both hold — granting this resolves a contradiction the documents flag rather than creating one, and it is the Super Admin's decision to make."
+        }
+      ]
+    }
+  ]
+}

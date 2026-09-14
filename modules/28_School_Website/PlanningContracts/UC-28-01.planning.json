@@ -1,0 +1,2345 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-28-01",
+    "name": "Write and publish a news item, notice or bulletin to the school website, under approval where the school requires it",
+    "module": "School Website",
+    "file": "../UseCases/UC-28-01.json",
+    "featureRef": "28.1 Publishing school news and notices"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-28-01-PC-1",
+      "intent": {
+        "name": "website.item.write",
+        "summary": "Write a news item, notice or bulletin for the school website. It is a draft — writing is not publishing.",
+        "routesHere": [
+          "write a notice for the website about the sports day",
+          {
+            "text": "website pe sports day ka notice likhna hai",
+            "lang": "ur-Latn",
+            "gloss": "I want to write a notice about sports day for the website"
+          },
+          {
+            "text": "school ki website pe khabar daalni hai",
+            "lang": "ur-Latn",
+            "gloss": "I want to put a news item on the school website"
+          },
+          {
+            "text": "annual result ka announcement website ke liye tayyar karo",
+            "lang": "ur-Latn",
+            "gloss": "prepare the annual result announcement for the website"
+          },
+          "draft a bulletin about the new library timings"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye notice walidain ko bhi bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send this notice to the parents as well"
+            },
+            "goesTo": "Message sending — UC-14-04.",
+            "note": "Publishing puts the item on the site and sends nothing (BR-11, A6, AC-11). Telling families is a separate act through the messaging module, and a planner that quietly did both would send the school's parents a message nobody asked for."
+          },
+          {
+            "request": {
+              "text": "foran sab ko batao school band hai",
+              "lang": "ur-Latn",
+              "gloss": "tell everybody at once that the school is closed"
+            },
+            "goesTo": "emergency.notice.send — UC-14-09.",
+            "note": "A website item is read by whoever visits the site. An emergency is pushed to every family on every channel. Putting a closure on the website and calling it done is how a family arrives at a closed gate."
+          },
+          {
+            "request": {
+              "text": "notice ka matn tum likh do",
+              "lang": "ur-Latn",
+              "gloss": "you write the wording of the notice"
+            },
+            "goesTo": "Not offered.",
+            "note": "The holder writes the item themselves and the wording is theirs (BR-2, E3). This goes on the school's public site under the school's name, read by people who are not the school's to correct afterwards."
+          },
+          {
+            "request": "put the admission inquiry form back on the site",
+            "goesTo": "website.inquiryform.publish — UC-28-02.",
+            "note": "The inquiry form is a form, not an item. It is published and removed as a state, not written."
+          },
+          {
+            "request": "advertise the physics teacher post",
+            "goesTo": "website.posting.publish — UC-28-03.",
+            "note": "A vacancy is listed from a vacancy created in recruitment, and its wording is carried rather than written."
+          },
+          {
+            "request": {
+              "text": "purani cheezein site se hata do",
+              "lang": "ur-Latn",
+              "gloss": "take the old things off the site"
+            },
+            "goesTo": "Not offered here.",
+            "note": "Archiving is by age and the system does it, not a person (BR-8, and the lifecycle moves an item from Published to Archived on the System's trigger alone). The website items screen offers an Archive control the lifecycle has no actor for, and the age at which items are archived is an open question this use case raises and does not answer (OQ-2). Nothing is planned for it until the school gives the age."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "website.item.write",
+            "inputs": {
+              "title": "$request.title",
+              "body": "$request.body",
+              "category": "$request.category",
+              "attachment_id": "$request.attachment_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it produces a draft. Whether the next act is submitting it for approval or publishing it directly is configuration the Super Admin sets, and the write reports which (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. An item with no category or no body is not saved, and nothing is on the site either way.",
+        "atomicity": "One write: the item, its category, its date, the writer's name and any attachment. It is a draft — nothing is public, and no family or alumnus can see it (AC-3, E2, E3)."
+      },
+      "operations": [
+        {
+          "name": "website.item.write",
+          "method": "POST",
+          "path": "/api/v1/website/items",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "title + writer + day, so a double press does not leave two drafts of the same notice on the screen",
+          "purpose": "Save a news item, notice or bulletin as a draft.",
+          "parameters": [
+            {
+              "name": "title",
+              "source": "request",
+              "sourceRef": "$request.title",
+              "required": true,
+              "type": "string",
+              "notes": "2 to 200 characters, the writer's own."
+            },
+            {
+              "name": "body",
+              "source": "request",
+              "sourceRef": "$request.body",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 10000 characters, written by the permission holder (BR-2, E3). Never drafted here."
+            },
+            {
+              "name": "category",
+              "source": "request",
+              "sourceRef": "$request.category",
+              "required": true,
+              "type": "enum: News|Notice|Bulletin|Event|Achievement",
+              "notes": "What kind of item this is: News, Notice, Bulletin, Event or Achievement. Readers filter by it and the site groups by it, and an item carrying neither a date nor a category cannot be found again (BR-6, E2)."
+            },
+            {
+              "name": "attachment_id",
+              "source": "resolved",
+              "sourceRef": "$request.attachment_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "uploaded_file",
+                "fromPhrase": "$request.attachment_phrase",
+                "onNoMatch": "Refuse. No uploaded file matches. The image or document is attached on the screen first.",
+                "onAmbiguous": "Ask, naming the files uploaded against this item."
+              },
+              "notes": "An image or a document published with the item. Uploaded on the screen first and named here — a file cannot travel in a plan."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The draft and what has to happen to it next.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. It is not on the site."
+              },
+              {
+                "name": "written_by",
+                "type": "string",
+                "description": "The permission holder who wrote it, recorded by name (BR-1)."
+              },
+              {
+                "name": "category",
+                "type": "string",
+                "description": "What was chosen, not what was guessed."
+              },
+              {
+                "name": "approval_required",
+                "type": "boolean",
+                "description": "Whether the school requires approval before publication. Configuration the Super Admin sets, not an assumption (BR-3)."
+              },
+              {
+                "name": "approver",
+                "type": "string",
+                "description": "Who gives it, where it is required."
+              },
+              {
+                "name": "attachment",
+                "type": "string",
+                "description": "The file published with the item, where one was attached."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user does not hold the right to publish to the website.",
+              "written": "Nothing.",
+              "notWritten": "No draft is saved.",
+              "note": "The right is granted by the Super Admin and held by a named person rather than a role (BR-1, AC-1)."
+            },
+            {
+              "code": "NO_CATEGORY",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No category was chosen.",
+              "written": "Nothing.",
+              "notWritten": "The item is not saved.",
+              "note": "Readers filter by category and the site groups by it (BR-6)."
+            },
+            {
+              "code": "EMPTY_BODY",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The body is empty.",
+              "written": "Nothing.",
+              "notWritten": "The item is not saved."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the body. The holder writes the item themselves and the wording is theirs (BR-2) — this goes out under the school's name to people who are not the school's to correct afterwards. Where the request says \"you write it\", emit nothing and ask for their words.",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never guess the category. Readers filter by it and the site groups by it, so an item filed under the wrong one is an item nobody finds (BR-6, E2). Offer the five and let the writer choose.",
+          "derivedFrom": [
+            "BR-6",
+            "E2",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that this is a draft. \"Put a notice up\" sounds finished, and it is not — nothing is on the site until it is published, and where the school requires approval it does not go up at all until the Principal gives it.",
+          "derivedFrom": [
+            "BR-4",
+            "AC-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report whether approval is required rather than assuming either way. It is configuration the Super Admin sets, the school's own choice is not stated in the document, and it decides whether the next act is a submission or a publication (BR-3, OQ-1).",
+          "derivedFrom": [
+            "BR-3",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never attach a file the request only describes. A file cannot travel in a plan — it is uploaded on the screen and named here."
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is nothing to reverse — nothing is public. But there is also no way to discard the draft: the lifecycle moves an item from Draft only to Awaiting approval or to Published, and deletion is not offered anywhere (BR-9, E7). A draft written in error stays a draft. Say so rather than promising a tidy-up that does not exist."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "sports day ka notice likhna hai — 14 December ko, subah nau baje, main ground par",
+            "lang": "ur-Latn",
+            "gloss": "I want to write a notice about sports day — 14 December, nine in the morning, on the main ground"
+          },
+          "context": "Staff member holding the website permission, Johar Town branch. The school requires approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.write",
+              "inputs": {
+                "title": "from the writer's own words",
+                "body": "as the writer wrote it",
+                "category": "asked — Notice or Event, both fit an item about a day out",
+                "attachment_id": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The wording is theirs, untouched (PR-1). The category is asked, not guessed (PR-2)."
+            }
+          ],
+          "outcome": "Ask which category before saving, since Notice and Event both fit and the choice decides where readers find it. After: report that it is saved as a draft and not on the site, that this school requires the Principal's approval, and that the next act is submitting it."
+        },
+        {
+          "request": {
+            "text": "website pe daal do ke kal chutti hai, matn tum likh lo",
+            "lang": "ur-Latn",
+            "gloss": "put on the website that tomorrow is a holiday — you write the wording"
+          },
+          "context": "School Admin holding the permission, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.write",
+              "inputs": {
+                "title": "$request.title — absent",
+                "body": "$request.body — absent",
+                "category": "$request.category — absent",
+                "attachment_id": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The wording is the writer's (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask for the wording in their own words — it goes on the school's public site under the school's name, and a holiday announcement nobody chose the words for is the school saying something no person decided to say. Add that a closure families need to act on is an emergency notice, which reaches them directly; the website only reaches whoever visits it."
+        },
+        {
+          "request": "write a notice about the exam timetable and send it to all the parents too",
+          "context": "Staff member holding the permission, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.write",
+              "inputs": {
+                "title": "from the writer's words",
+                "body": "as written",
+                "category": "Notice",
+                "attachment_id": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "This capability writes the item and nothing else. Publishing does not send (PR-3 names what it does do)."
+            }
+          ],
+          "outcome": "Write the draft, then say plainly that publishing it puts it on the site and sends nothing. Telling families is a separate act through the messaging module, and it is theirs to start."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-28-01-PC-2",
+      "intent": {
+        "name": "website.item.submit",
+        "summary": "Send a written item to the Principal for approval, where the school requires it.",
+        "routesHere": [
+          "submit the sports day notice for approval",
+          {
+            "text": "sports day wala notice Principal ko approval ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the sports day notice to the Principal for approval"
+          },
+          {
+            "text": "ye notice manzoori ke liye bhej dein",
+            "lang": "ur-Latn",
+            "gloss": "please send this notice for approval"
+          },
+          "send the draft bulletin up for sign-off"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "khud hi publish kar do",
+              "lang": "ur-Latn",
+              "gloss": "just publish it yourself"
+            },
+            "goesTo": "website.item.publish — this use case.",
+            "note": "That is the route where the school requires no approval (A1). Where it does, publication before approval is refused (BR-4, E4) — and which applies is configuration, not a choice made at the moment of asking."
+          },
+          {
+            "request": "approve it and put it up",
+            "goesTo": "website.item.approve — this use case.",
+            "note": "A different seat. The writer submits; the Principal approves, and the permission holder cannot approve their own item (E8)."
+          },
+          {
+            "request": {
+              "text": "notice mein tabdeeli karni hai pehle",
+              "lang": "ur-Latn",
+              "gloss": "I want to change the notice first"
+            },
+            "goesTo": "website.item.write, or website.item.edit once it is published.",
+            "note": "A draft is rewritten before it is submitted. Editing is the act for an item already on the site."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "website.item.submit",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It moves the item to Awaiting approval and puts it in front of the Principal. Nothing reaches the site here (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. An item that cannot be identified is not submitted, and nothing is on the site either way.",
+        "atomicity": "One state change and one notification. Nothing is public: an item awaiting approval has not reached the website, which is the point of the approval at all (BR-4, AC-4)."
+      },
+      "operations": [
+        {
+          "name": "website.item.submit",
+          "method": "POST",
+          "path": "/api/v1/website/items/{item_id}/submit",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "item_id, since an item sits in one place at a time and a second submission is the same submission",
+          "purpose": "Move a draft to Awaiting approval and notify the approver.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "website_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No item matches that description. Name it as it appears on the website items screen.",
+                "onAmbiguous": "Ask, naming the items that match with their category and the date they carry."
+              },
+              "notes": "The item, named the way the writer names it — by its title, its category or the date it carries."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Where the item now sits and who has it.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. Not on the site."
+              },
+              {
+                "name": "approver",
+                "type": "string",
+                "description": "Who has it now — the Principal, where the Super Admin has given them that role (BR-3)."
+              },
+              {
+                "name": "submitted_at",
+                "type": "datetime",
+                "description": "When."
+              },
+              {
+                "name": "approval_required",
+                "type": "boolean",
+                "description": "Whether this school requires approval at all. Where it does not, there is nothing to submit and publication is the act (A1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user does not hold the right to publish to the website.",
+              "written": "Nothing.",
+              "notWritten": "The item is not submitted."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never assume the school requires approval, and never assume it does not. It is configuration the Super Admin sets, the document does not record this school's answer, and the two paths differ in whether the item can reach the public at all (BR-3, OQ-1). Read it; do not infer it from the fact that a Principal exists.",
+          "derivedFrom": [
+            "BR-3",
+            "A1",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that nothing is public yet. An item awaiting approval is not on the site, and that is the whole purpose of the step — anything published on a public website is read by people who are not the school's to correct afterwards (BR-4).",
+          "derivedFrom": [
+            "BR-4",
+            "AC-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never submit an item on somebody else's behalf without naming whose it is. The writer is recorded and the Principal sees who wrote it, so a submission made blind puts a name to wording that person did not choose."
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "website.item.return",
+        "statement": "The reversal is the approver's, not the writer's: an item awaiting approval comes back through a return, with a reason, and nothing has reached the site to undo (A2). There is no unsubmit."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "sports day wala notice Principal ko bhej do approval ke liye",
+            "lang": "ur-Latn",
+            "gloss": "send the sports day notice to the Principal for approval"
+          },
+          "context": "Staff member holding the website permission, Johar Town branch. The school requires approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.submit",
+              "inputs": {
+                "item_id": "$request.item_phrase → the sports day notice",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Resolved from the writer's own words."
+            }
+          ],
+          "outcome": "Report that it is with the Principal and not on the site, and that if it is returned it comes back with a reason so nothing has to be corrected publicly."
+        },
+        {
+          "request": "submit the library timings notice",
+          "context": "Staff member holding the permission at a school where the Super Admin has set approval to not required.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.submit",
+              "inputs": {
+                "item_id": "$request.item_phrase → the library timings notice",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The call reports approval_required false rather than the planner deciding it (PR-1)."
+            }
+          ],
+          "outcome": "There is nobody to submit to at this school — approval is not required here, so the act is publishing it. Say which it is before publishing, since publication is what reaches families, alumni and prospective families at once and cannot be taken back unseen."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-28-01-PC-3",
+      "intent": {
+        "name": "website.item.approve",
+        "summary": "Approve an item for the website. Approval publishes it — there is no state between the two.",
+        "routesHere": [
+          "approve the sports day notice",
+          {
+            "text": "sports day ka notice manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "please approve the sports day notice"
+          },
+          {
+            "text": "ye notice approve karke site pe daal do",
+            "lang": "ur-Latn",
+            "gloss": "approve this notice and put it on the site"
+          },
+          "sign off the bulletin waiting for me"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "manzoor nahi karna, wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "do not approve it, send it back"
+            },
+            "goesTo": "website.item.return — this use case.",
+            "note": "A return carries a reason, and nothing has reached the site, so nothing has to be corrected publicly (A2)."
+          },
+          {
+            "request": "approve my own notice",
+            "goesTo": "Refused.",
+            "note": "The permission holder cannot approve their own item. Only the Principal can, where the Super Admin has given them that role (E8)."
+          },
+          {
+            "request": {
+              "text": "approve to kar do lekin abhi site pe na jaye",
+              "lang": "ur-Latn",
+              "gloss": "approve it but do not put it on the site yet"
+            },
+            "goesTo": "Not offered.",
+            "note": "Approving publishes. The lifecycle moves an item from Awaiting approval straight to Published, and there is no approved-but-held state to sit in. Where the item should go up later, it is approved later."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "website.item.approve",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it does two things: records the approval and puts the item on the site with its date and category, readable by anybody without a login (BR-5, BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. Where the website cannot be reached, neither the approval nor the publication is recorded and it is reported rather than the item appearing to have gone live (BR-10, E5).",
+        "atomicity": "One act. Approval and publication happen together, because the lifecycle moves an item from Awaiting approval straight to Published and there is no state between them — so a website that cannot be reached fails the whole act, and the retry is a second approval."
+      },
+      "operations": [
+        {
+          "name": "website.item.approve",
+          "method": "POST",
+          "path": "/api/v1/website/items/{item_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "item_id, since an item carries one approval and a repeat is the retry of a publication that did not reach the site",
+          "purpose": "Approve an item and publish it to the school website.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "website_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No item matches that description. Name it as it appears on the website items screen.",
+                "onAmbiguous": "Ask, naming the items that match with their category and the date they carry."
+              },
+              "notes": "The item, named the way the writer names it — by its title, its category or the date it carries."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval and what went live.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Published."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "Who approved it, recorded by name."
+              },
+              {
+                "name": "published_on",
+                "type": "date",
+                "description": "The date the item appears under (BR-6)."
+              },
+              {
+                "name": "category",
+                "type": "string",
+                "description": "What it is filed under, which is how readers find it."
+              },
+              {
+                "name": "public_url",
+                "type": "string",
+                "description": "Where it now stands, readable without a login by parents, students, alumni and prospective families alike (BR-5, AC-6)."
+              },
+              {
+                "name": "messages_sent",
+                "type": "integer",
+                "description": "Zero. Publishing puts the item on the site and sends nothing (BR-11, AC-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SELF_APPROVAL",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "The permission holder is trying to approve their own item.",
+              "written": "Nothing.",
+              "notWritten": "Not approved and not published.",
+              "note": "Only the Principal can approve, where the Super Admin has given them that role (BR-3, BR-4)."
+            },
+            {
+              "code": "WEBSITE_UNREACHABLE",
+              "mapsTo": "E5",
+              "httpStatus": 502,
+              "meaning": "The school website could not be reached.",
+              "written": "Nothing.",
+              "notWritten": "The item is not on the site, and the approval is not recorded either — the two are one act here",
+              "note": "Reported as unpublished rather than appearing to have gone live (BR-10, AC-10). The integration retries three times before this is returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that approving publishes. It is not a sign-off that somebody else acts on later — the item is on the public site the moment this returns, read by parents, alumni and prospective families who need no login (BR-5, AC-6).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5",
+            "AC-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never approve an item the acting user wrote. The permission holder cannot approve their own, and a planner that routes around it defeats the one check standing between a draft and the public (E8).",
+          "derivedFrom": [
+            "E8",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report an unreachable website as nothing published. It is the failure most easily mistaken for success, and a school that believes a notice is up stops telling families by any other means (BR-10, E5, AC-10).",
+          "derivedFrom": [
+            "BR-10",
+            "E5",
+            "AC-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that publishing sends nothing. Families are told through the messaging module and that act is theirs to start; a notice on the site reaches only whoever visits it (BR-11, AC-11).",
+          "derivedFrom": [
+            "BR-11",
+            "AC-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "website.item.remove",
+        "statement": "There is no unapprove. Once approved the item is public, and the only route back is removing it from the site with a reason — which leaves it on the record, because it was public and may be asked about (BR-7, BR-9). Say that before approving, not after."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "sports day ka notice manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "please approve the sports day notice"
+          },
+          "context": "Principal, all branches, with the item awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.approve",
+              "inputs": {
+                "item_id": "$request.item_phrase → the sports day notice",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Approving publishes it (PR-1)."
+            }
+          ],
+          "outcome": "Say before approving that this puts it on the public site straight away, and that the only way back is removing it with a reason, which stays on the record. After: report the public address and that no family was messaged."
+        },
+        {
+          "request": {
+            "text": "main ne jo notice likha tha wo approve kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve the notice I wrote"
+          },
+          "context": "Staff member holding the website permission — the writer of the item.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.approve",
+              "inputs": {
+                "item_id": "$request.item_phrase → their own item",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused. The writer is not the approver (PR-2)."
+            }
+          ],
+          "outcome": "Report that only the Principal can approve an item for publication, and that this is the check that keeps a draft off the public site. The route is submitting it — or, where this school requires no approval at all, publishing it, which is a different capability and a decision the Super Admin has already made."
+        },
+        {
+          "request": "approve the exam bulletin",
+          "context": "Principal, with the website host down.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.approve",
+              "inputs": {
+                "item_id": "$request.item_phrase → the exam bulletin",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The call returns the unreachable failure after three attempts."
+            }
+          ],
+          "outcome": "Report plainly that nothing was published and nothing was approved — the two are one act here, so the item is still awaiting approval and the retry is approving it again. Do not report it as done: a school that believes a bulletin is up stops telling families any other way."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-28-01-PC-4",
+      "intent": {
+        "name": "website.item.return",
+        "summary": "Send an item back to its writer unapproved, with a reason. Nothing has reached the site.",
+        "routesHere": [
+          "return the sports day notice — the date is wrong",
+          {
+            "text": "ye notice wapas bhej do, tareekh ghalat hai",
+            "lang": "ur-Latn",
+            "gloss": "send this notice back, the date is wrong"
+          },
+          {
+            "text": "manzoor nahi kar sakta, wajah ke saath wapas kar dein",
+            "lang": "ur-Latn",
+            "gloss": "I cannot approve it, please return it with the reason"
+          },
+          "send the bulletin back to be corrected"
+        ],
+        "routesElsewhere": [
+          {
+            "request": "approve it anyway",
+            "goesTo": "website.item.approve — this use case.",
+            "note": "Approving publishes. A return is the other answer, and it is the one that keeps a wrong date off the public site."
+          },
+          {
+            "request": {
+              "text": "main khud theek kar deta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I will correct it myself"
+            },
+            "goesTo": "Not offered.",
+            "note": "The approver returns; the writer corrects. The wording is the holder's (BR-2), and an approver who rewrites it has approved their own words rather than the school's."
+          },
+          {
+            "request": {
+              "text": "notice hata do site se",
+              "lang": "ur-Latn",
+              "gloss": "take the notice off the site"
+            },
+            "goesTo": "website.item.remove — this use case.",
+            "note": "Removal is for an item already published. A return is for one that never got there — which is why nothing has to be corrected publicly."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "website.item.return",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The item goes back to the writer with the reason, and nothing has reached the site (A2)."
+          }
+        ],
+        "onFailure": "Stop and report. A return with no reason is not sent — the writer would have nothing to correct.",
+        "atomicity": "One state change and one notification. Nothing was public before it and nothing is public after it; the whole value of returning rather than removing is that no reader ever saw the wrong version (BR-4)."
+      },
+      "operations": [
+        {
+          "name": "website.item.return",
+          "method": "POST",
+          "path": "/api/v1/website/items/{item_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "item_id, since an item carries one decision at a time and a repeat is the same return",
+          "purpose": "Return an item to its writer unapproved, with the reason.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "website_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No item matches that description. Name it as it appears on the website items screen.",
+                "onAmbiguous": "Ask, naming the items that match with their category and the date they carry."
+              },
+              "notes": "The item, named the way the writer names it — by its title, its category or the date it carries."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters, the approver's own. Required — a return with no reason tells the writer only that somebody said no."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Where the item now sits and what the writer was told.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It goes back to Draft when the writer picks it up."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "Who returned it."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "What they said, in their own words, sent to the writer."
+              },
+              {
+                "name": "was_ever_public",
+                "type": "boolean",
+                "description": "False. It never reached the site, which is why nothing has to be corrected publicly (BR-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_THE_APPROVER",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "The acting user is not the approver.",
+              "written": "Nothing.",
+              "notWritten": "The item is not returned.",
+              "note": "Returning is the same seat as approving, and E8 is the only exception the use case writes for that seat."
+            },
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": null,
+              "httpStatus": 400,
+              "meaning": "No reason was given.",
+              "written": "Nothing.",
+              "notWritten": "The item is not returned.",
+              "note": "The data field makes the reason required to return an item, but the use case writes no exception for its absence — unlike a removal, which has one (E6). The asymmetry is in the document, not here."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. It is the approver's own, it is what the writer has to act on, and \"needs work\" sends an item round a second time (A2).",
+          "derivedFrom": [
+            "A2",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that nothing was ever public. That is the point of returning rather than removing — a wrong date the Principal caught was never read by a family, and nothing has to be corrected in public (BR-4).",
+          "derivedFrom": [
+            "BR-4",
+            "AC-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never offer to correct the item on the approver's behalf. The holder writes the item and the wording is theirs (BR-2); an approver who rewrites it has approved their own words.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "website.item.submit",
+        "statement": "The writer corrects it and submits again. Nothing was undone because nothing was done — a returned item never reached the site."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye notice wapas bhej do, ground us din booked hai",
+            "lang": "ur-Latn",
+            "gloss": "send this notice back, the ground is booked that day"
+          },
+          "context": "Principal, all branches, with the item awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.return",
+              "inputs": {
+                "item_id": "$request.item_phrase → the sports day notice",
+                "return_reason": "as the Principal put it — the ground is booked that day",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words, carried whole (PR-1)."
+            }
+          ],
+          "outcome": "Report that it is back with the writer and that no family or prospective parent ever saw the wrong date."
+        },
+        {
+          "request": "return it, it isn't right",
+          "context": "Principal, with the item awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.return",
+              "inputs": {
+                "item_id": "$request.item_phrase → the item awaiting approval",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The reason is required and is not ours to supply (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is returned. Ask what is wrong with it — the writer gets only the reason, and \"it isn't right\" sends the same item back a second time."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-28-01-PC-5",
+      "intent": {
+        "name": "website.item.publish",
+        "summary": "Put an item on the site directly, at a school that requires no approval.",
+        "routesHere": [
+          "publish the library timings notice",
+          {
+            "text": "ye notice website pe live kar do",
+            "lang": "ur-Latn",
+            "gloss": "put this notice live on the website"
+          },
+          {
+            "text": "seedha publish kar dein, approval ki zaroorat nahi",
+            "lang": "ur-Latn",
+            "gloss": "publish it directly, no approval is needed"
+          },
+          "put the achievement item up now"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "approval ke baad site pe daalna",
+              "lang": "ur-Latn",
+              "gloss": "put it on the site after approval"
+            },
+            "goesTo": "website.item.approve — this use case.",
+            "note": "Where approval is required, approving is what publishes. This capability is the other path, for a school whose Super Admin has set approval to not required (A1)."
+          },
+          {
+            "request": {
+              "text": "kal subah publish karna",
+              "lang": "ur-Latn",
+              "gloss": "publish it tomorrow morning"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is no scheduled publication. An item goes up when somebody publishes it."
+          },
+          {
+            "request": {
+              "text": "publish karke sab ko message bhi bhej do",
+              "lang": "ur-Latn",
+              "gloss": "publish it and message everybody too"
+            },
+            "goesTo": "Message sending — UC-14-04.",
+            "note": "Publishing puts the item on the site and sends nothing (BR-11, AC-11). The message is a separate act, and it is the school's to start."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "website.item.publish",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The item goes to the site with its date and category, readable by anybody without a login (BR-5, BR-6). Where the school requires approval this is refused (BR-4, E4)."
+          }
+        ],
+        "onFailure": "Stop and report. Where the website cannot be reached, nothing is published and it is reported rather than the item appearing to have gone live (BR-10, E5).",
+        "atomicity": "One write and one outbound call, together. Either the item is on the site and the publication is recorded, or neither happened — an item recorded as published that no reader can see is the failure this use case exists to prevent (AC-10)."
+      },
+      "operations": [
+        {
+          "name": "website.item.publish",
+          "method": "POST",
+          "path": "/api/v1/website/items/{item_id}/publish",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "item_id, since an item goes to the site once and a repeat is the retry of a publication that did not arrive",
+          "purpose": "Publish an item to the school website where no approval is required.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "website_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No item matches that description. Name it as it appears on the website items screen.",
+                "onAmbiguous": "Ask, naming the items that match with their category and the date they carry."
+              },
+              "notes": "The item, named the way the writer names it — by its title, its category or the date it carries."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What went live and where.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Published."
+              },
+              {
+                "name": "published_on",
+                "type": "date",
+                "description": "The date it appears under (BR-6)."
+              },
+              {
+                "name": "category",
+                "type": "string",
+                "description": "What it is filed under."
+              },
+              {
+                "name": "public_url",
+                "type": "string",
+                "description": "Readable without a login by parents, students, alumni and prospective families alike (BR-5, AC-6)."
+              },
+              {
+                "name": "published_by",
+                "type": "string",
+                "description": "The permission holder."
+              },
+              {
+                "name": "messages_sent",
+                "type": "integer",
+                "description": "Zero. Publishing does not send (BR-11, AC-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_APPROVED",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "Publication was attempted before approval at a school that requires it.",
+              "written": "Nothing.",
+              "notWritten": "The item stays where it was and does not reach the site.",
+              "note": "Nothing reaches the site unapproved (BR-4). The route is submitting it."
+            },
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user does not hold the right to publish to the website.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is published."
+            },
+            {
+              "code": "WEBSITE_UNREACHABLE",
+              "mapsTo": "E5",
+              "httpStatus": 502,
+              "meaning": "The school website could not be reached.",
+              "written": "Nothing.",
+              "notWritten": "the item is not on the site and its status is unchanged",
+              "note": "Reported rather than appearing to have taken effect (BR-10, AC-10). The integration retries three times first."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never publish where approval is required. It is refused, and it should be — anything on a public site is read by people who are not the school's to correct afterwards (BR-4, E4).",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say what publishing means before doing it: the item is readable by anybody with the address, including alumni and prospective families who hold no account at all (BR-5, AC-6). It is not an internal post.",
+          "derivedFrom": [
+            "BR-5",
+            "AC-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report an unreachable website as nothing published. It is the failure most easily mistaken for success (BR-10, E5, AC-10).",
+          "derivedFrom": [
+            "BR-10",
+            "E5",
+            "AC-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never send with it. Publishing puts the item on the site and messages nobody, and a planner that quietly did both would message the school's parents on its own authority (BR-11, AC-11).",
+          "derivedFrom": [
+            "BR-11",
+            "A6",
+            "AC-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "website.item.remove",
+        "statement": "It comes off the site through a removal, with a reason, and stays on the record because it was public and may be asked about (BR-7, BR-9). Whoever read it in the meantime read it — that cannot be reversed, which is why the warning belongs before the publication, not after."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "library ki nayi timings ka notice live kar do",
+            "lang": "ur-Latn",
+            "gloss": "put the notice about the new library timings live"
+          },
+          "context": "School Admin holding the website permission at a school that requires no approval, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.publish",
+              "inputs": {
+                "item_id": "$request.item_phrase → the library timings notice",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "It goes up directly, because this school's Super Admin set approval to not required (A1)."
+            }
+          ],
+          "outcome": "Say first that it becomes readable by anybody with the address and that no family is messaged by this. After: report the public address and the date it now carries."
+        },
+        {
+          "request": "publish the exam notice",
+          "context": "Staff member holding the permission at a school that requires the Principal's approval, item still a draft.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.publish",
+              "inputs": {
+                "item_id": "$request.item_phrase → the exam notice",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused. Nothing reaches the site unapproved (PR-1)."
+            }
+          ],
+          "outcome": "Report that this school requires approval, so the act is submitting it to the Principal — and that the refusal is the check itself, not a permissions problem to work around."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-28-01-PC-6",
+      "intent": {
+        "name": "website.item.edit",
+        "summary": "Correct an item that is already on the site. The change is logged, and whoever read the old version read it.",
+        "routesHere": [
+          "correct the date on the sports day notice — it is the 15th",
+          {
+            "text": "jo notice site pe hai us mein tareekh theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "correct the date in the notice that is on the site"
+          },
+          {
+            "text": "published notice mein ghalti hai, edit karni hai",
+            "lang": "ur-Latn",
+            "gloss": "there is a mistake in the published notice, I want to edit it"
+          },
+          "fix the typo in the achievement item"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "notice hi hata do",
+              "lang": "ur-Latn",
+              "gloss": "just take the notice down"
+            },
+            "goesTo": "website.item.remove — this use case.",
+            "note": "Removing is the other answer, and it needs a reason. Correcting keeps the item where readers already found it."
+          },
+          {
+            "request": {
+              "text": "purana version wapas laa do",
+              "lang": "ur-Latn",
+              "gloss": "bring the old version back"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is no restore. The change history records what changed, who changed it and when (BR-7) — reading it and editing the item back is the route, and it is a second edit, logged as one."
+          },
+          {
+            "request": "edit the draft before it goes up",
+            "goesTo": "website.item.write — this use case.",
+            "note": "A draft is rewritten, not edited. This capability is for an item already public, which is why every change to it is logged."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "website.item.edit",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "title": "$request.title",
+              "body": "$request.body",
+              "category": "$request.category",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The site is updated and the change history takes a row with what changed, who changed it and when (BR-7, AC-7)."
+          }
+        ],
+        "onFailure": "Stop and report. Where the website cannot be reached the item on the site is unchanged and the correction is not recorded as made (BR-10, E5).",
+        "atomicity": "One write and one outbound call, together: the corrected item on the site and the row in its change history. The history is append only — an edit adds to it and never rewrites it."
+      },
+      "operations": [
+        {
+          "name": "website.item.edit",
+          "method": "PATCH",
+          "path": "/api/v1/website/items/{item_id}",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "item_id + the fields submitted, so a double press does not leave two identical rows in the change history",
+          "purpose": "Correct a published item and log the change.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "website_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No item matches that description. Name it as it appears on the website items screen.",
+                "onAmbiguous": "Ask, naming the items that match with their category and the date they carry."
+              },
+              "notes": "The item, named the way the writer names it — by its title, its category or the date it carries."
+            },
+            {
+              "name": "title",
+              "source": "request",
+              "sourceRef": "$request.title",
+              "required": false,
+              "type": "string",
+              "notes": "The corrected title, where the title is what is wrong."
+            },
+            {
+              "name": "body",
+              "source": "request",
+              "sourceRef": "$request.body",
+              "required": false,
+              "type": "string",
+              "notes": "The corrected wording, the holder's own (BR-2). Never redrafted here."
+            },
+            {
+              "name": "category",
+              "source": "request",
+              "sourceRef": "$request.category",
+              "required": false,
+              "type": "enum: News|Notice|Bulletin|Event|Achievement",
+              "notes": "Where the item was filed under the wrong one. Readers filter by it, so an item in the wrong category is an item nobody finds (BR-6)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What changed and what stands on the site now.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "changed",
+                "type": "object[]",
+                "description": "What changed, field by field, before and after (BR-7, AC-7)."
+              },
+              {
+                "name": "changed_by",
+                "type": "string",
+                "description": "Who changed it."
+              },
+              {
+                "name": "changed_at",
+                "type": "datetime",
+                "description": "When."
+              },
+              {
+                "name": "public_url",
+                "type": "string",
+                "description": "Where the corrected item stands."
+              },
+              {
+                "name": "was_public_before",
+                "type": "boolean",
+                "description": "True. Whoever read the old wording read it, and the record of what stood there is why the history is kept (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user does not hold the right to publish to the website.",
+              "written": "Nothing.",
+              "notWritten": "The item on the site is unchanged."
+            },
+            {
+              "code": "NO_CATEGORY",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The category was cleared rather than changed.",
+              "written": "Nothing.",
+              "notWritten": "The item is unchanged.",
+              "note": "Every item carries a category, and an item with none cannot be found again (BR-6)."
+            },
+            {
+              "code": "WEBSITE_UNREACHABLE",
+              "mapsTo": "E5",
+              "httpStatus": 502,
+              "meaning": "The school website could not be reached.",
+              "written": "Nothing.",
+              "notWritten": "the item on the site is unchanged and no change is logged",
+              "note": "Reported rather than appearing to have taken effect (BR-10, AC-10). The integration retries three times first."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never redraft the body. A correction is still the holder's wording (BR-2) — the planner supplies the mechanism, not the words.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the old version was public. It was read before it was corrected, and where it was wrong about a date or a place, the families who acted on it will not see the correction unless somebody tells them (BR-7).",
+          "derivedFrom": [
+            "BR-7",
+            "AC-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never call an edit a quiet fix. Every change is logged with what changed, who changed it and when, and the Principal is told — that is deliberate, because it was public (BR-7).",
+          "derivedFrom": [
+            "BR-7",
+            "AC-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never suggest restoring an earlier version. The history records what changed; it is not a rollback, and there is no operation that puts the old wording back except editing it back."
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An edit cannot be un-made. A further correction is another edit and both rows stay in the history (BR-7), and the wording that stood on the site in between was read by whoever read it. That is the reason the change is logged rather than silently applied."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "sports day wale notice mein tareekh 15 kar do",
+            "lang": "ur-Latn",
+            "gloss": "change the date in the sports day notice to the 15th"
+          },
+          "context": "Staff member holding the website permission, Johar Town branch, item published.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.edit",
+              "inputs": {
+                "item_id": "$request.item_phrase → the sports day notice",
+                "title": "unchanged",
+                "body": "as the writer corrected it",
+                "category": "unchanged",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only what they changed is sent; the rest stands (PR-1)."
+            }
+          ],
+          "outcome": "Report what changed and that the Principal is told. Add the part nobody asks about: the wrong date was on the public site and families who read it have the 14th in their diaries — correcting the page does not reach them, and telling them is a message, which is a separate act."
+        },
+        {
+          "request": "the achievement item is in the wrong category, move it to News",
+          "context": "School Admin holding the permission, item published.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.edit",
+              "inputs": {
+                "item_id": "$request.item_phrase → the achievement item",
+                "title": "unchanged",
+                "body": "unchanged",
+                "category": "News",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A category is one of the five the use case defines, never invented (PR-2 is about wording; the five are News, Notice, Bulletin, Event and Achievement)."
+            }
+          ],
+          "outcome": "Report the change and that it is logged like any other. Moving an item between categories moves where readers find it, which is the whole reason the field is required."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-28-01-PC-7",
+      "intent": {
+        "name": "website.item.remove",
+        "summary": "Take a published item off the site, with a reason. It stays on the record — it was public and may be asked about.",
+        "routesHere": [
+          "take the sports day notice off the site, the event is postponed",
+          {
+            "text": "ye notice website se hata do, program mulawi ho gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "take this notice off the website, the event has been postponed"
+          },
+          {
+            "text": "purana notice site se utaar dein",
+            "lang": "ur-Latn",
+            "gloss": "please take the old notice down from the site"
+          },
+          "pull the bulletin, it was wrong"
+        ],
+        "routesElsewhere": [
+          {
+            "request": "delete it permanently",
+            "goesTo": "Not offered.",
+            "note": "There is no delete control anywhere. An item is removed from the site and stays on the record, because it was public and may be asked about afterwards (BR-9, E7, AC-9)."
+          },
+          {
+            "request": {
+              "text": "ghalti theek kar do, hatana nahi hai",
+              "lang": "ur-Latn",
+              "gloss": "correct the mistake, do not take it down"
+            },
+            "goesTo": "website.item.edit — this use case.",
+            "note": "Correcting keeps the item where readers already found it. Removing takes it away from the ones still looking."
+          },
+          {
+            "request": {
+              "text": "purani cheezein khud ba khud hat jani chahiye",
+              "lang": "ur-Latn",
+              "gloss": "old things should come off by themselves"
+            },
+            "goesTo": "Not offered here.",
+            "note": "Archiving is by age and the System does it, not a person (BR-8) — and the age at which items are archived is an open question this use case raises and does not answer (OQ-2). Removal is a deliberate act with a reason."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "website.item.remove",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "removal_reason": "$request.removal_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The item leaves the site, the reason is recorded, and it stays on the record (BR-7, BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. A removal with no reason is refused (E6), and where the website cannot be reached the item is still on the site and nothing is recorded as removed (BR-10, E5).",
+        "atomicity": "One write and one outbound call, together: the item off the site and the row in its history with the reason. Removed is where the lifecycle ends — there is no route back up for the same item."
+      },
+      "operations": [
+        {
+          "name": "website.item.remove",
+          "method": "POST",
+          "path": "/api/v1/website/items/{item_id}/remove",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "item_id, since an item leaves the site once and a repeat is the retry of a removal that did not reach the site",
+          "purpose": "Remove a published item from the site, with the reason recorded.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "website_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No item matches that description. Name it as it appears on the website items screen.",
+                "onAmbiguous": "Ask, naming the items that match with their category and the date they carry."
+              },
+              "notes": "The item, named the way the writer names it — by its title, its category or the date it carries."
+            },
+            {
+              "name": "removal_reason",
+              "source": "request",
+              "sourceRef": "$request.removal_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters, the remover's own. Required (BR-7, E6) — something taken off a public site was seen before it was taken off, and the record of why matters as much as the record of what stood there."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What came off and what stays.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Removed. It is off the site and on the record (BR-9)."
+              },
+              {
+                "name": "removed_by",
+                "type": "string",
+                "description": "Who removed it."
+              },
+              {
+                "name": "removal_reason",
+                "type": "string",
+                "description": "Why, in their own words."
+              },
+              {
+                "name": "was_public_for",
+                "type": "string",
+                "description": "How long it stood on the site before it came off — which is how many people could have read it."
+              },
+              {
+                "name": "still_on_record",
+                "type": "boolean",
+                "description": "True, always. There is no deletion (BR-9, E7, AC-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "No reason was given for removing a published item.",
+              "written": "Nothing.",
+              "notWritten": "The item stays on the site.",
+              "note": "The reason is what a school has to give when somebody asks where the notice went (BR-7)."
+            },
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user does not hold the right to publish to the website.",
+              "written": "Nothing.",
+              "notWritten": "The item stays on the site."
+            },
+            {
+              "code": "WEBSITE_UNREACHABLE",
+              "mapsTo": "E5",
+              "httpStatus": 502,
+              "meaning": "The school website could not be reached.",
+              "written": "Nothing.",
+              "notWritten": "the item is still on the site and nothing is recorded as removed",
+              "note": "Reported rather than appearing to have taken effect (BR-10, AC-10). The integration retries three times first."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. It is what the school says when a family asks where the notice went, and it is the remover's to give (BR-7, E6).",
+          "derivedFrom": [
+            "BR-7",
+            "E6",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never offer deletion, and never describe removal as deleting. There is no such control anywhere: the item leaves the site and stays on the record, because it was public and may be asked about (BR-9, E7, AC-9).",
+          "derivedFrom": [
+            "BR-9",
+            "E7",
+            "AC-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that removal is where the lifecycle ends. The same item cannot go back up — a fresh item is the route, and that is worth knowing before an event that might be rescheduled has its notice pulled.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that people already read it. Something removed from a public site was seen before it was removed (BR-7), so where the item told families a wrong date or a cancelled event, taking the page down does not reach the ones who read it. Telling them is a message, and a separate act (BR-11).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Removal is terminal — the lifecycle has no transition out of Removed, so the same item cannot be put back on the site. A fresh item is the only route, and the removed one stays on the record with its reason (BR-9). There is no deletion to reverse either, because deletion does not exist."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "sports day ka notice hata do, program mulawi ho gaya hai aur naya notice baad mein aayega",
+            "lang": "ur-Latn",
+            "gloss": "take the sports day notice down, the event has been postponed and a fresh notice will follow"
+          },
+          "context": "Staff member holding the website permission, Johar Town branch, item published for eleven days.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.remove",
+              "inputs": {
+                "item_id": "$request.item_phrase → the sports day notice",
+                "removal_reason": "as they gave it — the event has been postponed and a fresh notice will follow",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Report that it is off the site, that it stayed on the record with the reason, and that it stood there eleven days — the families who read it still have the old date, and only a message reaches them."
+        },
+        {
+          "request": {
+            "text": "wo notice bilkul mita do, kahin record nahi rehna chahiye",
+            "lang": "ur-Latn",
+            "gloss": "erase that notice completely, no record should remain anywhere"
+          },
+          "context": "School Admin holding the permission.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.remove",
+              "inputs": {
+                "item_id": "$request.item_phrase → the item named",
+                "removal_reason": "$request.removal_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted for erasure, because no capability erases (PR-2)."
+            }
+          ],
+          "outcome": "Report that there is no way to erase it. The item comes off the site and stays on the record with the reason and the name of whoever removed it — it was public, and a school asked afterwards what it published has to be able to answer. If it should come off, give the reason and it comes off."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-28-01-PC-8",
+      "intent": {
+        "name": "website.items.read",
+        "summary": "See what is on the school website and what is waiting: by category, by status, by who wrote it, over a period.",
+        "routesHere": [
+          "what is on the website at the moment?",
+          {
+            "text": "website pe is waqt kya kya laga hua hai?",
+            "lang": "ur-Latn",
+            "gloss": "what is on the website at the moment?"
+          },
+          {
+            "text": "kitne notice approval ka intezaar kar rahe hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many notices are waiting for approval?"
+          },
+          {
+            "text": "pichle mahine kya kya publish hua tha?",
+            "lang": "ur-Latn",
+            "gloss": "what was published last month?"
+          },
+          "show me everything Sana published this term"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is notice mein kya kya badla gaya tha?",
+              "lang": "ur-Latn",
+              "gloss": "what was changed in this notice?"
+            },
+            "goesTo": "website.item.history.read — this use case.",
+            "note": "What stands on the site is one question. What it said before somebody changed it is another, and it is the one a school is asked afterwards."
+          },
+          {
+            "request": {
+              "text": "kitni families ne ye notice parha?",
+              "lang": "ur-Latn",
+              "gloss": "how many families read this notice?"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nothing here counts readers. A website item is read by whoever visits the site, including alumni and prospective families with no account at all (BR-5) — there is no record of who they were."
+          },
+          {
+            "request": "show me the inquiry form's history",
+            "goesTo": "website.inquiryform.history.read — UC-28-02.",
+            "note": "The form is a state, not an item, and its history answers a different question: why no inquiries arrived in a particular month."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "website.items.read",
+            "inputs": {
+              "status": "$request.status",
+              "category": "$request.category",
+              "written_by_phrase": "$request.written_by_phrase",
+              "from_date": "$request.from_date",
+              "to_date": "$request.to_date",
+              "include_archived": "$request.include_archived",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. Nothing is written and nothing changes on the site."
+          }
+        ],
+        "onFailure": "Stop and report. A filter naming a person nobody matches is asked about rather than dropped, since a silently widened filter answers a different question from the one asked.",
+        "atomicity": "A read. Nothing is written."
+      },
+      "operations": [
+        {
+          "name": "website.items.read",
+          "method": "GET",
+          "path": "/api/v1/website/items",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List website items with their status, category, writer and dates.",
+          "parameters": [
+            {
+              "name": "status",
+              "source": "request",
+              "sourceRef": "$request.status",
+              "required": false,
+              "type": "string",
+              "notes": "One of the lifecycle states — Draft, Awaiting approval, Published, Returned, Archived or Removed. The use case defines these in the lifecycle rather than as a fixed value list on the field, so they are carried as written rather than as an enum."
+            },
+            {
+              "name": "category",
+              "source": "request",
+              "sourceRef": "$request.category",
+              "required": false,
+              "type": "enum: News|Notice|Bulletin|Event|Achievement",
+              "notes": "What kind of item. The site groups by it and readers filter by it (BR-6)."
+            },
+            {
+              "name": "written_by_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.written_by_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.written_by_phrase",
+                "onNoMatch": "Refuse. Nobody of that name holds the website permission or has written an item.",
+                "onAmbiguous": "Ask, naming the people who match and what each has written."
+              },
+              "notes": "Where the question is about one person's items."
+            },
+            {
+              "name": "from_date",
+              "source": "request",
+              "sourceRef": "$request.from_date",
+              "required": false,
+              "type": "date",
+              "notes": "The start of the period asked about."
+            },
+            {
+              "name": "to_date",
+              "source": "request",
+              "sourceRef": "$request.to_date",
+              "required": false,
+              "type": "date",
+              "notes": "The end of it."
+            },
+            {
+              "name": "include_archived",
+              "source": "request",
+              "sourceRef": "$request.include_archived",
+              "required": false,
+              "type": "boolean",
+              "notes": "Archived items have left the front of the site and stay readable (BR-8). They are out of the answer unless the question reaches back for them."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What stands, what is waiting and what has gone.",
+            "fields": [
+              {
+                "name": "items",
+                "type": "object[]",
+                "description": "Title, category, writer, the date published, status and when it was last changed."
+              },
+              {
+                "name": "awaiting_approval",
+                "type": "integer",
+                "description": "How many are sitting with the approver. Nothing here has reached the site (BR-4)."
+              },
+              {
+                "name": "published",
+                "type": "integer",
+                "description": "How many are on the site now."
+              },
+              {
+                "name": "archived",
+                "type": "integer",
+                "description": "How many have left the front of the site and stay readable (BR-8)."
+              },
+              {
+                "name": "removed",
+                "type": "integer",
+                "description": "How many came off with a reason, and stay on the record (BR-9)."
+              },
+              {
+                "name": "approval_required",
+                "type": "boolean",
+                "description": "Whether this school requires approval at all — which is what makes an item sitting in Draft either forgotten or simply unpublished (BR-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the website screens.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Count what is waiting separately from what is up. An item awaiting approval has not reached the site, and a school that reads one number for both believes it has published something it has not (BR-4).",
+          "derivedFrom": [
+            "BR-4",
+            "AC-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never present archived as gone. Archiving takes an item off the front of the site and keeps it readable (BR-8) — it is not a removal and it carries no reason, because nobody chose it.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say which items are drafts nobody submitted. Where the school requires approval, a draft that was never submitted is invisible to the Principal and is the ordinary way a notice is never published at all (BR-3, OQ-1).",
+          "derivedFrom": [
+            "BR-3",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never report reader numbers. Nothing counts who read an item — the site is read without a login, by alumni and prospective families among others (BR-5, AC-6).",
+          "derivedFrom": [
+            "BR-5",
+            "AC-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "kitne notice approval ka intezaar kar rahe hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many notices are waiting for approval?"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.items.read",
+              "inputs": {
+                "status": "Awaiting approval",
+                "category": "omitted",
+                "written_by_phrase": "omitted",
+                "from_date": "omitted",
+                "to_date": "omitted",
+                "include_archived": "false",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read."
+            }
+          ],
+          "outcome": "Give the count and the titles with who wrote each and how long it has been waiting. Add what the question does not ask for and needs: the drafts nobody submitted, which the approver never sees and which are the ordinary way a notice is simply never published."
+        },
+        {
+          "request": "what did we publish last month?",
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.items.read",
+              "inputs": {
+                "status": "Published",
+                "category": "omitted",
+                "written_by_phrase": "omitted",
+                "from_date": "the first of last month",
+                "to_date": "the last of last month",
+                "include_archived": "true",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Archived items are included, since something published last month may already have left the front of the site without leaving the record (PR-2)."
+            }
+          ],
+          "outcome": "List them by category, and say plainly that an item now showing as Archived was published in that period and simply came off the front page by age — it was not removed and nobody decided anything about it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-28-01-PC-9",
+      "intent": {
+        "name": "website.item.history.read",
+        "summary": "See what a published item said before somebody changed it, who changed it and when.",
+        "routesHere": [
+          "what was changed in the sports day notice?",
+          {
+            "text": "is notice mein kya tabdeeli hui thi aur kis ne ki thi?",
+            "lang": "ur-Latn",
+            "gloss": "what was changed in this notice and who changed it?"
+          },
+          {
+            "text": "wo notice site se kis ne hataya tha aur kyun?",
+            "lang": "ur-Latn",
+            "gloss": "who took that notice off the site and why?"
+          },
+          "show me the change history for the exam bulletin"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "abhi site pe kya laga hua hai?",
+              "lang": "ur-Latn",
+              "gloss": "what is on the site right now?"
+            },
+            "goesTo": "website.items.read — this use case.",
+            "note": "What stands now is the other question."
+          },
+          {
+            "request": {
+              "text": "purana matn wapas laga do",
+              "lang": "ur-Latn",
+              "gloss": "put the old wording back"
+            },
+            "goesTo": "Not offered.",
+            "note": "The history records what changed; it is not a restore. Putting the old wording back is a fresh edit, and it is logged as one (BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "website.item.history.read",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read of an append-only record. Nothing in it can be edited, and nothing here writes to it."
+          }
+        ],
+        "onFailure": "Stop and report. An item that cannot be identified has no history returned, since the history of the wrong item is worse than none.",
+        "atomicity": "A read. The record is append only — an edit adds a row and never rewrites one (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "website.item.history.read",
+          "method": "GET",
+          "path": "/api/v1/website/items/{item_id}/history",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return the change history of one item: what changed, who changed it, when and why.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "website_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No item matches that description. Removed items are still on the record and can be named too.",
+                "onAmbiguous": "Ask, naming the items that match with their category and the date they carry."
+              },
+              "notes": "The item, named however the asker names it — including one already removed from the site."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Everything that happened to the item after it went public.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "current_status",
+                "type": "string",
+                "description": "Where it stands now — published, archived or removed."
+              },
+              {
+                "name": "changes",
+                "type": "object[]",
+                "description": "When, what changed, who changed it and the reason given (BR-7, AC-7)."
+              },
+              {
+                "name": "published_on",
+                "type": "date",
+                "description": "When it first went up."
+              },
+              {
+                "name": "removed_on",
+                "type": "date",
+                "description": "When it came off, where it did — with the reason (BR-9)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "Who approved it, where approval was required."
+              },
+              {
+                "name": "was_public_between",
+                "type": "string",
+                "description": "The period it stood on the site, which is the window in which somebody could have read it."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the change history.",
+              "written": "Nothing.",
+              "notWritten": "No history is returned.",
+              "note": "The history screen is open to the School Admin, the Principal and the Super Admin."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Give what the item said before, not only that it changed. The record of what stood there is the point — a school asked why a family turned up on the wrong day has to be able to show what the page said (BR-7, AC-7).",
+          "derivedFrom": [
+            "BR-7",
+            "AC-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say how long each version was public. A wrong date corrected within the hour and one corrected after a fortnight are different events, and only the window says which happened.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never offer to restore an earlier version. Nothing restores; putting the old wording back is a fresh edit and is logged as one.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Return the history of a removed item like any other. It was public and may be asked about, which is exactly why it stays on the record (BR-9, AC-9).",
+          "derivedFrom": [
+            "BR-9",
+            "AC-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing. The record it reads cannot be edited by anybody, which is what makes it worth reading."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "wo sports day wala notice kis ne hataya tha aur kyun?",
+            "lang": "ur-Latn",
+            "gloss": "who took that sports day notice off and why?"
+          },
+          "context": "Principal, all branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.history.read",
+              "inputs": {
+                "item_id": "$request.item_phrase → the sports day notice, removed",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A removed item still has a history, and that is the case this record exists for (PR-4)."
+            }
+          ],
+          "outcome": "Give who removed it, when, and the reason in their words — and the window it stood on the site, since that is how many days families could have read it before it went."
+        },
+        {
+          "request": "show me the change history for the exam bulletin",
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "website.item.history.read",
+              "inputs": {
+                "item_id": "$request.item_phrase → the exam bulletin",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read."
+            }
+          ],
+          "outcome": "Give each change with what it said before and after, who made it and when. Add the part the screen does not say: the wording that stood in between was on a public site, and correcting it reached nobody who had already read it."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1354 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-27-02",
+    "name": "Create a section under a class, assign its class incharge, and hold its parent WhatsApp group link",
+    "module": "Class & Session Structure",
+    "file": "../UseCases/UC-27-02.json",
+    "featureRef": "27.2 Section creation"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-27-02-PC-1",
+      "intent": {
+        "name": "section.create",
+        "summary": "Create a section under a class with its capacity and its class incharge, and optionally the WhatsApp group link placement will use. One step.",
+        "routesHere": [
+          "create section C under Grade 4, capacity 35, Miss Nadia in charge",
+          {
+            "text": "Grade 4 mein section C bana do, capacity 35, incharge Miss Nadia",
+            "lang": "ur-Latn",
+            "gloss": "create section C under Grade 4, capacity 35, Miss Nadia in charge"
+          },
+          {
+            "text": "Grade 9 ke liye ek aur section chahiye",
+            "lang": "ur-Latn",
+            "gloss": "we need another section for Grade 9"
+          },
+          "add section B to Prep with 30 places and Mr Asif as incharge",
+          {
+            "text": "nayi section banao, 40 bachay, Miss Sara dekhein gi",
+            "lang": "ur-Latn",
+            "gloss": "make a new section, 40 children, Miss Sara will look after it"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "nayi class bana do",
+              "lang": "ur-Latn",
+              "gloss": "create a new class"
+            },
+            "goesTo": "class.create — UC-27-01-PC-1",
+            "note": "A section sits under a class that already exists."
+          },
+          {
+            "request": {
+              "text": "section ka WhatsApp link laga do",
+              "lang": "ur-Latn",
+              "gloss": "put the section's WhatsApp link in"
+            },
+            "goesTo": "section.group.link.set — UC-27-02-PC-3",
+            "note": "The link can be stored at creation or added later, and replacing one afterwards is its own act (A1, A2)."
+          },
+          {
+            "request": {
+              "text": "is section mein students daal do",
+              "lang": "ur-Latn",
+              "gloss": "put students into this section"
+            },
+            "goesTo": "student.place — UC-27-03-PC-1",
+            "note": "Creating a section creates no students."
+          },
+          {
+            "request": {
+              "text": "WhatsApp group bana do",
+              "lang": "ur-Latn",
+              "gloss": "create the WhatsApp group"
+            },
+            "goesTo": "Not offered.",
+            "note": "The group is created by hand in WhatsApp and only its invite link is stored here (BR-4). Creating or administering the group is outside the system entirely."
+          },
+          {
+            "request": {
+              "text": "subject teacher assign kar do",
+              "lang": "ur-Latn",
+              "gloss": "assign the subject teacher"
+            },
+            "goesTo": "Not this use case.",
+            "note": "The class incharge is assigned here; subject teachers as distinct from the incharge are out of scope."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "section.create",
+            "inputs": {
+              "class_id": "$request.class_phrase",
+              "section_name": "$request.section_name",
+              "capacity": "$request.capacity",
+              "incharge_staff_id": "$request.incharge_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. The class incharge is required from the moment the section exists, because attendance and day-to-day matters have to belong to somebody (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. Name uniqueness within the class, the incharge's status, and whether a chosen subject belongs to the class are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the section, its subjects, its incharge and the audit entry together or not at all. It creates no students — students are placed into it afterwards (BR-1). The section becomes readable by attendance, timetable and the incharge's own list in the same request. Where no group link is stored, the section still takes students and the absence is recorded rather than blocking anything (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "section.create",
+          "method": "POST",
+          "path": "/api/v1/sections",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "class_id + section_name + session_id, which is the same triple BR-3 uses to decide a section already exists",
+          "purpose": "Create a section under a class with its capacity, class incharge and subjects, and optionally the stored WhatsApp invite link.",
+          "parameters": [
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No active class of that name in this academic session.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class the section sits under. Not changeable afterwards — moving a section would take its students with it (BR-2)."
+            },
+            {
+              "name": "section_name",
+              "source": "request",
+              "sourceRef": "$request.section_name",
+              "required": true,
+              "type": "string",
+              "notes": "1 to 30 characters, unique within the class (BR-3). Two Section Bs under Grade 4 make every register ambiguous."
+            },
+            {
+              "name": "capacity",
+              "source": "request",
+              "sourceRef": "$request.capacity",
+              "required": true,
+              "type": "number",
+              "notes": "1 to 200. Both placement and admission check against it, so neither route over-fills the section (BR-6). Only where the request states it — a capacity nobody set is a limit nobody agreed."
+            },
+            {
+              "name": "incharge_staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.incharge_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.incharge_phrase",
+                "onNoMatch": "Refuse. No active staff member of that name in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with their department."
+              },
+              "notes": "The teacher responsible for the section. Required from creation (BR-5, E2), and refused where the staff member is inactive or has left (E5)."
+            },
+            {
+              "name": "subject_ids",
+              "source": "resolved",
+              "sourceRef": "$request.subjects_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "subject",
+                "fromPhrase": "$request.subjects_phrase",
+                "onNoMatch": "Refuse. The class does not carry that subject; attach it to the class first.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Only the subjects the class carries (BR-7, E3). A Fixed class's sections carry all of them, so this is omitted there; a Subject Wise class's sections may carry a subset."
+            },
+            {
+              "name": "whatsapp_invite_link",
+              "source": "request",
+              "sourceRef": "$request.whatsapp_invite_link",
+              "required": false,
+              "type": "string",
+              "notes": "The invite link of a group created by hand in WhatsApp (BR-4). Only where the request supplies one — it is stored, never generated, and never guessed from another section's."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The section as created.",
+            "fields": [
+              {
+                "name": "section_id",
+                "type": "string",
+                "description": "The section."
+              },
+              {
+                "name": "section_name",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "class_name",
+                "type": "string",
+                "description": "The class it sits under, and cannot leave (BR-2)."
+              },
+              {
+                "name": "capacity",
+                "type": "number",
+                "description": "What placement and admission check against."
+              },
+              {
+                "name": "placed_count",
+                "type": "integer",
+                "description": "Zero on creation."
+              },
+              {
+                "name": "incharge_name",
+                "type": "string",
+                "description": "Who is responsible for it."
+              },
+              {
+                "name": "subjects",
+                "type": "object[]",
+                "description": "Those it carries."
+              },
+              {
+                "name": "group_link_stored",
+                "type": "boolean",
+                "description": "False where none was supplied. The section still takes students and the gap is visible (BR-10)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Active."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NAME_ALREADY_EXISTS",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "A section of that name already exists under this class.",
+              "written": "Nothing.",
+              "notWritten": "No section created.",
+              "note": "Message names the class. Two Section Bs under Grade 4 make every register ambiguous (BR-3)."
+            },
+            {
+              "code": "INCHARGE_REQUIRED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No class incharge was assigned.",
+              "written": "Nothing.",
+              "notWritten": "No section created.",
+              "note": "Message: \"Assign a class incharge. Attendance and day-to-day matters have to belong to somebody.\""
+            },
+            {
+              "code": "SUBJECT_NOT_ON_CLASS",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "A subject was chosen that the class does not carry.",
+              "written": "Nothing.",
+              "notWritten": "No section created.",
+              "note": "The message names both. Attaching it to the class is a separate act (class.update)."
+            },
+            {
+              "code": "INVALID_INVITE_LINK",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "The supplied link is not a WhatsApp invite address.",
+              "written": "Nothing.",
+              "notWritten": "No section created.",
+              "note": "Never reformat or repair a link. It was pasted from WhatsApp and a corrected one points somewhere else."
+            },
+            {
+              "code": "INCHARGE_INACTIVE",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The chosen class incharge is inactive or has left.",
+              "written": "Nothing.",
+              "notWritten": "No section created.",
+              "note": "Message: \"That staff member is no longer active. Choose another.\" Choosing another is the actor's decision."
+            },
+            {
+              "code": "CLASS_INACTIVE",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The class has been deactivated.",
+              "written": "Nothing.",
+              "notWritten": "No section created."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the capacity. It is what both placement and admission refuse against (BR-6), so a number invented here decides how many children a room takes and will be enforced against the school all session.",
+          "derivedFrom": [
+            "BR-6",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never choose the class incharge. A named teacher is told they are responsible for a section and it appears in their own list; picking whoever is free assigns a person's workload on nobody's decision.",
+          "derivedFrom": [
+            "BR-5",
+            "E2",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never invent or repair a WhatsApp invite link. It is pasted from a group somebody created by hand (BR-4), and a link that is guessed, reformatted or borrowed from another section sends guardians into the wrong group.",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never attach a subject the class does not carry to get past E3. Attaching it to the class is a change to the class, with its own consequences for every other section under it.",
+          "derivedFrom": [
+            "BR-7",
+            "E3",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never create a section to absorb an overflow. A full section refusing a placement or an admission is the capacity working (BR-6); creating another to take the child invents a room and a teacher.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "class_id and session_id come from the resolved class and $session. A section belongs to one class and cannot be moved to another (BR-2), so the class is settled at creation.",
+          "derivedFrom": [
+            "BR-2",
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no delete. A section no longer run is deactivated through section.deactivate, and that is refused while a student is still placed in it (BR-12). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 4 mein section C bana do — 35 bachay, incharge Miss Nadia",
+            "lang": "ur-Latn",
+            "gloss": "create section C under Grade 4 — 35 children, Miss Nadia in charge"
+          },
+          "context": "Coordinator, Johar Town branch, academic session 2025-26. Grade 4 is a Fixed class.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.create",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Grade 4\"",
+                "section_name": "C",
+                "capacity": 35,
+                "incharge_staff_id": "$request.incharge_phrase → \"Miss Nadia\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "subject_ids is omitted: Grade 4 is Fixed, so its sections carry all its subjects (BR-7)."
+            }
+          ],
+          "outcome": "4-C exists with 35 places and Miss Nadia as incharge, and students can be placed into it (AC-1). group_link_stored comes back false — the section takes students anyway, and the gap is recorded (BR-10). Report that: somebody has to create the group."
+        },
+        {
+          "request": {
+            "text": "Grade 9 mein section A bana do, 40 bachay, Mr Asif incharge, sirf Physics Chemistry Biology",
+            "lang": "ur-Latn",
+            "gloss": "create section A under Grade 9, 40 children, Mr Asif in charge, only Physics Chemistry Biology"
+          },
+          "context": "Coordinator, Johar Town branch. Grade 9 is Subject Wise and carries six subjects.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.create",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Grade 9\"",
+                "section_name": "A",
+                "capacity": 40,
+                "incharge_staff_id": "$request.incharge_phrase → \"Mr Asif\"",
+                "subject_ids": "$request.subjects_phrase → Physics, Chemistry, Biology",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "subject_ids is sent because the class is Subject Wise and the request names a subset (BR-7)."
+            }
+          ],
+          "outcome": "9-A exists carrying three of Grade 9's six subjects. A section carries only what its class carries, so a request naming a fourth the class does not hold would have been refused (E3)."
+        },
+        {
+          "request": {
+            "text": "Grade 4 mein section D bana do, incharge Miss Farah",
+            "lang": "ur-Latn",
+            "gloss": "create section D under Grade 4, Miss Farah in charge"
+          },
+          "context": "Coordinator, Johar Town branch, where Miss Farah left the school last month.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.create",
+              "inputs": {
+                "class_id": "$request.class_phrase → \"Grade 4\"",
+                "section_name": "D",
+                "capacity": "$request.capacity",
+                "incharge_staff_id": "$request.incharge_phrase → \"Miss Farah\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The plan is emitted unchanged; it does not check her status beforehand. The API returns INCHARGE_INACTIVE (E5)."
+            }
+          ],
+          "outcome": "Nothing is created. Report that Miss Farah is no longer active and ask who should take the section — do not pick a replacement (PR-2)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-27-02-PC-2",
+      "intent": {
+        "name": "section.update",
+        "summary": "Change a section — its capacity, its class incharge, its name, or the subjects it carries. One step.",
+        "routesHere": [
+          "raise section B's capacity to 40",
+          {
+            "text": "section B ki capacity 40 kar do",
+            "lang": "ur-Latn",
+            "gloss": "raise section B's capacity to 40"
+          },
+          {
+            "text": "is section ka incharge change kar do, ab Miss Sara dekhein gi",
+            "lang": "ur-Latn",
+            "gloss": "change this section's incharge, Miss Sara will look after it now"
+          },
+          {
+            "text": "4-C ka naam 4-D kar do",
+            "lang": "ur-Latn",
+            "gloss": "rename 4-C to 4-D"
+          },
+          "add Biology to section 9-A"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "nayi section bana do",
+              "lang": "ur-Latn",
+              "gloss": "create a new section"
+            },
+            "goesTo": "section.create — UC-27-02-PC-1"
+          },
+          {
+            "request": {
+              "text": "WhatsApp link badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the WhatsApp link"
+            },
+            "goesTo": "section.group.link.set — UC-27-02-PC-3",
+            "note": "Replacing the stored link has its own consequence: every placement from then on uses the new one, and guardians already placed are not re-invited (BR-9)."
+          },
+          {
+            "request": {
+              "text": "is section ko dusri class mein le jao",
+              "lang": "ur-Latn",
+              "gloss": "move this section to another class"
+            },
+            "goesTo": "Not offered.",
+            "note": "A section belongs to one class and cannot be moved — moving it would take its students with it (BR-2)."
+          },
+          {
+            "request": {
+              "text": "section band kar do",
+              "lang": "ur-Latn",
+              "gloss": "close the section"
+            },
+            "goesTo": "section.deactivate — UC-27-02-PC-4"
+          },
+          {
+            "request": {
+              "text": "students ko is section mein daal do",
+              "lang": "ur-Latn",
+              "gloss": "put students into this section"
+            },
+            "goesTo": "student.place — UC-27-03-PC-1"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "section.update",
+            "inputs": {
+              "section_id": "$request.section_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, carrying only what the request changes. Subjects are added and removed explicitly rather than by replacing the set."
+          }
+        ],
+        "onFailure": "Stop and report. A capacity below the placed count, an inactive incharge and a subject the class does not carry are all enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself. The change is reflected everywhere the section is used (BR-11) — the register, the timetable, and the incharge's own list. Changing the incharge tells the new teacher and shows the section in their list; the previous incharge is told too (AC-9), so a change here reaches two people immediately."
+      },
+      "operations": [
+        {
+          "name": "section.update",
+          "method": "PATCH",
+          "path": "/api/v1/sections/{section_id}",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "section_id + the changed field set and their new values",
+          "purpose": "Change a section's capacity, incharge, name or subjects, and reflect the change everywhere the section is used.",
+          "parameters": [
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No active section of that name under that class in this academic session.",
+                "onAmbiguous": "Ask, naming the candidates with their class, capacity and placed count."
+              },
+              "notes": "The section, resolved from how the actor named it — \"Grade 4 section B\", \"4-B\". A section belongs to one class and cannot be moved to another (BR-2), so the class is part of naming it."
+            },
+            {
+              "name": "section_name",
+              "source": "request",
+              "sourceRef": "$request.section_name",
+              "required": false,
+              "type": "string",
+              "notes": "1 to 30 characters, still unique within the class (BR-3). Only where the request renames it."
+            },
+            {
+              "name": "capacity",
+              "source": "request",
+              "sourceRef": "$request.capacity",
+              "required": false,
+              "type": "number",
+              "notes": "1 to 200. Refused below the number already placed (BR-6, E6) — a capacity cannot be set under the children already in the room."
+            },
+            {
+              "name": "incharge_staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.incharge_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.incharge_phrase",
+                "onNoMatch": "Refuse. No active staff member of that name in this branch.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Only where the request changes it. The new teacher is told and the previous one is told (A3, AC-9), so this is never sent as a tidy-up."
+            },
+            {
+              "name": "add_subject_ids",
+              "source": "resolved",
+              "sourceRef": "$request.add_subjects_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "subject",
+                "fromPhrase": "$request.add_subjects_phrase",
+                "onNoMatch": "Refuse. The class does not carry that subject.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Only subjects the class carries (BR-7, E3)."
+            },
+            {
+              "name": "remove_subject_ids",
+              "source": "resolved",
+              "sourceRef": "$request.remove_subjects_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "subject",
+                "fromPhrase": "$request.remove_subjects_phrase",
+                "onNoMatch": "Refuse. That subject is not on this section.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Subjects to drop from this section."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What changed on the section.",
+            "fields": [
+              {
+                "name": "section_id",
+                "type": "string",
+                "description": "The section changed."
+              },
+              {
+                "name": "changed_fields",
+                "type": "object[]",
+                "description": "field, previous_value, new_value."
+              },
+              {
+                "name": "capacity",
+                "type": "number",
+                "description": "What placement and admission now check against."
+              },
+              {
+                "name": "placed_count",
+                "type": "integer",
+                "description": "How many students are in it. The floor under any capacity change (E6)."
+              },
+              {
+                "name": "incharge_name",
+                "type": "string",
+                "description": "Who is responsible now."
+              },
+              {
+                "name": "previous_incharge_notified",
+                "type": "string",
+                "description": "Delivery status of the notice to the teacher who was replaced (AC-9)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Active, or Full where the placed count has reached capacity."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CAPACITY_BELOW_PLACED",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The capacity was set below the number already placed.",
+              "written": "Nothing.",
+              "notWritten": "Not changed.",
+              "note": "Message names the placed count — \"38 students are already placed\" (AC-7). Lowering it means moving children first, which is a separate act."
+            },
+            {
+              "code": "INCHARGE_INACTIVE",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The chosen incharge is inactive or has left.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            },
+            {
+              "code": "SUBJECT_NOT_ON_CLASS",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "A subject was added that the class does not carry.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            },
+            {
+              "code": "NAME_ALREADY_EXISTS",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "Another section under this class already uses that name.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            },
+            {
+              "code": "CLASS_INACTIVE",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The class has been deactivated.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Send only what the request changes. Resupplying the existing incharge tells two teachers about a change that did not happen (AC-9), and resupplying a capacity records an edit nobody made.",
+          "derivedFrom": [
+            "BR-11",
+            "AC-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never lower the capacity to match a request without saying what it means. E6 refusing it below the placed count is the system saying children are already in the room; lowering it to exactly the placed count silently closes the section to further placement.",
+          "derivedFrom": [
+            "BR-6",
+            "E6",
+            "AC-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never choose a replacement incharge. E5 refusing an inactive one is not a prompt to find somebody free — a named teacher becomes responsible for a section and is told so.",
+          "derivedFrom": [
+            "BR-5",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never raise a capacity to get a placement through. A full section refusing a student is the capacity working (BR-6); raising it puts another child in a room on a planner's judgement, and admission checks the same number.",
+          "derivedFrom": [
+            "BR-6",
+            "UC-27-03 BR-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Add and remove subjects explicitly, never by replacing the set.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no undo. A wrong change is changed again and both stay in the audit log. Where the incharge was changed in error, changing it back tells both teachers a second time — the messages have already gone."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "4-B ki capacity 40 kar do, aur bachay aa rahe hain",
+            "lang": "ur-Latn",
+            "gloss": "raise 4-B's capacity to 40, more children are coming"
+          },
+          "context": "Coordinator, Johar Town branch, where 4-B holds 35 students.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.update",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"Grade 4 section B\"",
+                "capacity": 40,
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The capacity rises to 40 and placement and admission both check against the new number from now on. Nothing else changed."
+        },
+        {
+          "request": {
+            "text": "4-C ka incharge change kar do — ab Miss Sara dekhein gi, Miss Nadia chutti pe hain",
+            "lang": "ur-Latn",
+            "gloss": "change 4-C's incharge — Miss Sara will look after it now, Miss Nadia is on leave"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.update",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"Grade 4 section C\"",
+                "incharge_staff_id": "$request.incharge_phrase → \"Miss Sara\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the incharge changes. The capacity and subjects are not resupplied (PR-1)."
+            }
+          ],
+          "outcome": "Miss Sara now sees 4-C in her list and is told she is responsible for it. Miss Nadia is told she is not (AC-9). Report both — two people were messaged."
+        },
+        {
+          "request": {
+            "text": "4-B ki capacity 30 kar do",
+            "lang": "ur-Latn",
+            "gloss": "set 4-B's capacity to 30"
+          },
+          "context": "Coordinator, Johar Town branch, where 4-B already holds 38 students.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.update",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"Grade 4 section B\"",
+                "capacity": 30,
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns CAPACITY_BELOW_PLACED (E6)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that 38 students are already placed, so the capacity cannot go below that — moving children out is a separate decision (PR-2)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-27-02-PC-3",
+      "intent": {
+        "name": "section.group.link.set",
+        "summary": "Store or replace the WhatsApp invite link held against a section, which is what makes the placement invite automatic. One step.",
+        "routesHere": [
+          "store the WhatsApp group link for section 4-B",
+          {
+            "text": "section B ka WhatsApp group link laga do",
+            "lang": "ur-Latn",
+            "gloss": "put section B's WhatsApp group link in"
+          },
+          {
+            "text": "group ka naya link hai, purana kaam nahi kar raha",
+            "lang": "ur-Latn",
+            "gloss": "here is the new group link, the old one has stopped working"
+          },
+          "replace the parent group link for 9-A",
+          {
+            "text": "ye link save kar do is section ke liye",
+            "lang": "ur-Latn",
+            "gloss": "save this link for this section"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "WhatsApp group bana do",
+              "lang": "ur-Latn",
+              "gloss": "create the WhatsApp group"
+            },
+            "goesTo": "Not offered.",
+            "note": "The group is created by hand in WhatsApp and only its invite link is stored here (BR-4). A group created through the WhatsApp Business API is capped at eight participants, which is why."
+          },
+          {
+            "request": {
+              "text": "guardian ko link dobara bhejo",
+              "lang": "ur-Latn",
+              "gloss": "send the guardian the link again"
+            },
+            "goesTo": "section.group.invite.resend — UC-27-03-PC-3",
+            "note": "Sending a stored link to one guardian is a placement act, not a change to the section."
+          },
+          {
+            "request": {
+              "text": "purane guardians ko naya link bhejo",
+              "lang": "ur-Latn",
+              "gloss": "send the new link to the guardians already placed"
+            },
+            "goesTo": "Not offered.",
+            "note": "Replacing a link does not re-invite guardians already placed (BR-9), and no capability does it in bulk. The use case's own open question asks whether it should."
+          },
+          {
+            "request": {
+              "text": "section ki capacity badha do",
+              "lang": "ur-Latn",
+              "gloss": "raise the section's capacity"
+            },
+            "goesTo": "section.update — UC-27-02-PC-2"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "section.group.link.set",
+            "inputs": {
+              "section_id": "$request.section_phrase",
+              "whatsapp_invite_link": "$request.whatsapp_invite_link",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Storing the link is what makes placement automatic — from now on a placed guardian is sent this link without anyone looking it up (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the link is a WhatsApp invite address at all is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the link, who stored it and when, together with the audit entry or not at all. Nothing is sent to anybody by this act. The consequence is forward-looking — every placement from now on uses this link, and guardians already placed are not re-invited, because a group has not necessarily changed just because its link was replaced (BR-9, AC-6)."
+      },
+      "operations": [
+        {
+          "name": "section.group.link.set",
+          "method": "PUT",
+          "path": "/api/v1/sections/{section_id}/group-link",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "section_id + whatsapp_invite_link, so storing the same link twice records one change",
+          "purpose": "Store or replace the WhatsApp invite link held against a section, for placement to send.",
+          "parameters": [
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No active section of that name under that class in this academic session.",
+                "onAmbiguous": "Ask, naming the candidates with their class, capacity and placed count."
+              },
+              "notes": "The section, resolved from how the actor named it — \"Grade 4 section B\", \"4-B\". A section belongs to one class and cannot be moved to another (BR-2), so the class is part of naming it."
+            },
+            {
+              "name": "whatsapp_invite_link",
+              "source": "request",
+              "sourceRef": "$request.whatsapp_invite_link",
+              "required": true,
+              "type": "string",
+              "notes": "The invite link of a group created by hand in WhatsApp (BR-4). Pasted exactly as given — never reformatted, never repaired, never borrowed from another section."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The link as stored, and what it replaced.",
+            "fields": [
+              {
+                "name": "section_id",
+                "type": "string",
+                "description": "The section."
+              },
+              {
+                "name": "group_link_stored",
+                "type": "boolean",
+                "description": "True."
+              },
+              {
+                "name": "previous_link_existed",
+                "type": "boolean",
+                "description": "True where this replaced one. Guardians already placed are not re-invited (BR-9)."
+              },
+              {
+                "name": "recorded_on",
+                "type": "datetime",
+                "description": "DD-MM-YYYY HH:mm, school-local."
+              },
+              {
+                "name": "recorded_by",
+                "type": "string",
+                "description": "The acting user."
+              },
+              {
+                "name": "placed_count",
+                "type": "integer",
+                "description": "How many guardians are already in the old group and will not be re-invited. Worth reporting."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "INVALID_INVITE_LINK",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "The value is not a WhatsApp invite address.",
+              "written": "Nothing.",
+              "notWritten": "Not stored.",
+              "note": "Message: \"That does not look like a WhatsApp invite link.\" Never reformat or repair it — a corrected link points at a different group."
+            },
+            {
+              "code": "SECTION_INACTIVE",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The section or its class has been deactivated.",
+              "written": "Nothing.",
+              "notWritten": "Not stored."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never invent, reformat or repair a link. It is pasted from a group somebody created, and a link that is guessed or tidied points at a different group or at none — and every guardian placed from then on is sent it (BR-8).",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never copy a link from another section. Two sections sharing a link put one section's parents into the other's group, and nothing downstream catches it.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report how many guardians are already placed when a link is replaced. They stay in the old group and are not re-invited (BR-9, AC-6) — so the school now has parents in two places, and the actor should know that.",
+          "derivedFrom": [
+            "BR-9",
+            "AC-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain a re-invite onto a replacement. Nothing here re-invites guardians already placed, and the use case's own open question asks whether it should; doing it anyway answers a question the school has not.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never store a link to unblock a placement. A section with no link takes students perfectly well and records that no invite was sent (BR-10) — the gap is meant to be visible.",
+          "derivedFrom": [
+            "BR-10",
+            "AC-5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A replaced link is not restored — storing the previous one again is another change, and the placements made in between already sent the new one. Nothing was messaged by this act either way."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "4-B ka WhatsApp group link laga do — https://chat.whatsapp.com/AbCdEfGhIjKl",
+            "lang": "ur-Latn",
+            "gloss": "put 4-B's WhatsApp group link in — https://chat.whatsapp.com/AbCdEfGhIjKl"
+          },
+          "context": "Staff, Johar Town branch, on a section that had no stored link.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.group.link.set",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"Grade 4 section B\"",
+                "whatsapp_invite_link": "https://chat.whatsapp.com/AbCdEfGhIjKl",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Pasted exactly as given (PR-1)."
+            }
+          ],
+          "outcome": "The link is stored. From now on a guardian placed into 4-B is sent it automatically, without anyone looking it up (BR-8). previous_link_existed is false, so nobody is left in an old group."
+        },
+        {
+          "request": {
+            "text": "9-A ka group link badal do, purana group band kar diya tha",
+            "lang": "ur-Latn",
+            "gloss": "change 9-A's group link, we closed the old group"
+          },
+          "context": "Staff, Johar Town branch, on a section holding 38 placed students.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.group.link.set",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"Grade 9 section A\"",
+                "whatsapp_invite_link": "$request.whatsapp_invite_link",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The new link is stored and every placement from now on uses it. Report that 38 guardians already placed are not re-invited (BR-9) — they are in the closed group and somebody has to bring them across by hand."
+        },
+        {
+          "request": {
+            "text": "link kuch aisa tha, chat.whatsapp.com/XyZ, thoda theek kar ke laga do",
+            "lang": "ur-Latn",
+            "gloss": "the link was something like chat.whatsapp.com/XyZ, tidy it up and store it"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.group.link.set",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "whatsapp_invite_link": "chat.whatsapp.com/XyZ",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Passed exactly as given, not repaired. The API returns INVALID_INVITE_LINK (E4)."
+            }
+          ],
+          "outcome": "Nothing is stored. Report that the link is not a valid WhatsApp invite address and ask for it as it appears in WhatsApp — a repaired link would point somewhere, and nobody would know where (PR-1)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-27-02-PC-4",
+      "intent": {
+        "name": "section.deactivate",
+        "summary": "Deactivate a section the school no longer runs, once no student is still placed in it. One step.",
+        "routesHere": [
+          "deactivate section 4-D, we've merged it into 4-C",
+          {
+            "text": "section D band kar do",
+            "lang": "ur-Latn",
+            "gloss": "close section D"
+          },
+          {
+            "text": "ye section ab nahi chal raha, inactive kar do",
+            "lang": "ur-Latn",
+            "gloss": "this section is no longer running, make it inactive"
+          },
+          "retire 9-B for this session"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "section delete kar do",
+              "lang": "ur-Latn",
+              "gloss": "delete the section"
+            },
+            "goesTo": "Not offered.",
+            "note": "A section is deactivated, never deleted (BR-12)."
+          },
+          {
+            "request": {
+              "text": "students ko dusri section mein shift kar do",
+              "lang": "ur-Latn",
+              "gloss": "move the students to another section"
+            },
+            "goesTo": "student.move — UC-27-03-PC-2",
+            "note": "Deactivation is refused while a student remains placed (E7). Moving each one is a separate act with its own reason."
+          },
+          {
+            "request": {
+              "text": "class band kar do",
+              "lang": "ur-Latn",
+              "gloss": "close the class"
+            },
+            "goesTo": "class.deactivate — UC-27-01-PC-3",
+            "note": "A class cannot be deactivated while an active section remains, so the sections go first."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "section.deactivate",
+            "inputs": {
+              "section_id": "$request.section_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Whether students are still placed is the API's to enforce (BR-12, E7) — the plan does not count them beforehand."
+          }
+        ],
+        "onFailure": "Stop and report. A placed student refuses the deactivation and the message names the count.",
+        "atomicity": "One write: the section moves to Inactive with its audit entry, together or not at all. Nothing is deleted and no student is touched, because the deactivation is refused outright while one remains placed. The stored group link and everything recorded against the section stay readable."
+      },
+      "operations": [
+        {
+          "name": "section.deactivate",
+          "method": "POST",
+          "path": "/api/v1/sections/{section_id}/deactivate",
+          "kind": "deactivate",
+          "idempotent": true,
+          "idempotencyKey": "section_id, since a section has one deactivation",
+          "purpose": "Mark a section inactive so it takes no further students, keeping it and its history readable.",
+          "parameters": [
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No active section of that name under that class in this academic session.",
+                "onAmbiguous": "Ask, naming the candidates with their class, capacity and placed count."
+              },
+              "notes": "The section, resolved from how the actor named it — \"Grade 4 section B\", \"4-B\". A section belongs to one class and cannot be moved to another (BR-2), so the class is part of naming it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The section as deactivated, or what is still holding it.",
+            "fields": [
+              {
+                "name": "section_id",
+                "type": "string",
+                "description": "The section."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Inactive."
+              },
+              {
+                "name": "placed_count",
+                "type": "integer",
+                "description": "Zero on success. Above zero it is why the deactivation was refused."
+              },
+              {
+                "name": "deactivated_by",
+                "type": "string",
+                "description": "The acting School Admin."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "STUDENTS_STILL_PLACED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "A student is still placed in the section.",
+              "written": "Nothing.",
+              "notWritten": "Not deactivated.",
+              "note": "Message names the count — \"38 students are placed in this section. Move them before deactivating\" (AC-8). Moving each is its own act with its own reason."
+            },
+            {
+              "code": "CLASS_INACTIVE",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The class has been deactivated.",
+              "written": "Nothing.",
+              "notWritten": "Not deactivated."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never plan the moves. E7 naming 38 placed students is the system saying a person has to decide where those children go, and each move needs its own reason (UC-27-03 BR-7).",
+          "derivedFrom": [
+            "BR-12",
+            "E7",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the placed count when the deactivation is refused. It is the answer, and the actor probably did not know.",
+          "derivedFrom": [
+            "E7",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never deactivate a section to stop it taking more students. A section at capacity already refuses placement (BR-6) and shows as Full; deactivating it takes it off every list instead, including the incharge's.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "The lifecycle holds Active, Full and Inactive, and no capability reactivates a section. Where one is deactivated in error, nothing here restores it. See OPEN-QUESTIONS."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "4-D band kar do, usko 4-C mein mila diya hai",
+            "lang": "ur-Latn",
+            "gloss": "close 4-D, we have merged it into 4-C"
+          },
+          "context": "School Admin, Johar Town branch, where 4-D now holds no students.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.deactivate",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"Grade 4 section D\"",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "4-D is Inactive and takes no further students. Its register, its stored group link and everything recorded against it stay readable (BR-12)."
+        },
+        {
+          "request": {
+            "text": "9-B band kar do",
+            "lang": "ur-Latn",
+            "gloss": "close 9-B"
+          },
+          "context": "School Admin, Johar Town branch, where 9-B holds 38 students.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.deactivate",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"Grade 9 section B\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns STUDENTS_STILL_PLACED (E7)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that 38 students are still placed and have to be moved first — and do not offer to move them, because each move is a decision with a reason (PR-1)."
+        },
+        {
+          "request": {
+            "text": "section full hai, band kar do taake aur bachay na aayein",
+            "lang": "ur-Latn",
+            "gloss": "the section is full, close it so no more children come"
+          },
+          "context": "School Admin, Johar Town branch, on a section at capacity with 40 students.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "section.deactivate",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked, and refused for the same reason — the students are still placed (E7)."
+            }
+          ],
+          "outcome": "Nothing changes, and that is fortunate: a full section already refuses placement and shows as Full (BR-6). Deactivating it would have taken it off the incharge's list and every register too (PR-3)."
+        }
+      ]
+    }
+  ]
+}

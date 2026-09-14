@@ -1,0 +1,727 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-01-01",
+  "featureRef": "1.1 Login",
+  "name": "Sign in with a system-issued username and start a session",
+  "module": "Admin — system-wide",
+  "alsoAffectsModules": [],
+  "priority": "MVP",
+  "priorityReason": "Every other use case in the system depends on a session existing.",
+  "goal": {
+    "actor": "any account holder",
+    "capability": "to sign in with the username the institute issued me",
+    "outcome": "I reach the dashboard, menu and branch scope that match my role"
+  },
+  "primaryActor": "Any actor holding an account: Super Admin, School Admin, Accounts, Staff, Coordinator, Principal, Teacher, Student, Parent / Guardian, Driver.",
+  "secondaryActors": [
+    {
+      "actor": "Super Admin",
+      "involvement": "Issues, resets and revokes the credentials of every other actor. Does not participate in an individual sign-in."
+    }
+  ],
+  "externalActors": [
+    {
+      "actor": "SMS provider",
+      "involvement": "Delivers the one-time code where multi-factor authentication is enforced for the role."
+    }
+  ],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "A session expires or is invalidated and the user is redirected here.",
+        "source": "session-and-authentication"
+      },
+      {
+        "type": "event",
+        "description": "A user follows a link to a protected page without a session.",
+        "source": "Any protected route"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An account exists and is Active, with a system-generated username issued when the actor was added to the institute."
+    },
+    {
+      "condition": "The account has a role, and that role has at least one permission.",
+      "establishedBy": {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json"
+      }
+    },
+    {
+      "condition": "The account is linked to a branch, or is Super Admin."
+    },
+    {
+      "condition": "This is the one use case where session-and-authentication does not apply, because no session exists yet."
+    }
+  ],
+  "postConditions": [
+    "A session exists carrying the actor's identity, role, branch scope and current academic session. This is the session every other use case in the system assumes.",
+    "The actor is on the dashboard and sidebar that match their role, with the branch scope applied.",
+    "Every other use case becomes reachable, filtered by that role and scope.",
+    "The account's last-login timestamp is updated and its failed-attempt counter is reset to zero.",
+    "Where the actor signed in at the driver app, the session reaches route and journey functions only and no main-system screen.",
+    "The attempt is recorded in the audit log, whether it succeeded or failed.",
+    "No student, staff, fee or academic record changes. Signing in reads; it does not write to the school's data."
+  ],
+  "screens": [
+    {
+      "name": "Login",
+      "route": "/login",
+      "sidebar": "None — no chrome on this screen",
+      "actions": [
+        "Sign in",
+        "Show password",
+        "Forgot password"
+      ],
+      "visibleTo": [
+        "Unauthenticated visitors"
+      ]
+    },
+    {
+      "name": "Driver app login",
+      "route": "/driver/login",
+      "sidebar": "None",
+      "actions": [
+        "Sign in",
+        "Forgot password"
+      ],
+      "visibleTo": [
+        "Drivers"
+      ]
+    },
+    {
+      "name": "Second factor",
+      "route": "/login/verify",
+      "sidebar": "None",
+      "actions": [
+        "Enter code",
+        "Resend code"
+      ],
+      "visibleTo": [
+        "Actors whose role enforces multi-factor authentication"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Username",
+      "type": "text",
+      "required": "yes",
+      "validation": "The system-generated identifier issued when the actor was added to the institute. Never a phone number (BR-1). Trimmed, case-insensitive.",
+      "example": "STF-2024-0117"
+    },
+    {
+      "name": "Password",
+      "type": "password",
+      "required": "yes",
+      "validation": "Minimum 8 characters. Masked. Never logged, never echoed.",
+      "example": "—"
+    },
+    {
+      "name": "Application",
+      "type": "enum",
+      "required": "yes",
+      "validation": "Which login screen was used. Decides which app the session is created for (BR-7).",
+      "default": "Main system",
+      "example": "Main system",
+      "enumValues": [
+        "Main system",
+        "Driver app"
+      ]
+    },
+    {
+      "name": "One-time code",
+      "type": "text",
+      "required": "conditional",
+      "validation": "6 digits, valid 5 minutes. Required only where the role enforces multi-factor authentication.",
+      "example": "418203",
+      "requiredWhen": "Multi-factor authentication is enforced for the role"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Account",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Read to verify the username, password and status; updated with the last-login timestamp and the failed-attempt counter."
+    },
+    {
+      "entity": "Session",
+      "operations": [
+        "create"
+      ],
+      "notes": "Created on success, carrying user, role, branch scope and current academic session."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Every attempt, successful or not."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Unauthenticated visitor",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "The login screen only.",
+      "notes": "Open by definition. What the user may reach afterwards is decided entirely by role-based access control; this use case grants nothing itself."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "Every actor signs in with a system-generated username issued when they were added to the institute. A phone number is held as a contact and recovery channel only, and is never accepted as a username."
+    },
+    {
+      "id": "BR-2",
+      "rule": "Username by actor: Staff, Accounts, School Admin, Coordinator, Principal and Teacher use their staff ID. Students use their student ID or roll number, issued at admission. Parents use their guardian ID. Drivers use their driver ID. Super Admin uses an administrative account username."
+    },
+    {
+      "id": "BR-3",
+      "rule": "A guardian ID is linked to the family code, so one login covers every child in that family. The child is chosen after signing in, not as part of the credential."
+    },
+    {
+      "id": "BR-4",
+      "rule": "A failed sign-in never reveals which of the two values was wrong."
+    },
+    {
+      "id": "BR-5",
+      "rule": "An inactive, suspended or unlinked account is refused with the same message as a wrong password, so account existence is not disclosed. The real reason is written to the audit log only."
+    },
+    {
+      "id": "BR-6",
+      "rule": "Repeated failures lock the account under the password policy. The counter resets on success or when the lock expires."
+    },
+    {
+      "id": "BR-7",
+      "rule": "The application chosen at sign-in decides the session created. A driver signing in at the driver app reaches route and journey functions only, never the main system."
+    },
+    {
+      "id": "BR-8",
+      "rule": "Where multi-factor authentication is enforced for the role, no session exists until the second factor is verified. Three wrong codes count as one failed attempt under the password policy."
+    },
+    {
+      "id": "BR-9",
+      "rule": "An account whose role carries no permissions is refused a session, because a session that can reach nothing is indistinguishable from a broken one."
+    },
+    {
+      "id": "BR-10",
+      "rule": "Every attempt, successful or not, is written to the audit log with the username, the outcome and the IP address."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Account",
+      "states": [
+        "Active",
+        "Locked",
+        "Suspended"
+      ],
+      "initial": "Active",
+      "terminal": [],
+      "transitions": [
+        {
+          "from": "Active",
+          "to": "Locked",
+          "triggeredBy": "System",
+          "condition": "Consecutive failures reach the password policy threshold (BR-6)."
+        },
+        {
+          "from": "Locked",
+          "to": "Active",
+          "triggeredBy": "System",
+          "condition": "The lock period expires."
+        },
+        {
+          "from": "Active",
+          "to": "Suspended",
+          "triggeredBy": "Super Admin",
+          "condition": "The account is withdrawn."
+        },
+        {
+          "from": "Suspended",
+          "to": "Active",
+          "triggeredBy": "Super Admin",
+          "condition": "The account is reinstated."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Any account holder",
+      "navigation": "Open the application → Login screen",
+      "userAction": "Opens the login screen for the main system, or the driver app login where they are a driver.",
+      "function": "renderLoginScreen(application)",
+      "systemResponse": "Displays the login form with the school crest and the username and password fields.",
+      "rules": []
+    },
+    {
+      "step": 2,
+      "actor": "Any account holder",
+      "navigation": "Login screen → Username and password fields",
+      "userAction": "Enters the system-issued username and password, then selects Sign in.",
+      "function": "submitLogin(username, password, application)",
+      "systemResponse": "Checks both fields are present; Sign in is otherwise disabled.",
+      "rules": [
+        "BR-1"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "authenticate(username, password)",
+      "systemResponse": "Verifies the credentials against the account record and confirms the account is Active and linked to a branch.",
+      "rules": [
+        "BR-2",
+        "BR-4",
+        "BR-5",
+        "BR-9"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "requireSecondFactor(account)",
+      "systemResponse": "Where multi-factor authentication is enforced for the role, sends a one-time code and holds the sign-in until it is verified. Otherwise continues.",
+      "rules": [
+        "BR-8"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "createSession(account, application)",
+      "systemResponse": "Creates the session with role, branch scope and current academic session, resets the failed-attempt counter, and writes the audit entry.",
+      "rules": [
+        "BR-7",
+        "BR-10"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "System",
+      "navigation": "Login screen → Role dashboard",
+      "userAction": "—",
+      "function": "loadDashboard(session)",
+      "systemResponse": "Loads the dashboard and sidebar for that role and applies the branch scope of branch-scope.",
+      "rules": []
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 4,
+      "condition": "Multi-factor authentication is enforced for the role",
+      "actor": "Any account holder",
+      "navigation": "Login screen → Second factor screen",
+      "behaviour": "A one-time code is sent to the registered contact number. The user enters it and the session is created only once it is verified. Three wrong codes count as one failed attempt (BR-8).",
+      "function": "verifyOneTimeCode(account, code)",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 3,
+      "condition": "The password must be reset on first sign-in",
+      "actor": "Any account holder",
+      "navigation": "Login screen → Change password screen",
+      "behaviour": "A session is created but restricted to the change-password screen. No other route is reachable until the password is changed.",
+      "function": "createRestrictedSession(account)"
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 1,
+      "condition": "The actor is a Driver",
+      "actor": "Driver",
+      "navigation": "Open the driver app → Driver login screen",
+      "behaviour": "The session is created for the driver app rather than the main system, and only route and journey functions are reachable (BR-7).",
+      "function": "createSession(account, 'Driver app')",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 2,
+      "condition": "The user selects Forgot password",
+      "actor": "Any account holder",
+      "navigation": "Login screen → Forgot password",
+      "behaviour": "Control passes to password management. This use case ends.",
+      "function": "initiatePasswordReset(username)"
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 6,
+      "condition": "The actor is a Parent with more than one child",
+      "actor": "Parent / Guardian",
+      "navigation": "Login screen → Parent portal → Child selector",
+      "behaviour": "One session is created for the guardian ID, which is linked to the family code. The child is chosen after signing in (BR-3).",
+      "function": "loadChildSelector(session)"
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 3,
+      "condition": "Username not found, or the password is wrong",
+      "systemResponse": "Rejected; the failed-attempt counter is incremented.",
+      "messageShown": "The details you entered do not match an account.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E2",
+      "atStep": 3,
+      "condition": "The account is locked under the password policy",
+      "systemResponse": "Rejected until the lock expires.",
+      "messageShown": "This account is locked. Try again later or contact your administrator.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E3",
+      "atStep": 3,
+      "condition": "The account is inactive or suspended",
+      "systemResponse": "Rejected with the same message as E1. The real reason goes to the audit log only (BR-5).",
+      "messageShown": "The details you entered do not match an account.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 3,
+      "condition": "The account has a role but no permissions",
+      "systemResponse": "No session is created.",
+      "messageShown": "Your account has no access assigned. Please contact your administrator.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 2,
+      "condition": "A field is empty",
+      "systemResponse": "The form is not submitted.",
+      "messageShown": "Enter your username.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E6",
+      "atStep": 3,
+      "condition": "The account is not linked to any branch and is not Super Admin",
+      "systemResponse": "Rejected.",
+      "messageShown": "Your account is not linked to a campus. Please contact your administrator.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 4,
+      "condition": "The one-time code cannot be sent",
+      "systemResponse": "Sign-in is refused rather than allowed without the second factor.",
+      "messageShown": "We could not send your code. Please try again.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E8",
+      "atStep": 4,
+      "condition": "The one-time code has expired",
+      "systemResponse": "No session is created; a new code may be requested.",
+      "messageShown": "That code has expired. Request a new one.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E9",
+      "atStep": 1,
+      "condition": "A Driver signs in at the main system login",
+      "systemResponse": "The session is refused for that application (BR-7).",
+      "messageShown": "Drivers sign in through the driver app.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Second factor required",
+      "recipient": "The signing-in actor",
+      "channels": [
+        "sms"
+      ],
+      "template": "MFA_CODE",
+      "contents": [
+        "One-time code",
+        "Validity of 5 minutes"
+      ],
+      "retry": "One resend on user request.",
+      "blocking": true
+    },
+    {
+      "event": "Account locked",
+      "recipient": "Super Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "ACCOUNT_LOCKED",
+      "contents": [
+        "Username",
+        "Role",
+        "Time of lock"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "The last-login timestamp on the account is updated and appears in staff records.",
+      "affects": {
+        "id": "UC-12-01",
+        "name": "Staff records and profiles",
+        "link": "UC-12-01.json"
+      }
+    }
+  ],
+  "integrations": [
+    {
+      "system": "SMS provider",
+      "direction": "outbound",
+      "sends": "One-time code to the actor's registered contact number",
+      "expects": "Delivery acknowledgement",
+      "timeout": "10 seconds",
+      "retry": "One resend on user request",
+      "onFailure": "Sign-in is refused rather than allowed without the second factor, and the user is told the code could not be sent."
+    }
+  ],
+  "reports": [],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "A Teacher whose staff ID is STF-2024-0117",
+      "when": "that ID and the correct password are entered",
+      "then": "a session is created and the teacher dashboard loads showing only their assigned classes"
+    },
+    {
+      "id": "AC-2",
+      "given": "A Teacher whose registered contact number is 03001234567",
+      "when": "that number is entered as the username",
+      "then": "sign-in is refused, because a phone number is never a username"
+    },
+    {
+      "id": "AC-3",
+      "given": "Any account",
+      "when": "a wrong password is entered",
+      "then": "the message does not indicate whether the username exists"
+    },
+    {
+      "id": "AC-4",
+      "given": "An account locked under the password policy",
+      "when": "the correct password is entered",
+      "then": "it is refused and the lock message is shown"
+    },
+    {
+      "id": "AC-5",
+      "given": "A role that enforces multi-factor authentication",
+      "when": "correct credentials are entered",
+      "then": "no session exists until the one-time code is verified"
+    },
+    {
+      "id": "AC-6",
+      "given": "A Parent with three children, signing in with their guardian ID",
+      "when": "the sign-in succeeds",
+      "then": "one session is created and the child selector is shown, with no child chosen by default"
+    },
+    {
+      "id": "AC-7",
+      "given": "A suspended account",
+      "when": "correct credentials are entered",
+      "then": "sign-in is refused, the user sees the generic message, and the audit log records the real reason"
+    },
+    {
+      "id": "AC-8",
+      "given": "A Driver",
+      "when": "they sign in at the driver app",
+      "then": "the session reaches route and journey functions only, and no main-system screen is reachable"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Roles and permissions must exist before a session means anything."
+      },
+      {
+        "id": "UC-25-05",
+        "name": "Password management",
+        "link": "UC-25-05.json",
+        "why": "Owns the password policy, the lockout threshold and the reset path."
+      },
+      {
+        "id": "UC-25-04",
+        "name": "Multi-factor authentication",
+        "link": "UC-25-04.json",
+        "why": "Required only where the role enforces a second factor.",
+        "optional": true
+      },
+      {
+        "id": "UC-25-06",
+        "name": "Audit trail and activity log",
+        "link": "UC-25-06.json",
+        "why": "Receives every attempt."
+      }
+    ],
+    "masterData": [
+      "Accounts with system-generated usernames, provisioned by Super Admin",
+      "Roles with permissions",
+      "Branch records",
+      "Family codes linking guardian IDs to children"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Creating accounts and issuing usernames. The system has no self-registration.",
+      "handledBy": {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json"
+      }
+    },
+    {
+      "item": "Resetting or changing a password, and the lockout policy itself",
+      "handledBy": {
+        "id": "UC-25-05",
+        "name": "Password management",
+        "link": "UC-25-05.json"
+      }
+    },
+    {
+      "item": "Deciding what each role may reach",
+      "handledBy": {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json"
+      }
+    },
+    {
+      "item": "Signing out",
+      "handledBy": {
+        "id": "UC-01-02",
+        "name": "Sign out",
+        "link": "UC-01-02.json"
+      }
+    },
+    {
+      "item": "Choosing which child a parent is viewing",
+      "handledBy": {
+        "id": "UC-15-05",
+        "name": "Parent portal, multi-child view",
+        "link": "UC-15-05.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Concurrency",
+        "requirement": "Authentication completes within 2 seconds at 500 concurrent sign-ins, since a school day starts with everyone arriving at once."
+      },
+      {
+        "aspect": "Credential storage",
+        "requirement": "Passwords are stored hashed and salted; the plain value is never written to any log or audit entry."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "What is the format of each system-generated username — staff ID, student ID, guardian ID and driver ID?",
+      "assumption": "A prefixed, sequenced identifier per actor type. The exact pattern is not specified.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Which roles enforce multi-factor authentication?",
+      "assumption": "Super Admin only.",
+      "confirmWith": "Super Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "Should Parent and Student sessions time out differently from staff sessions?",
+      "assumption": "No — one timeout for everyone, set by the password policy.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "Can a student sign in before a roll number is assigned, that is while only registered and not yet enrolled?",
+      "assumption": "No. Without a roll number there is no username.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

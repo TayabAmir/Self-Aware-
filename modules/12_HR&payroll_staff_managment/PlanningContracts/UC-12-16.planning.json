@@ -1,0 +1,1468 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-12-16",
+    "name": "Record what an employee is paid, approve it before it takes effect, and keep every previous figure",
+    "module": "HR and payroll",
+    "file": "../UseCases/UC-12-16.json",
+    "featureRef": "12.16 Setting and changing an employee's salary"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-12-16-PC-1",
+      "intent": {
+        "name": "salary.set",
+        "summary": "Record what an employee is paid, from when. One step, and it is not in force until it is approved.",
+        "routesHere": [
+          "set her salary at 72,000 a month from the 1st of October",
+          {
+            "text": "in ki tankhwah 72,000 mahana, 1 October se",
+            "lang": "ur-Latn",
+            "gloss": "set their salary at 72,000 a month from 1 October"
+          },
+          {
+            "text": "tankhwah record par darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "record the salary on the record"
+          },
+          {
+            "text": "agreed figure daal do",
+            "lang": "ur-Latn",
+            "gloss": "enter the agreed figure"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tankhwah barha do",
+              "lang": "ur-Latn",
+              "gloss": "increase the salary"
+            },
+            "goesTo": "salary.change — UC-12-16-PC-5",
+            "note": "A change carries a reason and closes the previous figure at its effective date (BR-6, BR-10)."
+          },
+          {
+            "request": {
+              "text": "rozana rate bhi likh do",
+              "lang": "ur-Latn",
+              "gloss": "record the daily rate too"
+            },
+            "goesTo": "Not offered.",
+            "note": "The daily rate is derived from the monthly amount rather than typed, so the two can never disagree (BR-3)."
+          },
+          {
+            "request": {
+              "text": "tankhwah ada kar do",
+              "lang": "ur-Latn",
+              "gloss": "pay the salary"
+            },
+            "goesTo": "payroll.run.generate — UC-12-03",
+            "note": "Payroll calculates from the figure in force for the month being run (BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "salary.set",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "monthly_amount": "$request.monthly_amount",
+              "effective_from": "$request.effective_from",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It records a figure and puts nothing in force — a salary awaiting approval is not in force, and payroll finds no figure and does not pay on a proposal (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. No budget for the role, an effective date before joining, and an overlap with a figure already in force all arrive as errors.",
+        "atomicity": "One write: the salary row and the audit entry together or not at all. **Nothing is in force.** Payroll will find no figure for a month covered only by this until it is approved, and the employee is not paid on a proposal (BR-5). The daily rate is derived from the monthly amount rather than typed (BR-3)."
+      },
+      "operations": [
+        {
+          "name": "salary.set",
+          "method": "POST",
+          "path": "/api/v1/staff/{staff_id}/salary",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff_id + effective_from, since one figure covers one effective date",
+          "purpose": "Record an agreed monthly salary and the date it takes effect.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation and joining date."
+              },
+              "notes": "The employee."
+            },
+            {
+              "name": "monthly_amount",
+              "source": "request",
+              "sourceRef": "$request.monthly_amount",
+              "required": true,
+              "type": "money",
+              "notes": "The agreed monthly salary, greater than zero (E1), recorded against the budget set for the role (BR-2). What somebody is paid — never derived from the budget, from another employee, or from anything else."
+            },
+            {
+              "name": "effective_from",
+              "source": "request",
+              "sourceRef": "$request.effective_from",
+              "required": true,
+              "type": "date",
+              "notes": "The date the figure takes effect. May be in the future, so a rise agreed in June and effective in August is recorded once and takes effect by itself (BR-9). Not before the employee's joining date (E7)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The salary as recorded.",
+            "fields": [
+              {
+                "name": "salary_id",
+                "type": "string",
+                "description": "The salary record."
+              },
+              {
+                "name": "monthly_amount",
+                "type": "money",
+                "description": "As agreed. Visible only to the roles the visibility rule names (BR-8)."
+              },
+              {
+                "name": "daily_rate",
+                "type": "money",
+                "description": "Derived from the monthly amount, not typed (BR-3). Payroll uses it to value a day."
+              },
+              {
+                "name": "effective_from",
+                "type": "date",
+                "description": "When it takes effect."
+              },
+              {
+                "name": "role_salary_budget",
+                "type": "string",
+                "description": "The budget set for the role, which the figure is recorded against (BR-2)."
+              },
+              {
+                "name": "exceeds_budget",
+                "type": "boolean",
+                "description": "True where the agreed figure is above the budget for the role (A1). Recorded, not refused."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. Not in force (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "AMOUNT_NOT_POSITIVE",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The monthly amount is zero or less.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved."
+            },
+            {
+              "code": "NO_ROLE_BUDGET",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "No budget was set for the role.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved.",
+              "note": "A figure agreed with no reference to a budget is a figure nobody planned for (BR-2)."
+            },
+            {
+              "code": "EFFECTIVE_BEFORE_JOINING",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "The effective date is before the employee's joining date.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved."
+            },
+            {
+              "code": "OVERLAPS_IN_FORCE",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The effective date overlaps a figure already in force.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved.",
+              "note": "Two figures for the same employee may not have overlapping effective periods (BR-10)."
+            },
+            {
+              "code": "VISIBILITY_CONTRADICTION",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The acting role is configured to set the salary but cannot see the salary section.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved.",
+              "note": "The two rules cannot both hold and the school has not decided (BR-11)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the amount. It is what a person is paid, and a figure taken from the role's budget, from a colleague, or from the appointment letter is the school agreeing a salary nobody agreed.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compute the daily rate. It is derived from the monthly amount so the two can never disagree (BR-3), and payroll values every absent day with it.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never choose the effective date. It decides which months are paid at which figure (BR-7), and a date a planner picked changes what somebody was paid for a month already worked.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report where the figure exceeds the role's budget. A1 records it rather than refusing it, and the approver should see it before they approve.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say plainly that nothing is in force. Payroll finds no figure and does not pay on a proposal (BR-5) — an employee whose salary sits unapproved through a payroll run is not paid.",
+          "derivedFrom": [
+            "BR-5",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never repeat the figure to an actor who may not see it. The salary and its history are visible only to the roles the visibility rule names (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Report the visibility contradiction where the acting role cannot see the salary section. BR-11 states plainly that the rule making the School Admin unable to see any salary and this feature making them the one who sets it cannot both hold, and that the use case cannot be built correctly until the school decides. E10 is where it surfaces — report it as the documented conflict it is, not as a permissions error.",
+          "derivedFrom": [
+            "BR-11",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A salary is never deleted (BR-12, E9) and a previous figure is never overwritten (BR-6, E8). A wrong figure is returned unapproved, or superseded by a new one with its own effective date."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "in ki tankhwah 72,000 mahana, 1 October se",
+            "lang": "ur-Latn",
+            "gloss": "their salary is 72,000 a month from 1 October"
+          },
+          "context": "School Admin, Johar Town branch, where the role budget is 60,000 to 75,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.set",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "monthly_amount": "72000",
+                "effective_from": "2026-10-01",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The figure and the date are the School Admin's (PR-1, PR-3). The daily rate is left to the API (PR-2)."
+            }
+          ],
+          "outcome": "Recorded in Draft. Report that it is not in force and that payroll pays nothing on it until it is approved (PR-5) — an October run with this still unapproved would find no figure at all."
+        },
+        {
+          "request": {
+            "text": "is post ki bajat ke hisab se tankhwah laga do",
+            "lang": "ur-Latn",
+            "gloss": "set the salary according to the budget for the post"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.set",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "monthly_amount": "$request.monthly_amount — absent",
+                "effective_from": "$request.effective_from",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The budget is a range the school was prepared to pay, not the figure agreed (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report the budget for the role and ask what was actually agreed — the budget is what the figure is recorded against, and taking one from the other would set somebody's pay by arithmetic."
+        },
+        {
+          "request": {
+            "text": "tankhwah set kar do",
+            "lang": "ur-Latn",
+            "gloss": "set the salary"
+          },
+          "context": "School Admin, Johar Town branch, where the visibility configuration hides salaries from them.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.set",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "monthly_amount": "$request.monthly_amount",
+                "effective_from": "$request.effective_from",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns VISIBILITY_CONTRADICTION (E10)."
+            }
+          ],
+          "outcome": "Nothing is saved. Report this as the documented conflict it is (PR-7): the visibility rule says the School Admin cannot see any salary, this feature makes them the one who sets it, and the use case states outright that the two cannot both hold until the school decides which. It is not a permission to be granted quietly."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-16-PC-2",
+      "intent": {
+        "name": "salary.approval.submit",
+        "summary": "Send a recorded salary for approval. One step, and it is still not in force.",
+        "routesHere": [
+          "send this salary for approval",
+          {
+            "text": "tankhwah manzoori ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the salary for approval"
+          },
+          {
+            "text": "figure Principal ko bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the figure to the Principal"
+          },
+          {
+            "text": "manzoori ke liye aage barha do",
+            "lang": "ur-Latn",
+            "gloss": "pass it on for approval"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "khud manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve it yourself"
+            },
+            "goesTo": "salary.approve — UC-12-16-PC-3",
+            "note": "The setter cannot approve their own submission (BR-4, E3)."
+          },
+          {
+            "request": {
+              "text": "payroll chala do",
+              "lang": "ur-Latn",
+              "gloss": "run the payroll"
+            },
+            "goesTo": "payroll.run.generate — UC-12-03",
+            "note": "A salary awaiting approval is not in force and the employee is not paid on a proposal (BR-5, E4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "salary.approval.submit",
+            "inputs": {
+              "salary_id": "$request.salary_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Who sets it and who approves it is configuration set by the Super Admin; by default the School Admin sets and the Principal approves (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the salary moves to Awaiting approval, with the audit entry. It is still not in force — payroll finds no figure for a month it would cover and does not pay on a proposal (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "salary.approval.submit",
+          "method": "POST",
+          "path": "/api/v1/salaries/{salary_id}/submit",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "salary_id, since a salary sits in one place at a time",
+          "purpose": "Send the salary for approval.",
+          "parameters": [
+            {
+              "name": "salary_id",
+              "source": "resolved",
+              "sourceRef": "$request.salary_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "salary",
+                "fromPhrase": "$request.salary_phrase",
+                "onNoMatch": "Refuse. No salary record matches for that employee at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the effective date and the status — never the amounts, unless the actor holds the right to see them (BR-8)."
+              },
+              "notes": "The salary record, resolved from the employee and its effective date."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The submission.",
+            "fields": [
+              {
+                "name": "salary_id",
+                "type": "string",
+                "description": "The salary record."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. Not in force (BR-5)."
+              },
+              {
+                "name": "effective_from",
+                "type": "date",
+                "description": "When it would take effect."
+              },
+              {
+                "name": "approver_role",
+                "type": "string",
+                "description": "Whichever role the Super Admin configured; the Principal by default (BR-4)."
+              },
+              {
+                "name": "exceeds_budget",
+                "type": "boolean",
+                "description": "True where the figure is above the role's budget (A1)."
+              },
+              {
+                "name": "payroll_months_affected",
+                "type": "string[]",
+                "description": "Months a payroll run would cover with no figure in force while this waits (BR-5, E4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "VISIBILITY_CONTRADICTION",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The acting role is configured to set the salary but cannot see the salary section.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "The documented conflict (BR-11)."
+            },
+            {
+              "code": "NOT_DRAFT",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The salary is not in Draft.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve as part of submitting. The setter cannot approve their own submission (BR-4, E3), and this figure is what payroll calculates from every month.",
+          "derivedFrom": [
+            "BR-4",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the payroll months that would run with no figure in force. An employee whose salary sits unapproved across a run is simply not paid (BR-5, E4).",
+          "derivedFrom": [
+            "BR-5",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where the figure exceeds the role's budget. The approver is agreeing to it, and it is the last point at which anybody looks.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the visibility contradiction where the acting role cannot see the salary section. BR-11 states plainly that the rule making the School Admin unable to see any salary and this feature making them the one who sets it cannot both hold, and that the use case cannot be built correctly until the school decides. E10 is where it surfaces — report it as the documented conflict it is, not as a permissions error.",
+          "derivedFrom": [
+            "BR-11",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A submission is not withdrawn. The approver returns it with a reason (A2), which sends it back as a draft."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye tankhwah manzoori ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send this salary for approval"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.approval.submit",
+              "inputs": {
+                "salary_id": "$request.salary_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "It sits with the configured approver. Report the effective date and any payroll month that would run with no figure in force meanwhile (PR-2) — if October's run happens first, the employee is not paid at all."
+        },
+        {
+          "request": {
+            "text": "bhej do aur manzoor bhi kar do, mahine ka run kal hai",
+            "lang": "ur-Latn",
+            "gloss": "send it and approve it too, the month's run is tomorrow"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.approval.submit",
+              "inputs": {
+                "salary_id": "$request.salary_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The submission only. The approval is not chained (PR-1)."
+            }
+          ],
+          "outcome": "Submitted. Report that the Principal approves and that tomorrow's run will find no figure in force if it has not happened — worth raising with them today rather than discovering it on the payslip."
+        },
+        {
+          "request": {
+            "text": "tankhwah bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the salary on"
+          },
+          "context": "School Admin, Johar Town branch, where the configuration hides salaries from them.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.approval.submit",
+              "inputs": {
+                "salary_id": "$request.salary_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns VISIBILITY_CONTRADICTION (E10)."
+            }
+          ],
+          "outcome": "Nothing changes. Report the documented conflict (PR-4) — the same role is configured to set salaries and configured not to see them, and the use case says outright it cannot be built correctly until the school decides which rule wins."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-16-PC-3",
+      "intent": {
+        "name": "salary.approve",
+        "summary": "Approve a salary so it takes effect from its date. The configured approver only, one step.",
+        "routesHere": [
+          "approve this salary",
+          {
+            "text": "ye tankhwah manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this salary"
+          },
+          {
+            "text": "figure theek hai, manzoori de do",
+            "lang": "ur-Latn",
+            "gloss": "the figure is right, approve it"
+          },
+          {
+            "text": "tankhwah lagu kar do",
+            "lang": "ur-Latn",
+            "gloss": "put the salary into force"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tankhwah manzoor nahi",
+              "lang": "ur-Latn",
+              "gloss": "the salary is not approved"
+            },
+            "goesTo": "salary.return — UC-12-16-PC-4"
+          },
+          {
+            "request": {
+              "text": "figure badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the figure"
+            },
+            "goesTo": "salary.change — UC-12-16-PC-5",
+            "note": "An approved figure is superseded by a new one with its own effective date and reason. A previous figure is never overwritten (BR-6, E8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "salary.approve",
+            "inputs": {
+              "salary_id": "$request.salary_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. From here payroll calculates from this figure for every month it covers, and a previous figure is closed at this one's effective date (BR-7, BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by the setter is refused by the API.",
+        "atomicity": "One write: the approval and the audit entry together or not at all. The figure is in force from its effective date. Payroll always calculates from the figure in force for the month being run, not the latest — a rise effective in August does not change what July was paid (BR-7). The previous figure is kept as history and is never overwritten (BR-6)."
+      },
+      "operations": [
+        {
+          "name": "salary.approve",
+          "method": "POST",
+          "path": "/api/v1/salaries/{salary_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "salary_id, since a salary is approved once",
+          "purpose": "Approve the salary so it takes effect.",
+          "parameters": [
+            {
+              "name": "salary_id",
+              "source": "resolved",
+              "sourceRef": "$request.salary_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "salary",
+                "fromPhrase": "$request.salary_phrase",
+                "onNoMatch": "Refuse. No salary record matches for that employee at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the effective date and the status — never the amounts, unless the actor holds the right to see them (BR-8)."
+              },
+              "notes": "The salary record, resolved from the employee and its effective date."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval.",
+            "fields": [
+              {
+                "name": "salary_id",
+                "type": "string",
+                "description": "The salary record."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "In force from its effective date."
+              },
+              {
+                "name": "effective_from",
+                "type": "date",
+                "description": "When it takes effect. May be in the future, in which case it applies by itself when the date arrives (BR-9)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "Whichever role the Super Admin configured; the Principal by default (BR-4)."
+              },
+              {
+                "name": "previous_salary_id",
+                "type": "string",
+                "description": "The figure this supersedes, closed at this one's effective date and kept as history (BR-6, BR-10)."
+              },
+              {
+                "name": "exceeds_budget",
+                "type": "boolean",
+                "description": "True where the figure is above the role's budget (A1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SELF_APPROVAL",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "The setter attempted to approve their own submission.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Who sets and who approves is configuration; they are not the same person (BR-4)."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The salary is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            },
+            {
+              "code": "VISIBILITY_CONTRADICTION",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The acting role cannot see the salary section but is configured to act on it.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "The documented conflict (BR-11)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a submission the actor made. E3 is BR-4 working, and this figure is what payroll pays every month from its date onward.",
+          "derivedFrom": [
+            "BR-4",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say when it takes effect rather than saying it is now in force. An effective date in the future applies by itself when the date arrives (BR-9), and one in the past changes what a month already run would now calculate.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the figure it supersedes and that the previous one is kept. A previous figure is never overwritten (BR-6, E8), so the history stays answerable.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never state the amount to an actor who may not see it. The salary and its history are visible only to the roles the visibility rule names (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the visibility contradiction where the acting role cannot see the salary section. BR-11 states plainly that the rule making the School Admin unable to see any salary and this feature making them the one who sets it cannot both hold, and that the use case cannot be built correctly until the school decides. Report it as the documented conflict it is, not as a permissions error.",
+          "derivedFrom": [
+            "BR-11",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. A figure found wrong is superseded by a new one with its own effective date and reason, and both stay (BR-6, BR-12)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye tankhwah manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this salary"
+          },
+          "context": "Principal, Johar Town branch, effective 1 October.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.approve",
+              "inputs": {
+                "salary_id": "$request.salary_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "In force from 1 October. Report that September's run still calculates from the previous figure (PR-2) — payroll reads the figure in force for the month it is running, not the latest one."
+        },
+        {
+          "request": {
+            "text": "maine tankhwah set ki thi, ab manzoor bhi kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I set the salary, I will approve it as well"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.approve",
+              "inputs": {
+                "salary_id": "$request.salary_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns SELF_APPROVAL (E3)."
+            }
+          ],
+          "outcome": "Not approved. Report that the configured approver — the Principal by default — approves what the setter recorded, and that the separation is the only check on what somebody is paid."
+        },
+        {
+          "request": {
+            "text": "manzoor kar do taake pichle mahine ki tankhwah bhi isi hisab se ban jaye",
+            "lang": "ur-Latn",
+            "gloss": "approve it so last month's salary is calculated at this figure too"
+          },
+          "context": "Principal, Johar Town branch, on a figure effective from October.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.approve",
+              "inputs": {
+                "salary_id": "$request.salary_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only. The effective date is not moved (PR-2)."
+            }
+          ],
+          "outcome": "In force from October. Report that September was paid on the figure in force then and this does not change it — a rise effective in August does not change what July was paid. Backdating would need a figure recorded with an earlier effective date, which is its own decision with its own approval."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-16-PC-4",
+      "intent": {
+        "name": "salary.return",
+        "summary": "Return a salary unapproved, with the reason. One step, and no figure comes into force.",
+        "routesHere": [
+          "return this salary — it is above the budget for the role",
+          {
+            "text": "ye tankhwah wapas bhej do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "return this salary with the reason"
+          },
+          {
+            "text": "figure manzoor nahi, dobara dekho",
+            "lang": "ur-Latn",
+            "gloss": "the figure is not approved, look again"
+          },
+          {
+            "text": "bajat se zyada hai, wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "it is above the budget, send it back"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tankhwah manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the salary"
+            },
+            "goesTo": "salary.approve — UC-12-16-PC-3"
+          },
+          {
+            "request": {
+              "text": "khud figure theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the figure yourself"
+            },
+            "goesTo": "salary.set — UC-12-16-PC-1",
+            "note": "Recording the figure is the setter's act under the configuration (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "salary.return",
+            "inputs": {
+              "salary_id": "$request.salary_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing comes into force and payroll still finds no figure for the months it would have covered (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. It goes back as a draft. The employee's pay for any month this would have covered is still unresolved — payroll does not pay on a proposal (BR-5), so a returned salary left unfixed is somebody unpaid."
+      },
+      "operations": [
+        {
+          "name": "salary.return",
+          "method": "POST",
+          "path": "/api/v1/salaries/{salary_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "salary_id, since a salary sits in one place at a time",
+          "purpose": "Return the salary unapproved with the reason.",
+          "parameters": [
+            {
+              "name": "salary_id",
+              "source": "resolved",
+              "sourceRef": "$request.salary_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "salary",
+                "fromPhrase": "$request.salary_phrase",
+                "onNoMatch": "Refuse. No salary record matches for that employee at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the effective date and the status — never the amounts, unless the actor holds the right to see them (BR-8)."
+              },
+              "notes": "The salary record, resolved from the employee and its effective date."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required to return a salary unapproved. The setter records again from it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "salary_id",
+                "type": "string",
+                "description": "The salary record."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It sits as a draft again."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The configured approver."
+              },
+              {
+                "name": "payroll_months_affected",
+                "type": "string[]",
+                "description": "Months that would run with no figure in force while this is unresolved (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "A salary was returned with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The salary is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. The setter records a figure again from it, and a reason a planner wrote sends somebody back to negotiate a salary on a guess.",
+          "derivedFrom": [
+            "BR-4",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the payroll months left with no figure. A returned salary that nobody resolves is an employee who is not paid at all for those months (BR-5, E4).",
+          "derivedFrom": [
+            "BR-5",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never record a corrected figure alongside the return. What somebody is paid is agreed with them, not adjusted by whoever refused it.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. A figure is recorded again and submitted, which is the route back."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye tankhwah wapas bhej do — post ki bajat se zyada hai",
+            "lang": "ur-Latn",
+            "gloss": "return this salary — it is above the budget for the post"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.return",
+              "inputs": {
+                "salary_id": "$request.salary_phrase",
+                "reason": "The figure is above the budget set for the role. Bring it within the range or set out the case for exceeding it.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the approver's own words (PR-1)."
+            }
+          ],
+          "outcome": "Returned as a draft. Report which payroll months would run with no figure in force while this is unresolved (PR-2) — the employee is not paid on a proposal."
+        },
+        {
+          "request": {
+            "text": "tankhwah wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return the salary"
+          },
+          "context": "Principal, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.return",
+              "inputs": {
+                "salary_id": "$request.salary_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what should change — a figure returned with no reason will come back the same, and meanwhile the employee has no salary in force."
+        },
+        {
+          "request": {
+            "text": "wapas bhej do aur 65,000 kar do",
+            "lang": "ur-Latn",
+            "gloss": "return it and make it 65,000"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.return",
+              "inputs": {
+                "salary_id": "$request.salary_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The return only. No corrected figure is recorded (PR-3)."
+            }
+          ],
+          "outcome": "Returned with the reason. Report that the setter records the figure under the configuration — what somebody is paid is agreed with them, and a number put in by whoever refused the last one has not been agreed with anybody."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-16-PC-5",
+      "intent": {
+        "name": "salary.change",
+        "summary": "Record a new figure that supersedes the current one from its effective date, with the reason. One step, and the previous figure is kept.",
+        "routesHere": [
+          "give her a rise to 80,000 from August",
+          {
+            "text": "August se tankhwah 80,000 kar do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "raise the salary to 80,000 from August, with the reason"
+          },
+          {
+            "text": "tankhwah mein izafa karna hai",
+            "lang": "ur-Latn",
+            "gloss": "we need to increase the salary"
+          },
+          {
+            "text": "naya figure record karo, purana rakh lo",
+            "lang": "ur-Latn",
+            "gloss": "record the new figure and keep the old one"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "purana figure badal do",
+              "lang": "ur-Latn",
+              "gloss": "overwrite the previous figure"
+            },
+            "goesTo": "Not offered.",
+            "note": "The previous figure is kept as history and is never overwritten. There is no such control (BR-6, E8)."
+          },
+          {
+            "request": {
+              "text": "pichle mahine ki tankhwah dobara banao",
+              "lang": "ur-Latn",
+              "gloss": "recalculate last month's salary"
+            },
+            "goesTo": "Not offered here.",
+            "note": "Payroll calculates from the figure in force for the month being run. A rise effective in August does not change what July was paid (BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "salary.change",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "new_amount": "$request.new_amount",
+              "effective_from": "$request.effective_from",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The new figure's effective date closes the previous one, and the previous figure is kept as history (BR-6, BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. An overlap with a figure already in force, and a change with no reason, both arrive as errors.",
+        "atomicity": "One write: the new figure, its effective date, its reason and the closure of the previous one together or not at all. **It is not in force until approved** (BR-5). An effective date may be in the future, so a rise agreed in June and effective in August is recorded once and takes effect by itself (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "salary.change",
+          "method": "POST",
+          "path": "/api/v1/staff/{staff_id}/salary/changes",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff_id + effective_from, since one figure covers one effective date",
+          "purpose": "Record a new salary figure superseding the current one from its effective date.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation and joining date."
+              },
+              "notes": "The employee."
+            },
+            {
+              "name": "new_amount",
+              "source": "request",
+              "sourceRef": "$request.new_amount",
+              "required": true,
+              "type": "money",
+              "notes": "The new monthly amount. What the school and the employee agreed — never derived from a percentage, the budget, or the previous figure."
+            },
+            {
+              "name": "effective_from",
+              "source": "request",
+              "sourceRef": "$request.effective_from",
+              "required": true,
+              "type": "date",
+              "notes": "The date the new figure takes effect and the previous one closes (BR-10). May be in the future (BR-9)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters. Required for a change to an approved salary (BR-6, E5). It stays beside the previous figure in the history."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The change as recorded.",
+            "fields": [
+              {
+                "name": "salary_id",
+                "type": "string",
+                "description": "The new salary record."
+              },
+              {
+                "name": "previous_amount",
+                "type": "money",
+                "description": "The figure it replaces, kept as history and never overwritten (BR-6)."
+              },
+              {
+                "name": "new_amount",
+                "type": "money",
+                "description": "As agreed."
+              },
+              {
+                "name": "daily_rate",
+                "type": "money",
+                "description": "Derived from the new monthly amount, not typed (BR-3)."
+              },
+              {
+                "name": "effective_from",
+                "type": "date",
+                "description": "When it takes effect and the previous one closes (BR-10)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. Not in force until approved (BR-5)."
+              },
+              {
+                "name": "months_unaffected",
+                "type": "string[]",
+                "description": "Months already paid at the previous figure, which this does not change (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "A change was submitted with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            },
+            {
+              "code": "OVERLAPS_IN_FORCE",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The new effective date overlaps a figure already in force.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "Two figures may not have overlapping effective periods (BR-10)."
+            },
+            {
+              "code": "EFFECTIVE_BEFORE_JOINING",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "The effective date is before the employee's joining date.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            },
+            {
+              "code": "VISIBILITY_CONTRADICTION",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The acting role cannot see the salary section but is configured to set it.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "The documented conflict (BR-11)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never calculate the new amount. A percentage rise worked out in a plan is a salary the school never agreed, and it is paid every month until somebody changes it.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the reason. It stays beside the previous figure in the history (BR-6), and it is what answers a question about a rise years later.",
+          "derivedFrom": [
+            "BR-6",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never present the change as backdating pay. Payroll calculates from the figure in force for the month being run — a rise effective in August does not change what July was paid (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never overwrite the previous figure. There is no such control, and the history is what makes every change traceable to a date and an approver (BR-6, E8).",
+          "derivedFrom": [
+            "BR-6",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that it is not in force until approved. A change recorded and left unapproved leaves the old figure running (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report the visibility contradiction where the acting role cannot see the salary section. BR-11 states plainly that the rule making the School Admin unable to see any salary and this feature making them the one who sets it cannot both hold, and that the use case cannot be built correctly until the school decides. Report it as the documented conflict it is, not as a permissions error.",
+          "derivedFrom": [
+            "BR-11",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A salary is never deleted (BR-12). A change recorded in error is returned unapproved, or superseded in turn — and every figure stays in the history."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "August se in ki tankhwah 80,000 kar do — salana izafa",
+            "lang": "ur-Latn",
+            "gloss": "raise their salary to 80,000 from August — the annual increment"
+          },
+          "context": "School Admin, Johar Town branch, in June.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.change",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "new_amount": "80000",
+                "effective_from": "2026-08-01",
+                "reason": "Annual increment agreed at the June review.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The figure, the date and the reason are all the School Admin's (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Recorded in Draft, effective from August. Report that June and July are still paid at the previous figure (PR-3), that the old figure is kept in the history (PR-4), and that it takes effect by itself in August once approved."
+        },
+        {
+          "request": {
+            "text": "sab ustadon ki tankhwah 10 percent barha do",
+            "lang": "ur-Latn",
+            "gloss": "increase every teacher's salary by 10 percent"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.change",
+              "inputs": {
+                "staff_id": "$request.staff_phrase — one employee at a time",
+                "new_amount": "$request.new_amount — a computed figure",
+                "effective_from": "$request.effective_from",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Each new amount is a figure agreed with a person, not arithmetic on the last one (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that each employee's new figure is recorded and approved on its own, with its own reason — a ten per cent rise applied across a list is a salary nobody agreed with any of them, paid every month until somebody notices."
+        },
+        {
+          "request": {
+            "text": "tankhwah barha do aur pichle do mahine ka farq bhi de do",
+            "lang": "ur-Latn",
+            "gloss": "raise the salary and pay the difference for the last two months"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "salary.change",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "new_amount": "$request.new_amount",
+                "effective_from": "$request.effective_from",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The new figure only. Nothing recalculates the months already paid (PR-3)."
+            }
+          ],
+          "outcome": "Recorded. Report that payroll reads the figure in force for each month it runs, so the two months already paid stand as they were — paying the difference is a decision somebody takes in payroll, with a reason of its own, rather than a consequence of the rise."
+        }
+      ]
+    }
+  ]
+}

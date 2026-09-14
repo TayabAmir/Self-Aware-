@@ -1,0 +1,2286 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-14-11",
+    "name": "Declare the day the school holds its parent-teacher meeting, cancel the teaching for it, and notify everyone",
+    "module": "Communication",
+    "file": "../UseCases/UC-14-11.json",
+    "featureRef": "14.11 School-wide parent-teacher meeting"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-14-11-PC-1",
+      "intent": {
+        "name": "meetingday.declare",
+        "summary": "Declare the day of the school-wide parent-teacher meeting, and send it to the Principal for approval.",
+        "routesHere": [
+          "declare the parent-teacher meeting for 12 December, two till five, for Grades 9 and 10",
+          {
+            "text": "12 December ko parent-teacher meeting rakhni hai, do se paanch baje tak",
+            "lang": "ur-Latn",
+            "gloss": "we want to hold the parent-teacher meeting on 12 December, from two to five"
+          },
+          {
+            "text": "PTM ka din declare kar dein grade 9 aur 10 ke liye",
+            "lang": "ur-Latn",
+            "gloss": "please declare the PTM day for grades 9 and 10"
+          },
+          {
+            "text": "saare school ki parent teacher meeting ka elan karna hai",
+            "lang": "ur-Latn",
+            "gloss": "we want to announce the parent-teacher meeting for the whole school"
+          },
+          "set up the PTM day for next Friday"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mujhe apni baari book karni hai",
+              "lang": "ur-Latn",
+              "gloss": "I want to book my turn"
+            },
+            "goesTo": "Not offered. For a meeting with one teacher, meeting.request.submit — UC-14-08.",
+            "note": "No slot is booked and no appointment is made. Families attend during the announced window and see the teachers who are present (BR-10, E12, AC-12). A meeting between one guardian and one teacher does carry a slot, and it is the on-demand meeting."
+          },
+          {
+            "request": {
+              "text": "us din chutti kar do",
+              "lang": "ur-Latn",
+              "gloss": "declare a holiday that day"
+            },
+            "goesTo": "The off-day and holiday calendar — UC-05-04.",
+            "note": "A meeting day is not a closure. It cancels teaching for the classes taking part and expects the teachers to be there (BR-3, BR-4) — a class not taking part teaches as normal (BR-6)."
+          },
+          {
+            "request": {
+              "text": "abhi calendar mein mark kar do",
+              "lang": "ur-Latn",
+              "gloss": "mark it in the calendar now"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nothing is marked in the calendar and nobody is notified before the Principal approves it, since a meeting day cancels a day's teaching (BR-2, E6)."
+          },
+          {
+            "request": {
+              "text": "ek teacher se alag mulaqat karni hai",
+              "lang": "ur-Latn",
+              "gloss": "I want a separate meeting with one teacher"
+            },
+            "goesTo": "meeting.request.submit — UC-14-08.",
+            "note": "That is the everyday case, and it carries a slot the teacher chooses. This declares a day for everybody."
+          },
+          {
+            "request": {
+              "text": "website pe bhi laga dein",
+              "lang": "ur-Latn",
+              "gloss": "put it on the website as well"
+            },
+            "goesTo": "website.item.write — UC-28-01.",
+            "note": "Publishing the meeting on the school website is a separate act, and whether the school does it at all is an open question here (OQ-5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meetingday.declare",
+            "inputs": {
+              "date": "$request.date",
+              "start_time": "$request.start_time",
+              "end_time": "$request.end_time",
+              "class_ids": "$request.classes_phrase",
+              "where_to_attend": "$request.where_to_attend",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step, and it stops at the Principal. The declaration is checked against the calendar and reports how many lectures will not run, but nothing is marked and nobody is told (BR-2, AC-1)."
+          }
+        ],
+        "onFailure": "Stop and report. A date the school is already closed on, a date in the past, a window that ends before it begins, no class or no place to attend — each refuses the declaration and none of them half-declares it.",
+        "atomicity": "One write: the declaration, awaiting the Principal. Nothing else happens — the calendar is untouched, every lecture still stands, attendance is still expected and no teacher or guardian has been told (BR-2, E6, AC-1)."
+      },
+      "operations": [
+        {
+          "name": "meetingday.declare",
+          "method": "POST",
+          "path": "/api/v1/meeting-days",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "date + the classes + branch, so a double press does not put two declarations for the same day in front of the Principal",
+          "purpose": "Declare a parent-teacher meeting day and submit it for the Principal's approval.",
+          "parameters": [
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": true,
+              "type": "date",
+              "notes": "The day of the meeting. A day the school would otherwise be open (E1, A7) and not in the past (E2)."
+            },
+            {
+              "name": "start_time",
+              "source": "request",
+              "sourceRef": "$request.start_time",
+              "required": true,
+              "type": "datetime",
+              "notes": "When families may start arriving. 24-hour, per the conventions (BR-2)."
+            },
+            {
+              "name": "end_time",
+              "source": "request",
+              "sourceRef": "$request.end_time",
+              "required": true,
+              "type": "datetime",
+              "notes": "When the window closes. After the start (E3)."
+            },
+            {
+              "name": "class_ids",
+              "source": "resolved",
+              "sourceRef": "$request.classes_phrase",
+              "required": true,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.classes_phrase",
+                "onNoMatch": "Refuse. No such class this session.",
+                "onAmbiguous": "Ask, naming the candidates with their sections and how many guardians each carries."
+              },
+              "notes": "The classes taking part — the whole school or particular classes (BR-1, A1). Never widened: a class added here loses a day's teaching and a day's attendance (BR-6, AC-8)."
+            },
+            {
+              "name": "where_to_attend",
+              "source": "request",
+              "sourceRef": "$request.where_to_attend",
+              "required": true,
+              "type": "string",
+              "notes": "10 to 500 characters, the school's own words. Where families are to come, and it goes out with the notification (BR-7, E5) — a family told the date and not the door arrives at the wrong gate."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The declaration, and what approving it would cost.",
+            "fields": [
+              {
+                "name": "meeting_day_id",
+                "type": "string",
+                "description": "The declaration."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. Nothing is marked and nobody is told (BR-2)."
+              },
+              {
+                "name": "lectures_not_running",
+                "type": "integer",
+                "description": "The lectures scheduled for that day and those classes, which would stop (BR-4). This is what the Principal reviews."
+              },
+              {
+                "name": "teachers_affected",
+                "type": "integer",
+                "description": "Teachers holding those lectures, who would be notified and expected to attend."
+              },
+              {
+                "name": "guardians_to_notify",
+                "type": "integer",
+                "description": "Guardians of students in the classes taking part."
+              },
+              {
+                "name": "classes_not_taking_part",
+                "type": "object[]",
+                "description": "Classes that would teach as normal that day, with their attendance taken as on any other day (BR-6, AC-8)."
+              },
+              {
+                "name": "teachers_double_booked",
+                "type": "object[]",
+                "description": "Teachers holding a lecture that day for a class not taking part, which still runs. Whether they are expected in two places at once is an open question this use case raises and does not answer (BR-6, OQ-2)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DATE_IS_CLOSED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The date is already a holiday or an off-day.",
+              "written": "Nothing.",
+              "notWritten": "The meeting is not declared.",
+              "note": "A meeting day cancels teaching that would otherwise happen, so a day the school is already shut cannot be one (A7)."
+            },
+            {
+              "code": "DATE_IN_PAST",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The date is in the past.",
+              "written": "Nothing.",
+              "notWritten": "The meeting is not declared."
+            },
+            {
+              "code": "WINDOW_INVERTED",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The end time is before the start time.",
+              "written": "Nothing.",
+              "notWritten": "The meeting is not declared."
+            },
+            {
+              "code": "NO_CLASS_SELECTED",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No class was selected.",
+              "written": "Nothing.",
+              "notWritten": "The meeting is not declared.",
+              "note": "The classes taking part are the whole of what the day applies to (BR-1)."
+            },
+            {
+              "code": "NO_PLACE_TO_ATTEND",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "No place to attend was entered.",
+              "written": "Nothing.",
+              "notWritten": "The meeting is not declared.",
+              "note": "It is sent with the notification, and a family told when but not where does not arrive (BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never widen the classes. A class added to the declaration loses a day's teaching and a day's attendance, and a class left off teaches as normal — the difference is the whole design (BR-1, BR-6, AC-8).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-6",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never write where families are to come. It is the school's own wording, it goes out with the notification, and a family told the date but not the door arrives at the wrong gate (BR-7, E5).",
+          "derivedFrom": [
+            "BR-7",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the lectures that would stop before anybody approves anything. That is what the Principal is approving — not a date, but a day of teaching cancelled for those classes (BR-4, AC-3).",
+          "derivedFrom": [
+            "BR-4",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that nothing has happened yet. A declaration submitted is not a meeting declared: the calendar is untouched, the lectures still stand and no family has been told (BR-2, E6, AC-1).",
+          "derivedFrom": [
+            "BR-2",
+            "E6",
+            "AC-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Name the teachers who would be in two places. A teacher holding a lecture that day for a class not taking part still has to teach it, and nothing here resolves the clash with the meeting window (BR-6, OQ-2).",
+          "derivedFrom": [
+            "BR-6",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never offer to hold it outside teaching hours as a way of keeping the lectures. The declaration always suspends the day's lectures for the classes taking part, and whether the school could do otherwise is unanswered (OQ-3).",
+          "derivedFrom": [
+            "OQ-3"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "meetingday.return",
+        "statement": "Nothing has to be undone, because nothing was done. A declaration the Principal does not approve is returned with a reason, and the calendar, the timetable, the attendance and every family are exactly as they were (BR-2, A2)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "12 December ko PTM rakhni hai, do se paanch, grade 9 aur 10 ke liye, main hall mein",
+            "lang": "ur-Latn",
+            "gloss": "we want the PTM on 12 December, two to five, for grades 9 and 10, in the main hall"
+          },
+          "context": "School Admin, Johar Town branch, current session.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.declare",
+              "inputs": {
+                "date": "12 December",
+                "start_time": "14:00",
+                "end_time": "17:00",
+                "class_ids": "$request.classes_phrase → Grade 9, Grade 10",
+                "where_to_attend": "as they gave it — the main hall",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Only the classes they named (PR-1)."
+            }
+          ],
+          "outcome": "Report what the Principal will be approving: 48 lectures that will not run, 14 teachers expected, 312 guardians to be told — and that none of it happens until the approval. Add the two things the screen does not show: Grade 7 teaches as normal that day and its attendance is taken, and any teacher holding a Grade 7 lecture in the afternoon is expected in two places at once."
+        },
+        {
+          "request": {
+            "text": "agle Friday ko parent teacher meeting kar dein poore school ki",
+            "lang": "ur-Latn",
+            "gloss": "hold a parent-teacher meeting for the whole school next Friday"
+          },
+          "context": "School Admin, with next Friday already marked as a public holiday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.declare",
+              "inputs": {
+                "date": "next Friday",
+                "start_time": "$request.start_time — absent",
+                "end_time": "$request.end_time — absent",
+                "class_ids": "every active class",
+                "where_to_attend": "$request.where_to_attend — absent",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Refused on the date before anything else is asked for."
+            }
+          ],
+          "outcome": "Report that the school is already closed that day, so there is no teaching to cancel and a meeting day cannot be declared on it. Ask for a working date, the window, and where families are to come — the last is required and goes out in the message, and a family told when but not where does not arrive."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-11-PC-2",
+      "intent": {
+        "name": "meetingday.approve",
+        "summary": "Approve the declaration. This is the act that cancels the teaching, stops the attendance and tells every family.",
+        "routesHere": [
+          "approve the parent-teacher meeting for 12 December",
+          {
+            "text": "12 December wali PTM manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "please approve the PTM on 12 December"
+          },
+          {
+            "text": "meeting day approve kar do, sab ko itla chali jaye",
+            "lang": "ur-Latn",
+            "gloss": "approve the meeting day, let everyone be told"
+          },
+          "sign off the PTM declaration waiting for me"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mujhe apni baari book karni hai",
+              "lang": "ur-Latn",
+              "gloss": "I want to book my turn"
+            },
+            "goesTo": "Not offered. For a meeting with one teacher, meeting.request.submit — UC-14-08.",
+            "note": "No slot is booked and no appointment is made. Families attend during the announced window and see the teachers who are present (BR-10, E12, AC-12)."
+          },
+          {
+            "request": {
+              "text": "approve to kar dein lekin abhi kisi ko na batayein",
+              "lang": "ur-Latn",
+              "gloss": "approve it but do not tell anybody yet"
+            },
+            "goesTo": "Not offered.",
+            "note": "Approving is what notifies. The calendar marking, the lectures stopping, the attendance being suspended and the messages to teachers and guardians are one act (BR-2, BR-3, BR-7)."
+          },
+          {
+            "request": {
+              "text": "manzoor nahi karna, wapas bhej dein",
+              "lang": "ur-Latn",
+              "gloss": "do not approve it, send it back"
+            },
+            "goesTo": "meetingday.return — this use case.",
+            "note": "A return carries a reason and nothing is marked or notified (A2)."
+          },
+          {
+            "request": {
+              "text": "sirf teachers ko batayein, walidain ko nahi",
+              "lang": "ur-Latn",
+              "gloss": "tell the teachers only, not the guardians"
+            },
+            "goesTo": "Not offered.",
+            "note": "Teachers and guardians of the classes taking part are both notified, and the guardians are the reason the day exists (BR-7, AC-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meetingday.approve",
+            "inputs": {
+              "meeting_day_id": "$request.meeting_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step with five consequences: the day is marked for those classes alone, their lectures stop, no cover is raised, no attendance is expected, and the teachers and guardians are told (BR-3, BR-4, BR-5, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. Nothing is marked before the approval is recorded, and a notification that fails is reported rather than assumed — a family not told arrives on an ordinary day, or does not arrive at all.",
+        "atomicity": "One act with five effects, and they hold together or not at all: the calendar marking for the classes taking part, the lectures suspended with no substitution cover raised (BR-4, E7), the attendance expectation removed (BR-5, E8, E9), the teachers notified and the guardians notified (BR-7). A partial application leaves a day that teaches nothing and marks everybody absent."
+      },
+      "operations": [
+        {
+          "name": "meetingday.approve",
+          "method": "POST",
+          "path": "/api/v1/meeting-days/{meeting_day_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "meeting_day_id, since a declaration carries one approval and a repeat must not message every guardian a second time",
+          "purpose": "Approve a declaration, mark the day, suspend the lectures and the attendance, and notify everybody.",
+          "parameters": [
+            {
+              "name": "meeting_day_id",
+              "source": "resolved",
+              "sourceRef": "$request.meeting_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "meeting_day",
+                "fromPhrase": "$request.meeting_phrase",
+                "onNoMatch": "Refuse. No meeting day matches. Name it by its date.",
+                "onAmbiguous": "Ask, naming the meeting days that match with their dates, windows and the classes taking part."
+              },
+              "notes": "The declared meeting, named by its date or by the classes taking part."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What the approval changed, class by class.",
+            "fields": [
+              {
+                "name": "meeting_day_id",
+                "type": "string",
+                "description": "The declaration."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Declared."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The Principal. The School Admin who declared it cannot approve it (BR-2)."
+              },
+              {
+                "name": "calendar_marked_for",
+                "type": "object[]",
+                "description": "The classes the day is marked for. It is not a school-wide closure (BR-3, AC-2)."
+              },
+              {
+                "name": "lectures_suspended",
+                "type": "integer",
+                "description": "Lectures that will not run, with no substitution cover raised for any of them (BR-4, E7, AC-4)."
+              },
+              {
+                "name": "attendance_suspended_for",
+                "type": "object[]",
+                "description": "Classes for which no record is expected that day. No student is marked absent, no absence alert is sent, and the day counts in no attendance percentage and in no chronic absence figure (BR-5, E8, E9, AC-5, AC-6, AC-7)."
+              },
+              {
+                "name": "classes_unaffected",
+                "type": "object[]",
+                "description": "Classes not taking part. Their lectures run and their attendance is taken as on any other day (BR-6, AC-8)."
+              },
+              {
+                "name": "teachers_notified",
+                "type": "integer",
+                "description": "Teachers holding the suspended lectures, told which of their lectures will not run (BR-7)."
+              },
+              {
+                "name": "guardians_notified",
+                "type": "integer",
+                "description": "Guardians of students in the classes taking part, told the date, the window and where to attend (BR-7, AC-9)."
+              },
+              {
+                "name": "unreachable_guardians",
+                "type": "object[]",
+                "description": "Guardians the messaging module could not reach. They will not know the day has changed and will send their children as usual."
+              },
+              {
+                "name": "staff_attendance_unchanged",
+                "type": "boolean",
+                "description": "True. Nothing here decides whether a meeting day is a working day for staff attendance, and the use case does not say (OQ-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_THE_APPROVER",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The acting user is not the Principal.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is marked, no lecture is suspended and nobody is told.",
+              "note": "The School Admin declares and cannot approve (BR-2), but the use case writes no exception for the attempt — its only approval exception is E6, which is about the calendar being marked rather than about who acts."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say what approving does before it is done. It is not a sign-off — it cancels a day of teaching for those classes, suspends their attendance, and messages every guardian in them at once (BR-2, BR-3, BR-7).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never let it read as a school closure. The day is marked for the classes taking part alone; a class not taking part teaches as normal and its attendance is taken (BR-3, BR-6, AC-8).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-6",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the day counts against nobody. No record is expected, no student is marked absent, no absence alert goes out, and the day is excluded from every attendance percentage and from the chronic absence figures — a day nobody was asked to attend must not count against anybody (BR-5, AC-7).",
+          "derivedFrom": [
+            "BR-5",
+            "E8",
+            "E9",
+            "AC-5",
+            "AC-6",
+            "AC-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that no substitution cover is raised. A teacher meeting parents is not absent from a lecture that is not happening, and cover raised for one would put a substitute in an empty room (BR-4, E7, AC-4).",
+          "derivedFrom": [
+            "BR-4",
+            "E7",
+            "AC-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the guardians the messaging module could not reach. They will send their children on a day the school is not teaching them, and nothing else in this use case notices (BR-7, AC-9).",
+          "derivedFrom": [
+            "BR-7",
+            "AC-9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never claim anything about staff attendance. Teachers attend, but whether a meeting day is a working day for them is an open question the use case raises and does not answer (OQ-1).",
+          "derivedFrom": [
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "meetingday.cancel",
+        "statement": "The reversal has to be complete: cancelling restores the timetable for that day, unmarks the calendar, restores the attendance expectation and notifies everybody who was told (BR-9, AC-11). A partial reversal leaves a day that teaches nothing and marks nobody — which is why cancelling is one act too."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "12 December wali PTM manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "please approve the PTM on 12 December"
+          },
+          "context": "Principal, all branches, declaration awaiting approval for Grades 9 and 10.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.approve",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → 12 December, Grades 9 and 10",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One act, five effects (PR-1)."
+            }
+          ],
+          "outcome": "Say first what this does: 48 lectures stop, 14 teachers are expected, 312 guardians are messaged now, and nobody in Grades 9 or 10 is marked absent or counted for that day. After: report the guardians who could not be reached — they will send their children as usual — and that Grade 7 is unaffected and teaches normally."
+        },
+        {
+          "request": {
+            "text": "maine declare ki thi, ab khud hi approve kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I declared it, now I will approve it myself"
+          },
+          "context": "School Admin, Johar Town branch, their own declaration awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.approve",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → their own declaration",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused. The School Admin declares and the Principal approves (PR-1 states what the approval does; BR-2 keeps the two hands apart)."
+            }
+          ],
+          "outcome": "Report that approving is the Principal's, and that this is the check itself rather than a permissions problem — the approval is what cancels a day of teaching and messages every family, which is why the person who chose the date is not the person who confirms it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-11-PC-3",
+      "intent": {
+        "name": "meetingday.return",
+        "summary": "Send a declaration back unapproved, with a reason. Nothing was marked and nobody was told.",
+        "routesHere": [
+          "return the PTM declaration — the 12th clashes with the board exams",
+          {
+            "text": "ye declaration wapas bhej dein, us din board ke papers hain",
+            "lang": "ur-Latn",
+            "gloss": "send this declaration back, there are board papers that day"
+          },
+          {
+            "text": "manzoor nahi kar sakta, wajah likh kar wapas kar dein",
+            "lang": "ur-Latn",
+            "gloss": "I cannot approve it, please return it with the reason"
+          },
+          "send the meeting day back to be redated"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "approve kar dein",
+              "lang": "ur-Latn",
+              "gloss": "approve it"
+            },
+            "goesTo": "meetingday.approve — this use case.",
+            "note": "The other answer, and it is the one that cancels the teaching and messages every family."
+          },
+          {
+            "request": {
+              "text": "main khud tareekh badal deta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I will change the date myself"
+            },
+            "goesTo": "Not offered.",
+            "note": "The Principal returns; the School Admin declares. The date, the window and the classes are the declarer's (BR-1), and an approver who sets them has approved their own declaration."
+          },
+          {
+            "request": {
+              "text": "declare shuda meeting hata dein",
+              "lang": "ur-Latn",
+              "gloss": "take down a meeting that is already declared"
+            },
+            "goesTo": "meetingday.cancel — this use case.",
+            "note": "A return is for a declaration that never reached anybody. Cancelling is for one families have already been told about, and it needs everybody told again (BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meetingday.return",
+            "inputs": {
+              "meeting_day_id": "$request.meeting_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The declaration goes back to the School Admin with the reason, and the calendar, the timetable, the attendance and every family are exactly as they were (A2)."
+          }
+        ],
+        "onFailure": "Stop and report. A return with no reason is not sent — the declarer would have nothing to correct.",
+        "atomicity": "One state change and one notification. Nothing was marked before it and nothing is marked after it, which is the whole reason the approval sits where it does (BR-2, AC-1)."
+      },
+      "operations": [
+        {
+          "name": "meetingday.return",
+          "method": "POST",
+          "path": "/api/v1/meeting-days/{meeting_day_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "meeting_day_id, since a declaration carries one decision at a time and a repeat is the same return",
+          "purpose": "Return a declaration to the School Admin unapproved, with the reason.",
+          "parameters": [
+            {
+              "name": "meeting_day_id",
+              "source": "resolved",
+              "sourceRef": "$request.meeting_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "meeting_day",
+                "fromPhrase": "$request.meeting_phrase",
+                "onNoMatch": "Refuse. No meeting day matches. Name it by its date.",
+                "onAmbiguous": "Ask, naming the meeting days that match with their dates, windows and the classes taking part."
+              },
+              "notes": "The declared meeting, named by its date or by the classes taking part."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters, the approver's own. Required to return a declaration — it is what the School Admin has to act on, and a date returned without one comes back the same."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Where the declaration sits and what the declarer was told.",
+            "fields": [
+              {
+                "name": "meeting_day_id",
+                "type": "string",
+                "description": "The declaration."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It goes back for correction and resubmission."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "Who returned it."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "What they said, in their own words."
+              },
+              {
+                "name": "nothing_marked",
+                "type": "boolean",
+                "description": "True. No calendar marking, no lecture suspended, no attendance changed and no family told (BR-2, AC-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": null,
+              "httpStatus": 400,
+              "meaning": "No reason was given.",
+              "written": "Nothing.",
+              "notWritten": "The declaration is not returned.",
+              "note": "The data field makes the reason required, but the use case writes no exception for its absence — unlike a cancellation, which has one (E10). The asymmetry is in the document, not here."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. It is what the School Admin has to act on, and \"choose another date\" without saying why sends the same declaration back a second time (A2).",
+          "derivedFrom": [
+            "A2",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that nothing reached anybody. A returned declaration marked no calendar, stopped no lecture and messaged no family — which is why the Principal approving rather than reviewing afterwards is the design (BR-2, AC-1).",
+          "derivedFrom": [
+            "BR-2",
+            "AC-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never redate or reclass the declaration on the approver's behalf. The date, the window and the classes taking part are the School Admin's (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "meetingday.revise",
+        "statement": "The School Admin corrects it and submits it again. Nothing was undone because nothing was done."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "wapas bhej dein, 12 tareekh ko board ke papers hain",
+            "lang": "ur-Latn",
+            "gloss": "send it back, there are board papers on the 12th"
+          },
+          "context": "Principal, all branches, declaration awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.return",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → the 12 December declaration",
+                "return_reason": "as the Principal put it — the 12th clashes with the board examination timetable",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words, carried whole (PR-1)."
+            }
+          ],
+          "outcome": "Report that it is back with the School Admin and that no lecture was stopped and no family was told, so there is nothing to correct publicly. The date is theirs to choose again."
+        },
+        {
+          "request": "return it, it won't work",
+          "context": "Principal, declaration awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.return",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → the declaration awaiting approval",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The reason is required and is not ours to supply (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is returned. Ask what is wrong with it — the date, the window, the classes or the place — because the School Admin gets only the reason, and a declaration returned without one comes back unchanged."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-11-PC-4",
+      "intent": {
+        "name": "meetingday.revise",
+        "summary": "Correct a returned declaration and put it back in front of the Principal.",
+        "routesHere": [
+          "change the PTM to the 19th and resubmit it",
+          {
+            "text": "declaration theek karke dobara bhej dein",
+            "lang": "ur-Latn",
+            "gloss": "correct the declaration and send it again"
+          },
+          {
+            "text": "tareekh 19 kar dein aur approval ke liye dobara bhejein",
+            "lang": "ur-Latn",
+            "gloss": "make the date the 19th and send it for approval again"
+          },
+          "fix the returned meeting day and send it back up"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye meeting record se mita dein",
+              "lang": "ur-Latn",
+              "gloss": "erase this meeting from the record"
+            },
+            "goesTo": "Not offered.",
+            "note": "A declared meeting is never deleted. A cancelled or moved meeting stays on the record with its reason, because families were told about it (BR-11, E11, AC-13)."
+          },
+          {
+            "request": {
+              "text": "declare shuda meeting ki tareekh badalni hai",
+              "lang": "ur-Latn",
+              "gloss": "I want to change the date of a meeting already declared"
+            },
+            "goesTo": "meetingday.move — this use case.",
+            "note": "A returned declaration reached nobody. A declared one has been sent to every family, so moving it restores that day's timetable and tells everybody again (BR-9)."
+          },
+          {
+            "request": {
+              "text": "nayi declaration bana dein",
+              "lang": "ur-Latn",
+              "gloss": "make a new declaration"
+            },
+            "goesTo": "meetingday.declare — this use case.",
+            "note": "A returned declaration is corrected rather than replaced, since it stays on the record with the reason it was returned (BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meetingday.revise",
+            "inputs": {
+              "meeting_day_id": "$request.meeting_phrase",
+              "date": "$request.date",
+              "start_time": "$request.start_time",
+              "end_time": "$request.end_time",
+              "class_ids": "$request.classes_phrase",
+              "where_to_attend": "$request.where_to_attend",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Only what changed is sent, and the declaration goes back to Awaiting approval — the same checks run on it as on a first declaration (E1, E2, E3)."
+          }
+        ],
+        "onFailure": "Stop and report. A corrected date that is a holiday, in the past, or a window that ends before it begins refuses the correction, and the declaration stays returned.",
+        "atomicity": "One write and one state change. Nothing is marked and nobody is told — a corrected declaration is still a declaration awaiting approval (BR-2, AC-1)."
+      },
+      "operations": [
+        {
+          "name": "meetingday.revise",
+          "method": "PATCH",
+          "path": "/api/v1/meeting-days/{meeting_day_id}",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "meeting_day_id + the fields submitted, so a repeat does not put the declaration in front of the Principal twice",
+          "purpose": "Correct a returned declaration and resubmit it for approval.",
+          "parameters": [
+            {
+              "name": "meeting_day_id",
+              "source": "resolved",
+              "sourceRef": "$request.meeting_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "meeting_day",
+                "fromPhrase": "$request.meeting_phrase",
+                "onNoMatch": "Refuse. No meeting day matches. Name it by its date.",
+                "onAmbiguous": "Ask, naming the meeting days that match with their dates, windows and the classes taking part."
+              },
+              "notes": "The declared meeting, named by its date or by the classes taking part."
+            },
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": false,
+              "type": "date",
+              "notes": "The corrected date, where the date is what was wrong. A working day and not in the past (E1, E2)."
+            },
+            {
+              "name": "start_time",
+              "source": "request",
+              "sourceRef": "$request.start_time",
+              "required": false,
+              "type": "datetime",
+              "notes": "The corrected start of the window."
+            },
+            {
+              "name": "end_time",
+              "source": "request",
+              "sourceRef": "$request.end_time",
+              "required": false,
+              "type": "datetime",
+              "notes": "The corrected end. After the start (E3)."
+            },
+            {
+              "name": "class_ids",
+              "source": "resolved",
+              "sourceRef": "$request.classes_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.classes_phrase",
+                "onNoMatch": "Refuse. No such class this session.",
+                "onAmbiguous": "Ask, naming the candidates with their sections and how many guardians each carries."
+              },
+              "notes": "The classes taking part, where the correction changes them. Never widened: a class added loses a day's teaching and a day's attendance (BR-1, BR-6)."
+            },
+            {
+              "name": "where_to_attend",
+              "source": "request",
+              "sourceRef": "$request.where_to_attend",
+              "required": false,
+              "type": "string",
+              "notes": "The corrected place, in the school's own words. It goes out with the notification (BR-7)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What changed and what approving it would now cost.",
+            "fields": [
+              {
+                "name": "meeting_day_id",
+                "type": "string",
+                "description": "The declaration."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval, again."
+              },
+              {
+                "name": "changed",
+                "type": "object[]",
+                "description": "What was corrected, before and after."
+              },
+              {
+                "name": "lectures_not_running",
+                "type": "integer",
+                "description": "The lectures that would stop on the corrected date, which is not the same figure as before if the date or the classes changed (BR-4)."
+              },
+              {
+                "name": "guardians_to_notify",
+                "type": "integer",
+                "description": "Guardians of the classes taking part."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "Why it came back, kept on the record alongside the correction."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DATE_IS_CLOSED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The corrected date is a holiday or an off-day.",
+              "written": "Nothing.",
+              "notWritten": "The correction is not saved and the declaration stays returned."
+            },
+            {
+              "code": "DATE_IN_PAST",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The corrected date is in the past.",
+              "written": "Nothing.",
+              "notWritten": "The correction is not saved."
+            },
+            {
+              "code": "WINDOW_INVERTED",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The corrected end time is before the start time.",
+              "written": "Nothing.",
+              "notWritten": "The correction is not saved."
+            },
+            {
+              "code": "NO_PLACE_TO_ATTEND",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The place to attend was cleared rather than corrected.",
+              "written": "Nothing.",
+              "notWritten": "The correction is not saved.",
+              "note": "It goes out with the notification, and a family told when but not where does not arrive (BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Correct only what the return asked about. The reason the Principal gave is the scope of the correction, and a declaration quietly reclassed on the way back is a different declaration (BR-1, A2).",
+          "derivedFrom": [
+            "BR-1",
+            "A2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the new figure for lectures not running. A date moved from a Friday to a Monday, or a class added, changes what the Principal is approving even where nothing else did (BR-4, AC-3).",
+          "derivedFrom": [
+            "BR-4",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that it is still unapproved. A corrected declaration has reached nobody, and the calendar, the timetable and the attendance are untouched until the Principal approves it (BR-2, AC-1).",
+          "derivedFrom": [
+            "BR-2",
+            "AC-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never widen the classes while correcting. A class added here loses a day's teaching, and it was not what the return was about (BR-1, BR-6).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "meetingday.return",
+        "statement": "The Principal can return it again, with another reason, and nothing has reached anybody either time (A2)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "tareekh 19 kar dein aur approval ke liye dobara bhej dein",
+            "lang": "ur-Latn",
+            "gloss": "make the date the 19th and send it for approval again"
+          },
+          "context": "School Admin, Johar Town branch, declaration returned because the 12th clashed with the board papers.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.revise",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → the returned 12 December declaration",
+                "date": "19 December",
+                "start_time": "unchanged",
+                "end_time": "unchanged",
+                "class_ids": "unchanged — Grade 9 and Grade 10",
+                "where_to_attend": "unchanged",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the date, which is what the return was about (PR-1)."
+            }
+          ],
+          "outcome": "Report the corrected date and the new count of lectures that would stop — the 19th is a different day of the week and does not carry the same timetable. It is back with the Principal and still nothing has been marked or sent."
+        },
+        {
+          "request": {
+            "text": "tareekh bhi theek kar dein aur grade 8 bhi shamil kar lein",
+            "lang": "ur-Latn",
+            "gloss": "correct the date and add grade 8 as well"
+          },
+          "context": "School Admin, declaration returned over the date alone.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.revise",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → the returned declaration",
+                "date": "the corrected date",
+                "start_time": "unchanged",
+                "end_time": "unchanged",
+                "class_ids": "$request.classes_phrase → Grade 8 added, at the declarer's explicit instruction",
+                "where_to_attend": "unchanged",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The class is added because they asked, not because the correction implied it (PR-4)."
+            }
+          ],
+          "outcome": "Report both changes plainly and separately: the date the Principal asked about, and Grade 8, which they did not. Adding a class stops another day of lectures and another set of guardians has to be told — the Principal will be approving a bigger declaration than the one they returned, so say what it now costs."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-11-PC-5",
+      "intent": {
+        "name": "meetingday.cancel",
+        "summary": "Call the meeting off. The day becomes a teaching day again and everybody who was told has to be told again.",
+        "routesHere": [
+          "cancel the parent-teacher meeting on the 12th",
+          {
+            "text": "12 tareekh wali PTM cancel kar dein, wajah likh dein",
+            "lang": "ur-Latn",
+            "gloss": "cancel the PTM on the 12th, put the reason in"
+          },
+          {
+            "text": "meeting nahi ho rahi, sab ko batana hoga",
+            "lang": "ur-Latn",
+            "gloss": "the meeting is not happening, everybody will have to be told"
+          },
+          "call off the meeting day, the district has announced a holiday"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye meeting record se mita dein",
+              "lang": "ur-Latn",
+              "gloss": "erase this meeting from the record"
+            },
+            "goesTo": "Not offered.",
+            "note": "A declared meeting is never deleted. A cancelled or moved meeting stays on the record with its reason, because families were told about it (BR-11, E11, AC-13)."
+          },
+          {
+            "request": {
+              "text": "tareekh badal dein, cancel nahi karna",
+              "lang": "ur-Latn",
+              "gloss": "change the date, do not cancel it"
+            },
+            "goesTo": "meetingday.move — this use case.",
+            "note": "Moving keeps the meeting and gives it another day. Cancelling ends it, and the two say different things to a family (BR-9)."
+          },
+          {
+            "request": {
+              "text": "sirf calendar se hata dein, kisi ko na batayein",
+              "lang": "ur-Latn",
+              "gloss": "just take it off the calendar, do not tell anybody"
+            },
+            "goesTo": "Not offered.",
+            "note": "The reversal is complete or it is nothing: the timetable is restored, the calendar unmarked, the attendance expectation restored and everybody who was told is told again. A partial reversal leaves a day that teaches nothing and marks nobody (BR-9, AC-11)."
+          },
+          {
+            "request": {
+              "text": "wo declaration jo abhi manzoor nahi hui",
+              "lang": "ur-Latn",
+              "gloss": "the declaration that has not been approved yet"
+            },
+            "goesTo": "meetingday.return — this use case.",
+            "note": "A declaration awaiting approval reached nobody. This is for one families have already been told about."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meetingday.cancel",
+            "inputs": {
+              "meeting_day_id": "$request.meeting_phrase",
+              "cancellation_reason": "$request.cancellation_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step and it undoes all five: the timetable for that day is restored, the calendar marking removed, the attendance expectation restored, and every teacher and guardian who was told is told again (BR-9, AC-11)."
+          }
+        ],
+        "onFailure": "Stop and report. A cancellation with no reason is refused (E10), and the message telling everybody is blocking — a cancellation nobody was told about is worse than no cancellation, because the families arrive.",
+        "atomicity": "One act with four effects and they hold together: the timetable restored, the calendar unmarked, the attendance expectation restored, and everybody who was told notified. A partial reversal leaves a day that teaches nothing and marks nobody. The meeting stays on the record with its reason — it is never deleted (BR-11, E11)."
+      },
+      "operations": [
+        {
+          "name": "meetingday.cancel",
+          "method": "POST",
+          "path": "/api/v1/meeting-days/{meeting_day_id}/cancel",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "meeting_day_id, since a meeting is cancelled once and a repeat must not message every guardian a second time",
+          "purpose": "Cancel a declared meeting, restore the day, and notify everybody who was told.",
+          "parameters": [
+            {
+              "name": "meeting_day_id",
+              "source": "resolved",
+              "sourceRef": "$request.meeting_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "meeting_day",
+                "fromPhrase": "$request.meeting_phrase",
+                "onNoMatch": "Refuse. No meeting day matches. Name it by its date.",
+                "onAmbiguous": "Ask, naming the meeting days that match with their dates, windows and the classes taking part."
+              },
+              "notes": "The declared meeting, named by its date or by the classes taking part."
+            },
+            {
+              "name": "cancellation_reason",
+              "source": "request",
+              "sourceRef": "$request.cancellation_reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters, the school's own words. Required (BR-9, E10) — everybody who was told about the meeting is told this, so it is not an internal note."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was restored and who was told.",
+            "fields": [
+              {
+                "name": "meeting_day_id",
+                "type": "string",
+                "description": "The meeting."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Cancelled. On the record with its reason, never deleted (BR-11, AC-13)."
+              },
+              {
+                "name": "timetable_restored",
+                "type": "integer",
+                "description": "Lectures that run again on that day. It is a teaching day once more (BR-9, AC-11)."
+              },
+              {
+                "name": "calendar_unmarked_for",
+                "type": "object[]",
+                "description": "Classes the day is no longer marked for."
+              },
+              {
+                "name": "attendance_expected_again",
+                "type": "object[]",
+                "description": "Classes for which a record is expected again that day — so a teacher who does not mark it leaves students unmarked (BR-5, BR-9)."
+              },
+              {
+                "name": "notified",
+                "type": "integer",
+                "description": "Everybody who was told of the meeting, told of the change and that lectures run as normal that day (BR-9)."
+              },
+              {
+                "name": "unreachable",
+                "type": "object[]",
+                "description": "Those the messaging module could not reach. They still believe the meeting is happening and will arrive on the day."
+              },
+              {
+                "name": "days_notice",
+                "type": "integer",
+                "description": "How long before the meeting the cancellation went out. A cancellation the evening before reaches fewer people than the count suggests."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E10",
+              "httpStatus": 400,
+              "meaning": "No reason was given.",
+              "written": "Nothing.",
+              "notWritten": "The meeting is not cancelled and the day stays a meeting day.",
+              "note": "Everybody who was told about the meeting will be told the reason (BR-9)."
+            },
+            {
+              "code": "DELETE_NOT_OFFERED",
+              "mapsTo": "E11",
+              "httpStatus": 409,
+              "meaning": "Deletion was attempted rather than cancellation.",
+              "written": "Nothing.",
+              "notWritten": "The meeting stays as it was.",
+              "note": "A meeting is cancelled, not deleted. Families were told about it (BR-11, AC-13)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. Everybody who was told about the meeting is told this one, so it is the school speaking to every family in those classes, not an internal note (BR-9, E10).",
+          "derivedFrom": [
+            "BR-9",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the day becomes a teaching day again. The timetable is restored and attendance is expected once more — a teacher who thinks the day is still a meeting day leaves a section unmarked (BR-9, AC-11).",
+          "derivedFrom": [
+            "BR-9",
+            "AC-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report how much notice this gives. A cancellation the evening before reaches far fewer people than the delivery count suggests, and the ones it misses arrive at a school that is teaching (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the people the message could not reach by name. They still believe the meeting is happening, and this is the one part of a cancellation that fails silently (BR-7, BR-9).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never offer deletion, and never describe cancelling as removing the record. A cancelled meeting stays with its reason, because families were told about it (BR-11, E11, AC-13).",
+          "derivedFrom": [
+            "BR-11",
+            "E11",
+            "AC-13"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-cancel. The lifecycle ends at Cancelled, and every family has already been told twice — once that the meeting was happening and once that it is not. Holding it after all is a fresh declaration, which goes through the Principal again (BR-2, BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "12 tareekh wali PTM cancel kar dein, district ne chutti ka elan kar diya hai",
+            "lang": "ur-Latn",
+            "gloss": "cancel the PTM on the 12th, the district has announced a holiday"
+          },
+          "context": "School Admin, Johar Town branch, meeting declared nine days ago, 312 guardians told.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.cancel",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → the 12 December meeting",
+                "cancellation_reason": "as they gave it — the district holiday announced yesterday",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words, and they go to every family (PR-1)."
+            }
+          ],
+          "outcome": "Say before cancelling that this messages all 312 guardians and 14 teachers again. After: report that the day's 48 lectures run again and attendance is expected once more for Grades 9 and 10 — the teachers have to mark it — and name anybody the message could not reach, because they will arrive on the day."
+        },
+        {
+          "request": {
+            "text": "meeting cancel kar dein",
+            "lang": "ur-Latn",
+            "gloss": "cancel the meeting"
+          },
+          "context": "School Admin, one meeting declared for next week.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.cancel",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → next week's meeting",
+                "cancellation_reason": "$request.cancellation_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The reason is required and every family reads it (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is cancelled. Ask for the reason in the school's own words — it is not an internal note, it goes to every guardian in those classes and to every teacher, and it is what a family reads instead of the meeting they had arranged their day around."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-11-PC-6",
+      "intent": {
+        "name": "meetingday.move",
+        "summary": "Move a declared meeting to another day. The old day teaches again, everybody is told, and the new day needs the Principal.",
+        "routesHere": [
+          "move the parent-teacher meeting from the 12th to the 19th",
+          {
+            "text": "PTM 12 se 19 tareekh pe kar dein",
+            "lang": "ur-Latn",
+            "gloss": "move the PTM from the 12th to the 19th"
+          },
+          {
+            "text": "meeting ki tareekh aage barha dein, wajah ke saath",
+            "lang": "ur-Latn",
+            "gloss": "push the meeting date back, with the reason"
+          },
+          "postpone the meeting day by a week"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "meeting hi cancel kar dein",
+              "lang": "ur-Latn",
+              "gloss": "just cancel the meeting"
+            },
+            "goesTo": "meetingday.cancel — this use case.",
+            "note": "Cancelling ends it. Moving keeps it and gives it another day, and the two say different things to a family (BR-9)."
+          },
+          {
+            "request": {
+              "text": "jo abhi manzoor nahi hui us ki tareekh badalni hai",
+              "lang": "ur-Latn",
+              "gloss": "I want to change the date of one not yet approved"
+            },
+            "goesTo": "meetingday.revise — this use case.",
+            "note": "A declaration awaiting approval reached nobody, so correcting its date tells nobody either. This is for a meeting families have already been told about."
+          },
+          {
+            "request": {
+              "text": "nayi tareekh khud hi manzoor samajh lein",
+              "lang": "ur-Latn",
+              "gloss": "take the new date as approved already"
+            },
+            "goesTo": "Not offered.",
+            "note": "The new declaration goes through the same approval as the first (A5, BR-2). Nothing is marked on the new day until the Principal gives it."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meetingday.move",
+            "inputs": {
+              "meeting_day_id": "$request.meeting_phrase",
+              "new_date": "$request.new_date",
+              "cancellation_reason": "$request.cancellation_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step with two halves: the old day is given back — timetable restored, calendar unmarked, attendance expected again — and a new declaration for the new date takes its place, awaiting the Principal (A5, BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. A new date the school is closed on or already past refuses the move, and the old meeting stays exactly as it was — a half-move would leave a day that teaches nothing and a date nobody approved.",
+        "atomicity": "One act, and the two halves hold together: the original day restored in every respect and notified, and a fresh declaration awaiting approval on the new date. Nothing is marked on the new day and no lecture stops there until the Principal approves it (BR-2, A5). The moved meeting stays on the record with its reason (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "meetingday.move",
+          "method": "POST",
+          "path": "/api/v1/meeting-days/{meeting_day_id}/move",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "meeting_day_id + the new date, since a meeting moves once and a repeat must not message every guardian a second time",
+          "purpose": "Move a declared meeting to a new date, restoring the old day and raising a fresh declaration.",
+          "parameters": [
+            {
+              "name": "meeting_day_id",
+              "source": "resolved",
+              "sourceRef": "$request.meeting_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "meeting_day",
+                "fromPhrase": "$request.meeting_phrase",
+                "onNoMatch": "Refuse. No meeting day matches. Name it by its date.",
+                "onAmbiguous": "Ask, naming the meeting days that match with their dates, windows and the classes taking part."
+              },
+              "notes": "The declared meeting, named by its date or by the classes taking part."
+            },
+            {
+              "name": "new_date",
+              "source": "request",
+              "sourceRef": "$request.new_date",
+              "required": true,
+              "type": "date",
+              "notes": "The day the meeting moves to. A day the school would otherwise be open (E1) and not in the past (E2)."
+            },
+            {
+              "name": "cancellation_reason",
+              "source": "request",
+              "sourceRef": "$request.cancellation_reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters, the school's own words. Required to move the meeting (BR-9, E10) — everybody who was told about the original date reads it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was given back, what was raised, and what families have been told.",
+            "fields": [
+              {
+                "name": "meeting_day_id",
+                "type": "string",
+                "description": "The original meeting, now moved and on the record (BR-11)."
+              },
+              {
+                "name": "new_meeting_day_id",
+                "type": "string",
+                "description": "The fresh declaration on the new date, awaiting the Principal (A5, BR-2)."
+              },
+              {
+                "name": "timetable_restored",
+                "type": "integer",
+                "description": "Lectures that run again on the original date, which is a teaching day once more (BR-9, AC-11)."
+              },
+              {
+                "name": "attendance_expected_again",
+                "type": "object[]",
+                "description": "Classes for which a record is expected again on the original date."
+              },
+              {
+                "name": "notified",
+                "type": "integer",
+                "description": "Everybody who was told of the meeting, told the original date is off, that lectures run as normal on it, and what the new date is (BR-9)."
+              },
+              {
+                "name": "new_date_approved",
+                "type": "boolean",
+                "description": "False. The new date is announced but not yet approved — nothing is marked on it and no lecture stops there until the Principal gives it (BR-2, A5)."
+              },
+              {
+                "name": "unreachable",
+                "type": "object[]",
+                "description": "Those the message could not reach. They hold the original date and will arrive on it."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E10",
+              "httpStatus": 400,
+              "meaning": "No reason was given.",
+              "written": "Nothing.",
+              "notWritten": "The meeting is not moved and the original day stands.",
+              "note": "Required to cancel or to move (BR-9)."
+            },
+            {
+              "code": "DATE_IS_CLOSED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The new date is a holiday or an off-day.",
+              "written": "Nothing.",
+              "notWritten": "The meeting is not moved.",
+              "note": "A meeting day cancels teaching that would otherwise happen (A7)."
+            },
+            {
+              "code": "DATE_IN_PAST",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The new date is in the past.",
+              "written": "Nothing.",
+              "notWritten": "The meeting is not moved."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say plainly that the new date is not approved yet. Families are told the meeting moves to the 19th while the 19th is still a declaration awaiting the Principal — if it is returned, every family is holding a date the school never approved (BR-2, A5).",
+          "derivedFrom": [
+            "BR-2",
+            "A5",
+            "AC-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never write the reason. Everybody who was told about the original date reads it (BR-9, E10).",
+          "derivedFrom": [
+            "BR-9",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the original day teaches again. Its timetable is restored and its attendance is expected once more, so a teacher still expecting a meeting day leaves a section unmarked (BR-9, AC-11).",
+          "derivedFrom": [
+            "BR-9",
+            "AC-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the lectures the new date would stop, which are not the same as the old one's. A different day of the week carries a different timetable, and the Principal is approving that figure, not the first (BR-4, AC-3).",
+          "derivedFrom": [
+            "BR-4",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report who could not be reached. They hold the original date and will arrive on a day the school is teaching (BR-7, BR-9).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "meetingday.cancel",
+        "statement": "There is no move back. The original meeting is on the record as Moved and cannot be revived (BR-11); the new declaration can be returned by the Principal or cancelled once approved — and either way every family has already been told the new date."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "PTM 12 se 19 tareekh pe kar dein, us din district ki chutti hai",
+            "lang": "ur-Latn",
+            "gloss": "move the PTM from the 12th to the 19th, there is a district holiday that day"
+          },
+          "context": "School Admin, Johar Town branch, meeting declared and 312 guardians already told.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.move",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → the 12 December meeting",
+                "new_date": "19 December",
+                "cancellation_reason": "as they gave it — the district holiday announced yesterday",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The old day is given back and a fresh declaration is raised for the 19th (PR-1)."
+            }
+          ],
+          "outcome": "Report both halves. The 12th is a teaching day again — 48 lectures back, attendance expected, the teachers have to mark it. Every family has been told the meeting is on the 19th. Then say the part that matters most: **the 19th is not approved yet.** It is a declaration in front of the Principal, and if it comes back, 312 families are holding a date the school never agreed to."
+        },
+        {
+          "request": {
+            "text": "meeting ek hafta aage kar dein",
+            "lang": "ur-Latn",
+            "gloss": "push the meeting back a week"
+          },
+          "context": "School Admin, with the new date falling on an already-declared school holiday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.move",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → the declared meeting",
+                "new_date": "a week later — a declared holiday",
+                "cancellation_reason": "$request.cancellation_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused on the date, and the reason was missing in any case (PR-2)."
+            }
+          ],
+          "outcome": "Nothing moved. The school is already closed that day, so there is no teaching to cancel and a meeting day cannot sit on it. Ask for a working date and for the reason in the school's own words — every guardian who was told about the original date will read it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-11-PC-7",
+      "intent": {
+        "name": "meetingday.lectures.read",
+        "summary": "See which lectures will not run on a meeting day, which teachers that affects, and who is expected where.",
+        "routesHere": [
+          "which lectures will not run on the 12th?",
+          {
+            "text": "12 tareekh ko kaunse lectures nahi honge?",
+            "lang": "ur-Latn",
+            "gloss": "which lectures will not run on the 12th?"
+          },
+          {
+            "text": "PTM wale din kitne teachers ko aana hai?",
+            "lang": "ur-Latn",
+            "gloss": "how many teachers have to come on the PTM day?"
+          },
+          {
+            "text": "mujhe wo list chahiye jo periods us din band rahenge",
+            "lang": "ur-Latn",
+            "gloss": "I want the list of periods that will not run that day"
+          },
+          "print the teachers expected on the meeting day"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye lecture kisi aur se karwa dein",
+              "lang": "ur-Latn",
+              "gloss": "get somebody else to take this lecture"
+            },
+            "goesTo": "Not offered.",
+            "note": "No substitution cover is raised for a suspended lecture. A teacher meeting parents is not absent from a lecture that is not happening, and cover raised for one puts a substitute in an empty room (BR-4, E7, AC-4)."
+          },
+          {
+            "request": {
+              "text": "us din ki attendance dikha dein",
+              "lang": "ur-Latn",
+              "gloss": "show me the attendance for that day"
+            },
+            "goesTo": "Not offered here.",
+            "note": "There is no attendance for a participating class on a meeting day. No record is expected, nobody is marked absent and the day counts in no percentage (BR-5, AC-5)."
+          },
+          {
+            "request": {
+              "text": "kaunse din meeting rakhi gayi hain?",
+              "lang": "ur-Latn",
+              "gloss": "which days have meetings been declared on?"
+            },
+            "goesTo": "meetingdays.read — this use case.",
+            "note": "The list of meeting days is the other question. This is one day, lecture by lecture."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meetingday.lectures.read",
+            "inputs": {
+              "meeting_day_id": "$request.meeting_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. It changes nothing — the lectures are suspended by the approval, not by looking at them (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. A meeting day that cannot be identified returns no list, since the lectures of the wrong day are worse than none.",
+        "atomicity": "A read. Nothing is written and no lecture is changed — the timetable itself is untouched, only suspended for that day (BR-4)."
+      },
+      "operations": [
+        {
+          "name": "meetingday.lectures.read",
+          "method": "GET",
+          "path": "/api/v1/meeting-days/{meeting_day_id}/lectures",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return the lectures that will not run on a meeting day, the teachers affected and where they are expected.",
+          "parameters": [
+            {
+              "name": "meeting_day_id",
+              "source": "resolved",
+              "sourceRef": "$request.meeting_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "meeting_day",
+                "fromPhrase": "$request.meeting_phrase",
+                "onNoMatch": "Refuse. No meeting day matches. Name it by its date.",
+                "onAmbiguous": "Ask, naming the meeting days that match with their dates, windows and the classes taking part."
+              },
+              "notes": "The declared meeting, named by its date or by the classes taking part."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What stops, who it affects, and what still runs.",
+            "fields": [
+              {
+                "name": "lectures",
+                "type": "object[]",
+                "description": "Period, time, class, section, subject, teacher and room for every lecture that will not run (BR-4)."
+              },
+              {
+                "name": "lectures_count",
+                "type": "integer",
+                "description": "How many. This is the figure the Principal approves (AC-3)."
+              },
+              {
+                "name": "teachers_expected",
+                "type": "object[]",
+                "description": "Teachers holding those lectures, with their subjects, the classes taking part and where to attend — the list the school prints for the day."
+              },
+              {
+                "name": "cover_raised",
+                "type": "integer",
+                "description": "Zero, always. No substitution cover is raised for a suspended lecture (BR-4, E7, AC-4)."
+              },
+              {
+                "name": "still_running",
+                "type": "object[]",
+                "description": "Lectures that day for classes not taking part, which run as normal (BR-6, A3, AC-8)."
+              },
+              {
+                "name": "teachers_in_two_places",
+                "type": "object[]",
+                "description": "Teachers holding both a suspended lecture and one that still runs that day. Their non-participating lecture stands and may fall inside the meeting window, and the use case does not say which they are to attend (BR-6, OQ-2)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_TIMETABLE_PUBLISHED",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "No timetable is published for the classes taking part.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned.",
+              "note": "A published timetable is a precondition, since its lectures are what stop running — but the use case writes no exception for its absence, so a meeting could be declared over classes with nothing to suspend."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Give the count and the list together. \"48 lectures\" is what gets approved; which teacher loses which period is what the school acts on (BR-4, AC-3).",
+          "derivedFrom": [
+            "BR-4",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the teachers standing in two places. A teacher with a suspended Grade 9 lecture and a Grade 7 lecture that still runs is expected in a classroom and at the meeting, and the use case leaves it unanswered rather than resolving it (BR-6, A3, OQ-2).",
+          "derivedFrom": [
+            "BR-6",
+            "A3",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never suggest cover for a suspended lecture. None is raised by any route, and a substitute sent to an empty room is the failure the rule exists to prevent (BR-4, E7, AC-4).",
+          "derivedFrom": [
+            "BR-4",
+            "E7",
+            "AC-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say what still runs. A class not taking part teaches as normal that day and its attendance is taken, which is the half of the day nobody thinks about (BR-6, AC-8).",
+          "derivedFrom": [
+            "BR-6",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "12 tareekh ko kaunse lectures nahi honge aur kaunse teachers ko aana hai?",
+            "lang": "ur-Latn",
+            "gloss": "which lectures will not run on the 12th and which teachers have to come?"
+          },
+          "context": "Principal, all branches, reviewing the declaration before approving it.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.lectures.read",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → 12 December, Grades 9 and 10",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read, and nothing is suspended by it (PR-1)."
+            }
+          ],
+          "outcome": "Give the 48 lectures by period and teacher, and the 14 teachers expected with where to attend. Then the two things the screen does not separate: no cover is raised for any of them, and three of those teachers also hold a Grade 7 lecture that afternoon which still runs — nothing here says whether they are to teach it or meet parents."
+        },
+        {
+          "request": "print the teachers expected on the meeting day",
+          "context": "School Admin, Johar Town branch, meeting declared.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingday.lectures.read",
+              "inputs": {
+                "meeting_day_id": "$request.meeting_phrase → the declared meeting",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read."
+            }
+          ],
+          "outcome": "Give the teachers by department with their subjects and where to attend. Add that the list is who is expected, not who came — nothing on a meeting day records attendance of any kind, for families or for staff."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-11-PC-8",
+      "intent": {
+        "name": "meetingdays.read",
+        "summary": "See the meeting days declared, held, cancelled and moved, and which classes each covers.",
+        "routesHere": [
+          "when is the next parent-teacher meeting?",
+          {
+            "text": "agli parent-teacher meeting kab hai?",
+            "lang": "ur-Latn",
+            "gloss": "when is the next parent-teacher meeting?"
+          },
+          {
+            "text": "is session mein kitni PTM hui hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many PTMs have there been this session?"
+          },
+          {
+            "text": "meri sections mein se kaunsi PTM mein shamil hain?",
+            "lang": "ur-Latn",
+            "gloss": "which of my sections are taking part in the PTM?"
+          },
+          "show me the meeting days for this session"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "us din kaunse lectures band rahenge?",
+              "lang": "ur-Latn",
+              "gloss": "which lectures will be off that day?"
+            },
+            "goesTo": "meetingday.lectures.read — this use case.",
+            "note": "One day, lecture by lecture, is the other question."
+          },
+          {
+            "request": {
+              "text": "kaun kaun aaya tha meeting mein?",
+              "lang": "ur-Latn",
+              "gloss": "who came to the meeting?"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nothing records who attended. The day books no slot and takes no attendance, so the school cannot tell who came — and whether any record should be kept is an open question this use case raises and does not answer (BR-10, OQ-6)."
+          },
+          {
+            "request": {
+              "text": "ek teacher se mulaqat ka waqt lena hai",
+              "lang": "ur-Latn",
+              "gloss": "I want a time with one teacher"
+            },
+            "goesTo": "meeting.request.submit — UC-14-08.",
+            "note": "That carries a slot the teacher chooses. This day carries none (BR-10, E12, AC-12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "meetingdays.read",
+            "inputs": {
+              "status": "$request.status",
+              "from_date": "$request.from_date",
+              "to_date": "$request.to_date",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One read within the branch and the session in the actor's own context."
+          }
+        ],
+        "onFailure": "Stop and report. A period nobody named is asked about rather than assumed.",
+        "atomicity": "A read. Nothing is written."
+      },
+      "operations": [
+        {
+          "name": "meetingdays.read",
+          "method": "GET",
+          "path": "/api/v1/meeting-days",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List meeting days with their dates, windows, classes, approvals and status.",
+          "parameters": [
+            {
+              "name": "status",
+              "source": "request",
+              "sourceRef": "$request.status",
+              "required": false,
+              "type": "string",
+              "notes": "One of the lifecycle states — Draft, Awaiting approval, Declared, Returned, Held, Cancelled or Moved. The use case defines these in the lifecycle rather than as a value list on the field, so they are carried as written rather than as an enum."
+            },
+            {
+              "name": "from_date",
+              "source": "request",
+              "sourceRef": "$request.from_date",
+              "required": false,
+              "type": "date",
+              "notes": "The start of the period asked about."
+            },
+            {
+              "name": "to_date",
+              "source": "request",
+              "sourceRef": "$request.to_date",
+              "required": false,
+              "type": "date",
+              "notes": "The end of it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What has been declared and what became of each.",
+            "fields": [
+              {
+                "name": "meeting_days",
+                "type": "object[]",
+                "description": "Date, window, classes taking part, where to attend, who declared it, who approved it and its status."
+              },
+              {
+                "name": "next_declared",
+                "type": "object",
+                "description": "The next approved meeting day, with the date, the window and where to attend — what a guardian or a teacher is actually asking for."
+              },
+              {
+                "name": "awaiting_approval",
+                "type": "integer",
+                "description": "Declarations sitting with the Principal. Nothing about them is marked and no family has been told (BR-2, AC-1)."
+              },
+              {
+                "name": "cancelled_or_moved",
+                "type": "object[]",
+                "description": "Meetings families were told about that are not happening as announced, with their reasons. They stay on the record (BR-9, BR-11)."
+              },
+              {
+                "name": "classes_never_included",
+                "type": "object[]",
+                "description": "Active classes that have taken part in no meeting day this session — the families nobody has been called in to meet."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_IN_SCOPE",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The actor is asking outside their own scope.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned.",
+              "note": "A Coordinator sees the sections they supervise and a guardian their own children, but the use case writes no exception for a request outside that — only the role-based-access convention covers it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Answer \"when is the next one\" with the window and the place, not only the date. Where to attend goes out with the notification precisely because a family told when but not where does not arrive (BR-7, AC-9).",
+          "derivedFrom": [
+            "BR-7",
+            "AC-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that no booking is needed. Families attend during the announced window and see the teachers who are present — a guardian looking for a slot should be told there is none rather than left searching (BR-10, E12, AC-12).",
+          "derivedFrom": [
+            "BR-10",
+            "E12",
+            "AC-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never count a declaration awaiting approval as a meeting. Nothing about it is marked and no family has been told, so a school that reads one number for both believes it has announced a day it has not (BR-2, AC-1).",
+          "derivedFrom": [
+            "BR-2",
+            "AC-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never report who attended. Nothing records it — the day books no slot and takes no attendance, so the school cannot tell who came, and whether it should be able to is unanswered (BR-10, OQ-6).",
+          "derivedFrom": [
+            "BR-10",
+            "OQ-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "agli parent-teacher meeting kab hai?",
+            "lang": "ur-Latn",
+            "gloss": "when is the next parent-teacher meeting?"
+          },
+          "context": "Coordinator, Johar Town branch, current session.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingdays.read",
+              "inputs": {
+                "status": "Declared",
+                "from_date": "today",
+                "to_date": "omitted",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Only approved meetings, since a declaration awaiting approval is not a meeting (PR-3)."
+            }
+          ],
+          "outcome": "Give the date, the window and where to attend, and which of their sections are taking part. Say that no slot is booked — families come during the window — and mention any declaration still with the Principal separately, because no family has been told about it."
+        },
+        {
+          "request": {
+            "text": "is session mein kitni PTM hui hain aur kaunsi classes reh gayin?",
+            "lang": "ur-Latn",
+            "gloss": "how many PTMs have there been this session and which classes were left out?"
+          },
+          "context": "Principal, all branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "meetingdays.read",
+              "inputs": {
+                "status": "omitted — every state",
+                "from_date": "the session start",
+                "to_date": "today",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Across the session, including the cancelled and the moved (PR-4 is about attendance; the record itself is complete because nothing is ever deleted)."
+            }
+          ],
+          "outcome": "Give the meetings held, and separately the ones cancelled or moved with their reasons — families were told about those and they stay on the record. Then the answer to the second half: the classes that have taken part in none this session, whose families have not been called in at all."
+        }
+      ]
+    }
+  ]
+}

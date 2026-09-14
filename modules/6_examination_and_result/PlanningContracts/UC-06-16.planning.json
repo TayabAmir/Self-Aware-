@@ -1,0 +1,1988 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-06-16",
+    "name": "Give a student who missed a paper a second sitting, and fold the result back into the normal marks flow",
+    "module": "Examination",
+    "file": "../UseCases/UC-06-16.json",
+    "featureRef": "6.16 Makeup exam for an absent student"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-06-16-PC-1",
+      "intent": {
+        "name": "exam.makeup.request",
+        "summary": "Request a second sitting against one classified absence, for one student and one subject. One step.",
+        "routesHere": [
+          "request a makeup for this student's missed maths paper",
+          {
+            "text": "is bache ke liye makeup ki darkhwast do",
+            "lang": "ur-Latn",
+            "gloss": "request a makeup for this student"
+          },
+          {
+            "text": "jo paper reh gaya tha us ka dobara moqa do",
+            "lang": "ur-Latn",
+            "gloss": "give them another sitting for the paper they missed"
+          },
+          {
+            "text": "maths ka makeup exam chahiye",
+            "lang": "ur-Latn",
+            "gloss": "we need a makeup exam for maths"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "poori class ko dobara paper do",
+              "lang": "ur-Latn",
+              "gloss": "give the whole class the paper again"
+            },
+            "goesTo": "Not offered.",
+            "note": "A makeup is requested against a specific absence, for one student and one subject. It is not a re-sit offered to a class (BR-1)."
+          },
+          {
+            "request": {
+              "text": "ghair haaziri ko excused karo",
+              "lang": "ur-Latn",
+              "gloss": "classify the absence as excused"
+            },
+            "goesTo": "exam.absence.classify — UC-06-15-PC-2",
+            "note": "A makeup is requested against a classified absence. An unclassified one is a decision nobody has taken (E1)."
+          },
+          {
+            "request": {
+              "text": "doosra makeup do",
+              "lang": "ur-Latn",
+              "gloss": "give a second makeup"
+            },
+            "goesTo": "Not offered.",
+            "note": "Where the student is absent from the makeup too, no further makeup is granted automatically. A second chance is not an unlimited one (BR-8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.makeup.request",
+            "inputs": {
+              "absence_id": "$request.absence_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It creates the request and nothing else — approval, paper, schedule and mark each follow as their own deliberate acts."
+          }
+        ],
+        "onFailure": "Stop and report. An unclassified absence, and an absence that already carries a makeup, arrive as errors.",
+        "atomicity": "One write: the makeup request and the audit entry together or not at all. Nothing is scheduled, nobody is told and no mark changes. Whether the Coordinator or the Principal approves is derived from the classification and school policy (BR-2) — it is not chosen here."
+      },
+      "operations": [
+        {
+          "name": "exam.makeup.request",
+          "method": "POST",
+          "path": "/api/v1/exam-absences/{absence_id}/makeup",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "absence_id, since an absence carries one makeup",
+          "purpose": "Request a makeup sitting against a classified absence.",
+          "parameters": [
+            {
+              "name": "absence_id",
+              "source": "resolved",
+              "sourceRef": "$request.absence_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_absence",
+                "fromPhrase": "$request.absence_phrase",
+                "onNoMatch": "Refuse. No classified absence matches for that student and paper.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the subject, the paper date and the classification."
+              },
+              "notes": "A classified absence for which a makeup is allowed (BR-1, E1)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The makeup as requested.",
+            "fields": [
+              {
+                "name": "makeup_id",
+                "type": "string",
+                "description": "The makeup."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The one student it is for (BR-1)."
+              },
+              {
+                "name": "subject_id",
+                "type": "string",
+                "description": "The one subject."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Requested, or Awaiting approval where school policy requires the Principal (BR-2)."
+              },
+              {
+                "name": "approval_required",
+                "type": "string",
+                "description": "Coordinator or Principal / Director, derived from the classification and school policy (BR-2). Never chosen."
+              },
+              {
+                "name": "classification",
+                "type": "string",
+                "description": "How the absence was classified (UC-06-15 BR-6)."
+              },
+              {
+                "name": "original_total_marks",
+                "type": "number",
+                "description": "The original exam's total for the subject. The makeup is marked against it (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_CLASSIFIED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The absence has not been classified.",
+              "written": "Nothing.",
+              "notWritten": "No makeup requested.",
+              "note": "How the missed paper counts is not yet decided (UC-06-15 BR-12)."
+            },
+            {
+              "code": "MAKEUP_EXISTS",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The absence already carries a makeup.",
+              "written": "Nothing.",
+              "notWritten": "No second created.",
+              "note": "A second chance is not an unlimited one (BR-8). Report the existing makeup and its state."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never request a makeup for more than one student. It is against a specific absence, for one student and one subject (BR-1) — a class-wide re-sit is a different thing entirely and this capability cannot express it.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never classify the absence to make a makeup possible. E1 is the classification rule working, and that decision belongs to whoever knows why the child was away (UC-06-15 BR-5).",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never state who approves. It is derived from the classification and school policy (BR-2), and a planner that named the Coordinator has decided a policy question.",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the existing makeup where one is already there. A second is not created automatically (BR-8), and somebody asking again may not know the first was refused or missed.",
+          "derivedFrom": [
+            "BR-8",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never describe the request as arranging anything. Nothing is scheduled and nobody is told — a makeup nobody was told about produces a second absence (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A requested makeup is refused with a reason rather than deleted (A5), which keeps the decision on the record."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is bache ke maths ke paper ka makeup chahiye",
+            "lang": "ur-Latn",
+            "gloss": "we need a makeup for this student's maths paper"
+          },
+          "context": "Coordinator, Johar Town branch, on an absence classified excused with a makeup allowed.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.request",
+              "inputs": {
+                "absence_id": "$request.absence_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Requested. Report who approves it, as derived from the classification and policy (PR-3), and that nothing is scheduled and nobody has been told yet (PR-5)."
+        },
+        {
+          "request": {
+            "text": "jin bachon ne paper miss kiya un sab ka makeup rakh do",
+            "lang": "ur-Latn",
+            "gloss": "arrange a makeup for all the students who missed the paper"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.request",
+              "inputs": {
+                "absence_id": "$request.absence_phrase — one absence at a time",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No single plan covers the group. Each makeup is against one absence for one student (PR-1)."
+            }
+          ],
+          "outcome": "List the classified absences for that paper and ask which students get a makeup. Each is approved, papered, scheduled and marked on its own — a class-wide re-sit is not what this is."
+        },
+        {
+          "request": {
+            "text": "ghair haaziri ko excused kar ke makeup ka intezam karo",
+            "lang": "ur-Latn",
+            "gloss": "classify the absence as excused and arrange the makeup"
+          },
+          "context": "Coordinator, Johar Town branch, on an unclassified absence.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.request",
+              "inputs": {
+                "absence_id": "$request.absence_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted alone, with no classification chained (PR-2). The API returns NOT_CLASSIFIED (E1)."
+            }
+          ],
+          "outcome": "Nothing is requested. Report that the absence is classified first, with its own reason, which the family is told — and that the classification decides whether the subject is left out of the percentage or counted as zero."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-16-PC-2",
+      "intent": {
+        "name": "exam.makeup.approve",
+        "summary": "Approve a makeup with the reason. Coordinator or Principal as the policy requires, one step.",
+        "routesHere": [
+          "approve this makeup",
+          {
+            "text": "makeup manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the makeup"
+          },
+          {
+            "text": "dobara paper dene ki ijazat de do",
+            "lang": "ur-Latn",
+            "gloss": "allow the second sitting"
+          },
+          {
+            "text": "wajah ke sath manzoori de do",
+            "lang": "ur-Latn",
+            "gloss": "approve it with the reason"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "makeup se inkar kar do",
+              "lang": "ur-Latn",
+              "gloss": "refuse the makeup"
+            },
+            "goesTo": "exam.makeup.refuse — UC-06-16-PC-3"
+          },
+          {
+            "request": {
+              "text": "paper aur tareekh bhi tay kar do",
+              "lang": "ur-Latn",
+              "gloss": "assign the paper and the date too"
+            },
+            "goesTo": "exam.makeup.paper.assign then exam.makeup.schedule",
+            "note": "Approval permits the sitting. Which paper and when are separate acts (BR-3, BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.makeup.approve",
+            "inputs": {
+              "makeup_id": "$request.makeup_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Where school policy requires it the Principal approves instead of the Coordinator, and the policy decides which (BR-2, E3)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by the wrong role for the policy is refused by the API.",
+        "atomicity": "One write: the approval, its reason and the audit entry together or not at all. Nothing is scheduled and nobody is told yet — a makeup nobody was told about produces a second absence (BR-4)."
+      },
+      "operations": [
+        {
+          "name": "exam.makeup.approve",
+          "method": "POST",
+          "path": "/api/v1/makeups/{makeup_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "makeup_id, since a makeup is approved once",
+          "purpose": "Approve a makeup sitting.",
+          "parameters": [
+            {
+              "name": "makeup_id",
+              "source": "resolved",
+              "sourceRef": "$request.makeup_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "makeup",
+                "fromPhrase": "$request.makeup_phrase",
+                "onNoMatch": "Refuse. No makeup matches for that student and paper.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the subject, the date and the state."
+              },
+              "notes": "The makeup, resolved from the student, the exam and the subject."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Recorded with the approval. Why this student is given a second sitting."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval.",
+            "fields": [
+              {
+                "name": "makeup_id",
+                "type": "string",
+                "description": "The makeup."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The Coordinator or the Principal, as the policy required (BR-2)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "original_total_marks",
+                "type": "number",
+                "description": "What the makeup will be marked against (BR-5)."
+              },
+              {
+                "name": "marks_locked",
+                "type": "boolean",
+                "description": "True where the original exam's marks are locked. The makeup cannot be marked until they are reopened, which is a deliberate act (BR-11, E6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WRONG_APPROVER",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "The Coordinator approved where the Principal is required.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "The policy decides which (BR-2)."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The makeup is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve where the policy requires the Principal. E3 is BR-2 working, and the policy — not the plan — decides who may.",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the reason. It is recorded with the approval and is what explains a second sitting to anybody who asks later.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain the paper or the schedule. Which paper is used is a decision the school takes deliberately (BR-3), and a date nobody was told is a second absence waiting to happen (BR-4).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report where the original exam's marks are locked. The makeup cannot be marked until they are reopened, and that is a deliberate act by the School Admin (BR-11, E6) — better known now than on the day.",
+          "derivedFrom": [
+            "BR-11",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. A makeup that will not now happen is refused with a reason before it is scheduled, or stands unscheduled."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is makeup ko manzoor kar do — bacha manzoor shuda chhutti par tha",
+            "lang": "ur-Latn",
+            "gloss": "approve this makeup — the student was on approved leave"
+          },
+          "context": "Coordinator, Johar Town branch, where policy allows the Coordinator to approve.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.approve",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "reason": "The absence was excused on approved leave; a second sitting is due.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Coordinator's own (PR-2). Nothing else is chained (PR-3)."
+            }
+          ],
+          "outcome": "Approved. Report that the paper and the date are still to be decided, and that the family is told when it is scheduled — not before."
+        },
+        {
+          "request": {
+            "text": "makeup manzoor kar ke agle hafte ka paper rakh do",
+            "lang": "ur-Latn",
+            "gloss": "approve the makeup and set the paper for next week"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.approve",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only (PR-3)."
+            }
+          ],
+          "outcome": "Approved. Report that the paper source is a decision the school takes — a fresh paper from the bank, or the original where the school allows reuse after other students have sat it — and that the date, time and invigilator follow."
+        },
+        {
+          "request": {
+            "text": "makeup manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the makeup"
+          },
+          "context": "Coordinator, Johar Town branch, on an exam whose marks are locked.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.approve",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved, and marks_locked comes back true. Report it now (PR-4) — the sitting can be scheduled, but the mark cannot be entered until the School Admin reopens the exam's marks, and finding that out on the day helps nobody."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-16-PC-3",
+      "intent": {
+        "name": "exam.makeup.refuse",
+        "summary": "Refuse a makeup with the reason. One step, and the student's result stands as the classification left it.",
+        "routesHere": [
+          "refuse this makeup — there is no time before the results close",
+          {
+            "text": "makeup se inkar kar do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "refuse the makeup, with the reason"
+          },
+          {
+            "text": "dobara paper nahi de sakte",
+            "lang": "ur-Latn",
+            "gloss": "we cannot give a second sitting"
+          },
+          {
+            "text": "makeup nahi hoga",
+            "lang": "ur-Latn",
+            "gloss": "there will be no makeup"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "makeup manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the makeup"
+            },
+            "goesTo": "exam.makeup.approve — UC-06-16-PC-2"
+          },
+          {
+            "request": {
+              "text": "ghair haaziri unexcused kar do",
+              "lang": "ur-Latn",
+              "gloss": "classify the absence unexcused"
+            },
+            "goesTo": "exam.absence.classify — UC-06-15-PC-2",
+            "note": "Refusing a makeup does not change the classification. An excused absence stays excused and the result stays incomplete (UC-06-15 BR-6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.makeup.refuse",
+            "inputs": {
+              "makeup_id": "$request.makeup_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It changes nothing about the absence itself (A5)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the refusal, its reason and the audit entry together or not at all. The absence and its classification stand — an excused absence still leaves the subject out of the percentage and the result still reads incomplete (UC-06-15 BR-6), and the student stays out of the merit list until every subject carries a final mark (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "exam.makeup.refuse",
+          "method": "POST",
+          "path": "/api/v1/makeups/{makeup_id}/refuse",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "makeup_id, since a makeup carries one decision",
+          "purpose": "Refuse a makeup, with the reason.",
+          "parameters": [
+            {
+              "name": "makeup_id",
+              "source": "resolved",
+              "sourceRef": "$request.makeup_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "makeup",
+                "fromPhrase": "$request.makeup_phrase",
+                "onNoMatch": "Refuse. No makeup matches for that student and paper.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the subject, the date and the state."
+              },
+              "notes": "The makeup, resolved from the student, the exam and the subject."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Why no second sitting is given. The family is affected by it, so it is the school's own words."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The refusal.",
+            "fields": [
+              {
+                "name": "makeup_id",
+                "type": "string",
+                "description": "The makeup."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Refused. Terminal."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "refused_by",
+                "type": "string",
+                "description": "The approver."
+              },
+              {
+                "name": "result_treatment",
+                "type": "string",
+                "description": "Unchanged. What the classification decided still stands (UC-06-15 BR-6)."
+              },
+              {
+                "name": "result_incomplete",
+                "type": "boolean",
+                "description": "True where the absence was excused. It stays incomplete with no makeup to resolve it."
+              },
+              {
+                "name": "excluded_from_merit",
+                "type": "boolean",
+                "description": "True until every subject carries a final mark (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A refusal was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing refused."
+            },
+            {
+              "code": "NOT_PENDING",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The makeup is already approved, scheduled, marked or refused.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. A family whose child does not get a second sitting is owed the school's own explanation.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report what the refusal leaves behind. An excused absence stays excused, the result stays incomplete, and the student stays off the merit list until every subject carries a final mark (BR-10, UC-06-15 BR-6, BR-8) — none of which is obvious from the word refused.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never reclassify the absence to tidy up the result. Refusing a makeup and deciding why a child missed a paper are different decisions with different consequences for their percentage.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Refused is terminal. Where the school changes its mind a fresh makeup is requested against the same absence, which is a deliberate act."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is makeup se inkar kar do — natija band hone se pehle waqt nahi hai",
+            "lang": "ur-Latn",
+            "gloss": "refuse this makeup — there is no time before the results close"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.refuse",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "reason": "There is no working day before the results are finalised on which the paper could be sat.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Coordinator's own (PR-1)."
+            }
+          ],
+          "outcome": "Refused. Report that the absence stays excused, the subject stays out of the percentage, the result reads incomplete and the student is off the merit list (PR-2) — the refusal settles the sitting, not the result."
+        },
+        {
+          "request": {
+            "text": "makeup nahi ho sakta, ghair haaziri ko unexcused kar do",
+            "lang": "ur-Latn",
+            "gloss": "the makeup cannot happen, mark the absence unexcused"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.refuse",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The refusal only. The reclassification is not chained (PR-3)."
+            }
+          ],
+          "outcome": "Refused. Report that reclassifying is a separate decision with a different meaning — unexcused counts the paper as zero against the child, which is a statement about why they were away, not about whether a second sitting was practical."
+        },
+        {
+          "request": {
+            "text": "makeup cancel kar do",
+            "lang": "ur-Latn",
+            "gloss": "cancel the makeup"
+          },
+          "context": "Coordinator, Johar Town branch, on a makeup already scheduled and notified.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.refuse",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_PENDING (E3)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the sitting is already scheduled and the family told — cancelling it is not a refusal at this stage, and the student may arrive for a paper nobody is holding."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-16-PC-4",
+      "intent": {
+        "name": "exam.makeup.paper.assign",
+        "summary": "Decide which paper the makeup is sat on — a fresh one from the bank, or the original where the school allows it. One step.",
+        "routesHere": [
+          "assign a fresh paper from the bank for this makeup",
+          {
+            "text": "makeup ke liye bank se naya paper lagao",
+            "lang": "ur-Latn",
+            "gloss": "assign a fresh paper from the bank for the makeup"
+          },
+          {
+            "text": "wohi asli paper dobara istemal kar lo",
+            "lang": "ur-Latn",
+            "gloss": "reuse the original paper"
+          },
+          {
+            "text": "makeup ka paper tay kar do",
+            "lang": "ur-Latn",
+            "gloss": "decide the makeup's paper"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "bank se naya paper banao",
+              "lang": "ur-Latn",
+              "gloss": "build a new paper from the bank"
+            },
+            "goesTo": "paper.create and paper.question.add — UC-06-07",
+            "note": "Assembling a paper is the question bank's work. This attaches one that exists."
+          },
+          {
+            "request": {
+              "text": "makeup ki tareekh rakh do",
+              "lang": "ur-Latn",
+              "gloss": "set the makeup's date"
+            },
+            "goesTo": "exam.makeup.schedule — UC-06-16-PC-5",
+            "note": "A makeup cannot be scheduled until a paper is assigned (E8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.makeup.paper.assign",
+            "inputs": {
+              "makeup_id": "$request.makeup_phrase",
+              "paper_source": "$request.paper_source",
+              "paper_id": "$request.paper_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Reusing the original after other students have sat it is a decision the school takes deliberately (BR-3), so the source is always the actor's."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the paper attached to the makeup, with the audit entry. Its contents are never read into the plan or the reply. Whichever paper is used, the sitting is marked against the original exam's subject rules — the same total and the same passing mark (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "exam.makeup.paper.assign",
+          "method": "POST",
+          "path": "/api/v1/makeups/{makeup_id}/paper",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "makeup_id, since a makeup is sat on one paper",
+          "purpose": "Assign the paper the makeup will be sat on.",
+          "parameters": [
+            {
+              "name": "makeup_id",
+              "source": "resolved",
+              "sourceRef": "$request.makeup_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "makeup",
+                "fromPhrase": "$request.makeup_phrase",
+                "onNoMatch": "Refuse. No makeup matches for that student and paper.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the subject, the date and the state."
+              },
+              "notes": "The makeup, resolved from the student, the exam and the subject."
+            },
+            {
+              "name": "paper_source",
+              "source": "request",
+              "sourceRef": "$request.paper_source",
+              "required": true,
+              "type": "enum: Fresh paper from the question bank | The original paper",
+              "notes": "Which paper is used (BR-3). Reusing the original after the class has sat it is the school's decision to take, never assumed — and a fresh paper is not automatically the safer choice, since it has to be equivalent."
+            },
+            {
+              "name": "paper_id",
+              "source": "resolved",
+              "sourceRef": "$request.paper_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "paper",
+                "fromPhrase": "$request.paper_phrase",
+                "onNoMatch": "Refuse. No finalised paper in the bank matches for that class and subject.",
+                "onAmbiguous": "Ask, naming the candidates by title, class and subject — never by their questions."
+              },
+              "notes": "Required where the source is a fresh paper from the bank. Omitted where the original is reused. A paper the teacher authored arrives as a file and is attached on the screen rather than through a plan."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The paper as assigned.",
+            "fields": [
+              {
+                "name": "makeup_id",
+                "type": "string",
+                "description": "The makeup."
+              },
+              {
+                "name": "paper_source",
+                "type": "string",
+                "description": "As chosen (BR-3)."
+              },
+              {
+                "name": "paper_id",
+                "type": "string",
+                "description": "The paper, where a fresh one was assigned."
+              },
+              {
+                "name": "original_total_marks",
+                "type": "number",
+                "description": "The original exam's total for the subject. The makeup is marked against it whichever paper is used (BR-5)."
+              },
+              {
+                "name": "original_passing_marks",
+                "type": "number",
+                "description": "The same passing mark the class was held to (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PAPER_SUPPLIED",
+              "mapsTo": "E8",
+              "httpStatus": 400,
+              "meaning": "A fresh paper was chosen with no paper named.",
+              "written": "Nothing.",
+              "notWritten": "Nothing assigned."
+            },
+            {
+              "code": "WRONG_CLASS_OR_SUBJECT",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The paper is for a different class or subject.",
+              "written": "Nothing.",
+              "notWritten": "Nothing assigned."
+            },
+            {
+              "code": "MAKEUP_NOT_APPROVED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The makeup is not approved.",
+              "written": "Nothing.",
+              "notWritten": "Nothing assigned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the paper source. Reusing the original after other students have sat it is a decision the school takes (BR-3), and a planner that picked one has decided whether a child sits a paper their classmates have already discussed.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never assemble a paper as part of this. Building one from the bank is its own work with its own review (UC-06-07 BR-9), and a paper nobody reviewed reaching a sitting is the same failure as in the main exam.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never read the paper's contents back. The same rule holds as for any paper before it is sat.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the original exam's total and passing mark. The makeup is marked against them whichever paper is used (BR-5) — a paper out of 50 marked against a total of 70 is not comparable with what the class sat.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never plan an authored makeup paper. It arrives as a file and is attached on the screen.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A paper is reassigned on the screen before the sitting is scheduled. Once the student has sat it, the paper stands."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "makeup ke liye bank se naya paper lagao",
+            "lang": "ur-Latn",
+            "gloss": "assign a fresh paper from the bank for the makeup"
+          },
+          "context": "Coordinator, Johar Town branch, on an approved makeup, the paper named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.paper.assign",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "paper_source": "Fresh paper from the question bank",
+                "paper_id": "$request.paper_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The source is the Coordinator's own words (PR-1)."
+            }
+          ],
+          "outcome": "Assigned. Report the original exam's total and passing mark (PR-4) — the fresh paper is marked against those, not against its own total."
+        },
+        {
+          "request": {
+            "text": "makeup ka paper tay kar do",
+            "lang": "ur-Latn",
+            "gloss": "decide the makeup's paper"
+          },
+          "context": "Coordinator, Johar Town branch, with no source stated.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.paper.assign",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "paper_source": "$request.paper_source — absent",
+                "paper_id": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is assigned. Ask whether a fresh paper is assembled from the bank or the original is reused — the original has been sat and discussed by the class, and reusing it is a decision the school takes rather than a default."
+        },
+        {
+          "request": {
+            "text": "teacher ne makeup ka paper likh kar diya hai, laga do",
+            "lang": "ur-Latn",
+            "gloss": "the teacher has written the makeup paper, attach it"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.paper.assign",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "paper_source": "$request.paper_source",
+                "paper_id": "$request.paper_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. An authored paper is a file (PR-5)."
+            }
+          ],
+          "outcome": "Nothing is attached. Report that it is attached on the screen, where the Coordinator reviews it — and that whichever paper is used, the sitting is marked against the original exam's total and passing mark."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-16-PC-5",
+      "intent": {
+        "name": "exam.makeup.schedule",
+        "summary": "Schedule the makeup sitting with its date, time and invigilator, and tell the student and guardian. One step.",
+        "routesHere": [
+          "schedule the makeup for the 22nd at 9am",
+          {
+            "text": "makeup 22 tareekh subah 9 baje rakh do",
+            "lang": "ur-Latn",
+            "gloss": "schedule the makeup for the 22nd at 9am"
+          },
+          {
+            "text": "makeup ki tareekh aur invigilator tay kar do",
+            "lang": "ur-Latn",
+            "gloss": "set the makeup's date and invigilator"
+          },
+          {
+            "text": "bache aur walidain ko bata do kab paper hai",
+            "lang": "ur-Latn",
+            "gloss": "tell the student and parents when the paper is"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "paper tay karo",
+              "lang": "ur-Latn",
+              "gloss": "decide the paper"
+            },
+            "goesTo": "exam.makeup.paper.assign — UC-06-16-PC-4",
+            "note": "A makeup cannot be scheduled until a paper is assigned (E8)."
+          },
+          {
+            "request": {
+              "text": "number chadha do",
+              "lang": "ur-Latn",
+              "gloss": "enter the mark"
+            },
+            "goesTo": "exam.makeup.mark — UC-06-16-PC-6"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.makeup.schedule",
+            "inputs": {
+              "makeup_id": "$request.makeup_phrase",
+              "makeup_date": "$request.makeup_date",
+              "makeup_time": "$request.makeup_time",
+              "invigilator_id": "$request.invigilator_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it tells the student and the guardian. A makeup nobody was told about produces a second absence (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. A closed day, a makeup with no paper, and a failure to notify all arrive as errors — the schedule is not saved unless the student and guardian are told (E7).",
+        "atomicity": "One write, atomic in itself: the date, the time, the invigilator and the messages to the student and guardian together or not at all (BR-4, E7). A schedule saved without the family being told is precisely how a second absence happens, which is why the notification is part of the same write."
+      },
+      "operations": [
+        {
+          "name": "exam.makeup.schedule",
+          "method": "POST",
+          "path": "/api/v1/makeups/{makeup_id}/schedule",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "makeup_id, since a makeup is scheduled once and a repeat must not message the family twice",
+          "purpose": "Schedule the makeup sitting and notify the student and guardian.",
+          "parameters": [
+            {
+              "name": "makeup_id",
+              "source": "resolved",
+              "sourceRef": "$request.makeup_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "makeup",
+                "fromPhrase": "$request.makeup_phrase",
+                "onNoMatch": "Refuse. No makeup matches for that student and paper.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the subject, the date and the state."
+              },
+              "notes": "The makeup, resolved from the student, the exam and the subject."
+            },
+            {
+              "name": "makeup_date",
+              "source": "request",
+              "sourceRef": "$request.makeup_date",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the past, and a working day (E4)."
+            },
+            {
+              "name": "makeup_time",
+              "source": "request",
+              "sourceRef": "$request.makeup_time",
+              "required": true,
+              "type": "datetime",
+              "notes": "24-hour, per the conventions."
+            },
+            {
+              "name": "invigilator_id",
+              "source": "resolved",
+              "sourceRef": "$request.invigilator_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.invigilator_phrase",
+                "onNoMatch": "Refuse. No staff member matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The staff member supervising the sitting."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The sitting as scheduled.",
+            "fields": [
+              {
+                "name": "makeup_id",
+                "type": "string",
+                "description": "The makeup."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Scheduled."
+              },
+              {
+                "name": "makeup_date",
+                "type": "date",
+                "description": "As set."
+              },
+              {
+                "name": "makeup_time",
+                "type": "datetime",
+                "description": "As set."
+              },
+              {
+                "name": "invigilator_id",
+                "type": "string",
+                "description": "Supervising."
+              },
+              {
+                "name": "student_notified",
+                "type": "string",
+                "description": "Delivery status (BR-4)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status (BR-4)."
+              },
+              {
+                "name": "marks_locked",
+                "type": "boolean",
+                "description": "True where the original exam's marks are locked. The mark cannot be entered until they are reopened (BR-11, E6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CLOSED_DAY",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The makeup date is a holiday or an off-day.",
+              "written": "Nothing.",
+              "notWritten": "Nothing scheduled."
+            },
+            {
+              "code": "NO_PAPER_ASSIGNED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "No paper has been assigned.",
+              "written": "Nothing.",
+              "notWritten": "Nothing scheduled."
+            },
+            {
+              "code": "NOTIFICATION_FAILED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The student and guardian could not be notified.",
+              "written": "Nothing.",
+              "notWritten": "Nothing scheduled.",
+              "note": "The schedule is not saved (BR-4). A makeup nobody was told about produces a second absence."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the date or the time. A child is expected to attend school on a day they were not otherwise coming, and their family has to arrange it.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report both notification statuses. The schedule is not saved unless they are told (E7), and a delivery that failed is the difference between a makeup and a second absence (BR-4).",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never work around a closed day. E4 holds here as it does for the main exam — a child cannot sit a paper on a day the school is shut.",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report where the original exam's marks are locked. The sitting can happen but the mark cannot be entered until the School Admin reopens them (BR-11, E6).",
+          "derivedFrom": [
+            "BR-11",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "No reversal is offered. A sitting that has to move is rescheduled, which messages the family again — and a family told two dates is how a student misses the second one."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "makeup 22 tareekh subah 9 baje rakh do",
+            "lang": "ur-Latn",
+            "gloss": "schedule the makeup for the 22nd at 9am"
+          },
+          "context": "Coordinator, Johar Town branch, on an approved makeup with a paper assigned, invigilator named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.schedule",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "makeup_date": "2026-11-22",
+                "makeup_time": "2026-11-22 09:00",
+                "invigilator_id": "$request.invigilator_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Date, time and invigilator are all the Coordinator's (PR-1)."
+            }
+          ],
+          "outcome": "Scheduled, and both the student and the guardian are told. Report both delivery statuses (PR-2) — the schedule exists only because they went through."
+        },
+        {
+          "request": {
+            "text": "makeup jald se jald rakh do",
+            "lang": "ur-Latn",
+            "gloss": "schedule the makeup as soon as possible"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.schedule",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "makeup_date": "$request.makeup_date — absent",
+                "makeup_time": "$request.makeup_time — absent",
+                "invigilator_id": "$request.invigilator_phrase — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is scheduled. Offer the working days before the results close and ask which, at what time, with whom invigilating — the family has to bring the child in specially, and a date chosen for them is a date they may not manage."
+        },
+        {
+          "request": {
+            "text": "makeup ki tareekh rakh do, bache ko baad mein bata denge",
+            "lang": "ur-Latn",
+            "gloss": "set the makeup's date, we will tell the child later"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.schedule",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "makeup_date": "$request.makeup_date",
+                "makeup_time": "$request.makeup_time",
+                "invigilator_id": "$request.invigilator_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The notification is part of the same write and cannot be deferred (PR-2)."
+            }
+          ],
+          "outcome": "Scheduled with the student and guardian told at the same moment. Report that the two are one act here — a makeup nobody was told about is how the second absence happens, so the schedule does not save without the message."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-16-PC-6",
+      "intent": {
+        "name": "exam.makeup.mark",
+        "summary": "Record the makeup score against the original exam and subject, tagged as a makeup. One step.",
+        "routesHere": [
+          "record 58 for this student's makeup paper",
+          {
+            "text": "makeup ke number chadha do",
+            "lang": "ur-Latn",
+            "gloss": "record the makeup marks"
+          },
+          {
+            "text": "dobara diye gaye paper ke 58 number laga do",
+            "lang": "ur-Latn",
+            "gloss": "record 58 for the paper they sat again"
+          },
+          {
+            "text": "makeup ka score darj karo",
+            "lang": "ur-Latn",
+            "gloss": "record the makeup score"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "alag se makeup ka natija banao",
+              "lang": "ur-Latn",
+              "gloss": "produce a separate makeup result"
+            },
+            "goesTo": "Not offered.",
+            "note": "The mark is uploaded against the original exam and subject and replaces the Absent flag. There is no separate makeup result, because a result nobody joins up is a result nobody reads (BR-6)."
+          },
+          {
+            "request": {
+              "text": "bacha makeup mein bhi nahi aaya",
+              "lang": "ur-Latn",
+              "gloss": "the student missed the makeup too"
+            },
+            "goesTo": "exam.makeup.absence.record — UC-06-16-PC-7"
+          },
+          {
+            "request": {
+              "text": "makeup ke number par hadd lagao",
+              "lang": "ur-Latn",
+              "gloss": "cap the makeup mark"
+            },
+            "goesTo": "Not offered.",
+            "note": "Whether a makeup mark is capped — at the pass mark, or at a set percentage — is a school policy decision and is not fixed here (BR-12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.makeup.mark",
+            "inputs": {
+              "makeup_id": "$request.makeup_phrase",
+              "score": "$request.score",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It replaces the Absent flag on the original exam's mark, tagged as earned in a makeup sitting (BR-6, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A score above the original paper's total, locked marks, and a student recorded absent from the makeup all arrive as errors.",
+        "atomicity": "One write, atomic in itself: the score against the original exam and subject, the makeup tag, the removal of the Absent flag and the recalculated result together or not at all. Grade calculation, coordinator approval and publication then run as normal (BR-9) — a makeup mark takes no separate path. The student re-enters the merit list once every subject carries a final mark, and not before (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "exam.makeup.mark",
+          "method": "POST",
+          "path": "/api/v1/makeups/{makeup_id}/mark",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "makeup_id, since a makeup carries one score",
+          "purpose": "Record the makeup score against the original exam and subject.",
+          "parameters": [
+            {
+              "name": "makeup_id",
+              "source": "resolved",
+              "sourceRef": "$request.makeup_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "makeup",
+                "fromPhrase": "$request.makeup_phrase",
+                "onNoMatch": "Refuse. No makeup matches for that student and paper.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the subject, the date and the state."
+              },
+              "notes": "The makeup, resolved from the student, the exam and the subject."
+            },
+            {
+              "name": "score",
+              "source": "request",
+              "sourceRef": "$request.score",
+              "required": true,
+              "type": "number",
+              "notes": "Between nought and the original paper's total, since the makeup is marked against the original exam's subject rules (BR-5, E5). The teacher's figure — and never capped in the plan, because whether a makeup mark is capped is a policy decision (BR-12)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The mark as recorded.",
+            "fields": [
+              {
+                "name": "makeup_id",
+                "type": "string",
+                "description": "The makeup."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student."
+              },
+              {
+                "name": "score",
+                "type": "number",
+                "description": "As recorded, against the original exam's total (BR-5)."
+              },
+              {
+                "name": "makeup_tagged",
+                "type": "boolean",
+                "description": "True. The student's result shows it was earned in a makeup sitting (BR-7)."
+              },
+              {
+                "name": "absent_flag_cleared",
+                "type": "boolean",
+                "description": "True. The mark replaces it on the original exam (BR-6)."
+              },
+              {
+                "name": "result_recalculated",
+                "type": "boolean",
+                "description": "True. Grade calculation runs as normal (BR-9)."
+              },
+              {
+                "name": "result_complete",
+                "type": "boolean",
+                "description": "True where every other subject already carries a final mark."
+              },
+              {
+                "name": "merit_list_eligible",
+                "type": "boolean",
+                "description": "True once every subject carries a final mark, and not before (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ABOVE_ORIGINAL_TOTAL",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The score is above the original paper's total.",
+              "written": "Nothing.",
+              "notWritten": "No mark recorded.",
+              "note": "The makeup is marked against the original exam's subject rules (BR-5)."
+            },
+            {
+              "code": "MARKS_LOCKED",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The original exam's marks are locked.",
+              "written": "Nothing.",
+              "notWritten": "No mark recorded.",
+              "note": "The exam is reopened first, which is a deliberate act (BR-11)."
+            },
+            {
+              "code": "ABSENT_FROM_MAKEUP",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The student is recorded absent from the makeup.",
+              "written": "Nothing.",
+              "notWritten": "No mark recorded."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the score. It is a child's result and the teacher's to state, and it is the figure that lifts a result out of incomplete.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never cap the mark. Whether a makeup mark is capped, and at what, is a school policy decision that is not fixed here (BR-12) — a planner that capped at the pass mark has written the policy.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain a reopening onto locked marks. E6 is BR-11 working: the School Admin reopens the exam deliberately, and the makeup is marked afterwards.",
+          "derivedFrom": [
+            "BR-11",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say plainly that the result will show the mark was earned in a makeup. A mark that reads identically to one sat with the class hides something the school decided (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report whether the result is now complete and whether the student re-enters the merit list. They re-enter once every subject carries a final mark, and not before (BR-10) — a family expecting a position may still not see one.",
+          "derivedFrom": [
+            "BR-9",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A makeup mark is corrected like any other submitted mark — by the Coordinator, with a reason and the previous value kept (UC-06-02 BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is bache ke makeup ke 58 number chadha do",
+            "lang": "ur-Latn",
+            "gloss": "record 58 for this student's makeup"
+          },
+          "context": "Teacher, Johar Town branch, original marks unlocked, paper out of 70.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.mark",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "score": "58",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The figure is the teacher's, uncapped (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Recorded against the original exam and subject, the Absent flag cleared and the grade recalculated. Report that the result shows the mark was earned in a makeup (PR-4), and whether the student now re-enters the merit list (PR-5)."
+        },
+        {
+          "request": {
+            "text": "makeup ke number chadha do, pass mark tak hi rakhna",
+            "lang": "ur-Latn",
+            "gloss": "record the makeup marks, but only up to the pass mark"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.mark",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "score": "$request.score — the actual score",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The score is emitted as the teacher marked it. No cap is applied in the plan (PR-2)."
+            }
+          ],
+          "outcome": "Report that capping a makeup mark is a school policy decision that is not fixed anywhere in this use case — if the school caps, the policy has to say so and the system has to apply it, rather than a plan trimming a number on the way through."
+        },
+        {
+          "request": {
+            "text": "makeup ke number laga do",
+            "lang": "ur-Latn",
+            "gloss": "enter the makeup marks"
+          },
+          "context": "Teacher, Johar Town branch, on an exam whose marks are locked.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.mark",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "score": "$request.score",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged, with no reopening chained (PR-3). The API returns MARKS_LOCKED (E6)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the School Admin reopens the exam's marks first — the makeup mark joins the ordinary marks record, so it is held by the same lock as every other mark in that subject."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-16-PC-7",
+      "intent": {
+        "name": "exam.makeup.absence.record",
+        "summary": "Record that the student missed the makeup too. One step, and no further makeup follows automatically.",
+        "routesHere": [
+          "the student missed the makeup as well",
+          {
+            "text": "bacha makeup mein bhi nahi aaya",
+            "lang": "ur-Latn",
+            "gloss": "the student did not come for the makeup either"
+          },
+          {
+            "text": "dobara ghair haazir hai, darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "absent again, record it"
+          },
+          {
+            "text": "makeup wala paper bhi nahi diya",
+            "lang": "ur-Latn",
+            "gloss": "they did not sit the makeup paper either"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "teesra moqa de do",
+              "lang": "ur-Latn",
+              "gloss": "give a third chance"
+            },
+            "goesTo": "Not offered.",
+            "note": "No further makeup is granted automatically. A second chance is not an unlimited one (BR-8)."
+          },
+          {
+            "request": {
+              "text": "ab is ko sifar gin lo",
+              "lang": "ur-Latn",
+              "gloss": "count it as zero now"
+            },
+            "goesTo": "Not offered.",
+            "note": "What the missed paper does to the result was settled by the original classification, and a second absence is recorded exactly as the first (BR-8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.makeup.absence.record",
+            "inputs": {
+              "makeup_id": "$request.makeup_phrase",
+              "note": "$request.note",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The absence is recorded exactly as the first was, and no further makeup is granted automatically (BR-8, A3)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the second absence and the audit entry together or not at all. The original classification stands and what it decided still holds — an excused absence still leaves the subject out of the percentage and the result still reads incomplete. The student stays out of the merit list until every subject carries a final mark (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "exam.makeup.absence.record",
+          "method": "POST",
+          "path": "/api/v1/makeups/{makeup_id}/absent",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "makeup_id, since a makeup is missed once",
+          "purpose": "Record that the student was absent from the makeup sitting.",
+          "parameters": [
+            {
+              "name": "makeup_id",
+              "source": "resolved",
+              "sourceRef": "$request.makeup_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "makeup",
+                "fromPhrase": "$request.makeup_phrase",
+                "onNoMatch": "Refuse. No makeup matches for that student and paper.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the subject, the date and the state."
+              },
+              "notes": "The makeup, resolved from the student, the exam and the subject."
+            },
+            {
+              "name": "note",
+              "source": "request",
+              "sourceRef": "$request.note",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 250 characters. What was observed on the day."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The second absence.",
+            "fields": [
+              {
+                "name": "makeup_id",
+                "type": "string",
+                "description": "The makeup."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Missed again. Terminal (BR-8)."
+              },
+              {
+                "name": "further_makeup_granted",
+                "type": "boolean",
+                "description": "False. Not granted automatically (BR-8)."
+              },
+              {
+                "name": "original_classification",
+                "type": "string",
+                "description": "Unchanged. What it decided still holds (UC-06-15 BR-6)."
+              },
+              {
+                "name": "result_incomplete",
+                "type": "boolean",
+                "description": "True where the original absence was excused."
+              },
+              {
+                "name": "excluded_from_merit",
+                "type": "boolean",
+                "description": "True until every subject carries a final mark (BR-10)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_SCHEDULED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The makeup was not scheduled.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "There was no sitting to miss."
+            },
+            {
+              "code": "ALREADY_MARKED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The makeup already carries a score.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never request a further makeup in the same breath. A second chance is not an unlimited one, and no further makeup is granted automatically (BR-8) — one that is given is a fresh, deliberate decision.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never change the original classification. What the missed paper does to the result was settled then (UC-06-15 BR-6), and a second absence does not reopen that decision.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report what the result now reads. An excused absence with a missed makeup leaves the result incomplete with nothing outstanding to resolve it, which somebody has to decide about before the results are finalised.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Missed again is terminal for this makeup. Any further sitting is a fresh request against the same absence, taken deliberately (BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "bacha makeup mein bhi nahi aaya",
+            "lang": "ur-Latn",
+            "gloss": "the student did not come for the makeup either"
+          },
+          "context": "Coordinator, Johar Town branch, on a scheduled makeup.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.absence.record",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "note": "$request.note",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Recorded. Report that no further makeup follows automatically (PR-1) and that the result still reads incomplete with nothing outstanding to resolve it (PR-3) — a decision somebody has to take before the results are finalised."
+        },
+        {
+          "request": {
+            "text": "dobara ghair haazir hai, ek aur moqa de do",
+            "lang": "ur-Latn",
+            "gloss": "absent again, give them one more chance"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.absence.record",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "note": "$request.note",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The absence only. No further makeup is chained (PR-1)."
+            }
+          ],
+          "outcome": "Recorded. Report that a third sitting is a fresh request against the same absence, approved on its own — the rule is that a second chance is not an unlimited one, and going past it is a decision rather than a default."
+        },
+        {
+          "request": {
+            "text": "makeup miss ho gaya, ab sifar gin lo",
+            "lang": "ur-Latn",
+            "gloss": "the makeup was missed, count it as zero now"
+          },
+          "context": "Coordinator, Johar Town branch, where the original absence was classified excused.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.makeup.absence.record",
+              "inputs": {
+                "makeup_id": "$request.makeup_phrase",
+                "note": "$request.note",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The absence only. The classification is untouched (PR-2)."
+            }
+          ],
+          "outcome": "Recorded. Report that counting it as zero means reclassifying the original absence as unexcused — a statement about why the child missed the first paper, with its own reason told to the family. It is not a consequence of missing the makeup."
+        }
+      ]
+    }
+  ]
+}

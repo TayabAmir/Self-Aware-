@@ -1,0 +1,1480 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-03-06",
+    "name": "Close a student's enrolment when they leave, after clearance, so the record stops behaving as an active one",
+    "module": "Student records",
+    "file": "../UseCases/UC-03-06.json",
+    "featureRef": "3.6 Student withdrawal and leaving"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-03-06-PC-1",
+      "intent": {
+        "name": "withdrawal.raise",
+        "summary": "Open a withdrawal when a student is leaving, with the route it arose by and the reason. One step, and nothing closes until clearance and approval.",
+        "routesHere": [
+          "the family has applied to withdraw their daughter from the end of the month",
+          {
+            "text": "walidain ne bache ka naam katwane ki darkhwast di hai",
+            "lang": "ur-Latn",
+            "gloss": "the parents have applied to withdraw the child"
+          },
+          {
+            "text": "ye bacha ab school nahi aa raha, naam kaat do",
+            "lang": "ur-Latn",
+            "gloss": "this child is not coming to school any more, remove the name"
+          },
+          {
+            "text": "naye session mein wapas nahi aaya, leaving mark kar do",
+            "lang": "ur-Latn",
+            "gloss": "they did not return for the new session, mark them as left"
+          },
+          "school-initiated withdrawal for non-payment"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "bache ko nikalna hai, disciplinary case hai",
+              "lang": "ur-Latn",
+              "gloss": "we need to expel the child, it is a disciplinary case"
+            },
+            "goesTo": "expulsion.recommend — UC-03-08",
+            "note": "An expulsion is a disciplinary decision taken after the family is heard, with its own case, hearing and appeal (UC-03-08 BR-3, BR-6)."
+          },
+          {
+            "request": {
+              "text": "kuch din ke liye school se bahar rakhna hai",
+              "lang": "ur-Latn",
+              "gloss": "keep them out of school for a few days"
+            },
+            "goesTo": "suspension.recommend — UC-03-07",
+            "note": "A suspended student is not withdrawn — the place is held and the enrolment continues (UC-03-07 BR-5)."
+          },
+          {
+            "request": {
+              "text": "baqaya maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "write off the balance"
+            },
+            "goesTo": "fee write-off — module 4",
+            "note": "Where a balance is written off rather than collected, it is raised and approved under the write-off use case by the approver named there, and not within this one. A withdrawal must not become a route around that control (BR-6, E5)."
+          },
+          {
+            "request": {
+              "text": "bacha wapas aa gaya hai, dobara dakhil karo",
+              "lang": "ur-Latn",
+              "gloss": "the child is back, re-admit them"
+            },
+            "goesTo": "re-admission — UC-03-01",
+            "note": "Re-admission reads the withdrawn record to bring the student back (BR-12, A7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "withdrawal.raise",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "route": "$request.route",
+              "reason": "$request.reason",
+              "reason_detail": "$request.reason_detail",
+              "intended_leaving_date": "$request.intended_leaving_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Until a withdrawal exists a departed student continues to be invoiced, marked absent, alerted on and counted on the section roster (BR-1) — but raising it closes nothing on its own."
+          }
+        ],
+        "onFailure": "Stop and report. A withdrawal with no reason is not raised at all.",
+        "atomicity": "One write: the withdrawal and the audit entry together or not at all. **Nothing closes.** The student stays enrolled, on the roster and invoiced until clearance runs and the withdrawal is approved (BR-4, BR-10). The reason decides which certificates are issued and whether a later re-admission is permitted (BR-3) — which of the reasons permit one is not decided anywhere in this use case."
+      },
+      "operations": [
+        {
+          "name": "withdrawal.raise",
+          "method": "POST",
+          "path": "/api/v1/withdrawals",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "student_id, since a student carries one open withdrawal",
+          "purpose": "Raise a withdrawal for an enrolled student.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No enrolled student matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their class, section and family code."
+              },
+              "notes": "An enrolled student."
+            },
+            {
+              "name": "route",
+              "source": "request",
+              "sourceRef": "$request.route",
+              "required": true,
+              "type": "enum: Guardian applied | School initiated | Not returned at rollover",
+              "notes": "How the withdrawal arose (BR-2). All three exist and the third must not be omitted — a family that applied and a school that acted are different records, and one is not written as the other."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "enum: Transfer to another school | Family relocating | Financial | Disciplinary | Deceased",
+              "notes": "Why the student is leaving (BR-3, E1). It decides which certificates are issued and whether a later re-admission is permitted, so it is never inferred from the route."
+            },
+            {
+              "name": "reason_detail",
+              "source": "request",
+              "sourceRef": "$request.reason_detail",
+              "required": false,
+              "type": "string",
+              "notes": "20 to 500 characters. What the reason alone does not explain."
+            },
+            {
+              "name": "intended_leaving_date",
+              "source": "request",
+              "sourceRef": "$request.intended_leaving_date",
+              "required": true,
+              "type": "date",
+              "notes": "The date the enrolment closes (BR-3). Until it, the student is enrolled and invoiced as normal."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The withdrawal as raised.",
+            "fields": [
+              {
+                "name": "withdrawal_id",
+                "type": "string",
+                "description": "The withdrawal."
+              },
+              {
+                "name": "route",
+                "type": "string",
+                "description": "As recorded (BR-2)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As recorded."
+              },
+              {
+                "name": "intended_leaving_date",
+                "type": "date",
+                "description": "When the enrolment would close."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Raised. Nothing has closed (BR-1)."
+              },
+              {
+                "name": "fee_position",
+                "type": "money",
+                "description": "What the student owes, or the credit held. Settled before anything closes (BR-4)."
+              },
+              {
+                "name": "unused_credit",
+                "type": "money",
+                "description": "Any credit held against the family code, paid out at clearance. This is the only trigger that payout has (BR-5)."
+              },
+              {
+                "name": "security_deposit",
+                "type": "money",
+                "description": "Any deposit held, refunded at clearance (BR-4)."
+              },
+              {
+                "name": "school_property",
+                "type": "object[]",
+                "description": "The ID card, library books, sports kit and any equipment issued, each to be recorded as returned (BR-4)."
+              },
+              {
+                "name": "re_admission_permitted",
+                "type": "boolean",
+                "description": "Derived from the reason (BR-3). Which reasons permit one is an open question in this use case."
+              },
+              {
+                "name": "approver_role",
+                "type": "string",
+                "description": "Who approves. The School Admin for a withdrawal the family applied for, the Principal for one on a disciplinary decision (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_REASON",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "No reason is recorded.",
+              "written": "Nothing.",
+              "notWritten": "The withdrawal is not raised.",
+              "note": "The reason decides the certificates and whether re-admission is permitted (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never infer the route. A family that applied, a school that acted for non-payment and a student who simply did not return are three different records (BR-2), and the third must not be omitted because it is the quietest.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never choose the reason. It decides which certificates are issued and whether the child can ever come back (BR-3) — and \"Disciplinary\" in particular is a decision taken through the expulsion route, not a label applied here.",
+          "derivedFrom": [
+            "BR-3",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe a raised withdrawal as closing anything. The student stays enrolled, on the roster, invoiced and expected in attendance until clearance runs and it is approved (BR-1, BR-4, BR-10).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the fee position, the credit, the deposit and the property outstanding. Clearance is the point at which the school still has standing to ask (BR-4), and the family should know what it involves before the leaving date.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never plan a write-off. A balance written off rather than collected is raised and approved under the write-off use case by the approver named there — a withdrawal must not become a route around that control (BR-6, E5).",
+          "derivedFrom": [
+            "BR-6",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report re-admission as derived and undecided. The reason determines it (BR-3), but which reasons permit one is not stated anywhere in this use case.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A withdrawal is never deleted (BR-12, E8). One raised in error is returned unapproved or cancelled, and the record stays — results, the fee ledger, ledger entries and audit trails all reference the student."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "walidain ne darkhwast di hai — bacha doosre school ja raha hai, mahine ke aakhir tak",
+            "lang": "ur-Latn",
+            "gloss": "the parents have applied — the child is transferring to another school, from the end of the month"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.raise",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "route": "Guardian applied",
+                "reason": "Transfer to another school",
+                "reason_detail": "$request.reason_detail",
+                "intended_leaving_date": "the end of the month, as stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The route and the reason are both what the family said (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Raised. Report the fee position, any credit and deposit held, and the school property still out (PR-4) — and that the child is still enrolled, invoiced and expected in class until this is cleared and approved (PR-3)."
+        },
+        {
+          "request": {
+            "text": "ye bacha do mahine se nahi aa raha, naam kaat do",
+            "lang": "ur-Latn",
+            "gloss": "this child has not come for two months, remove the name"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.raise",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "route": "$request.route — not stated",
+                "reason": "$request.reason — not stated",
+                "reason_detail": "omitted",
+                "intended_leaving_date": "$request.intended_leaving_date",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Neither the route nor the reason has anything to take it from (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Nothing is raised. Ask whether the family applied, the school is initiating this, or the child simply did not return — and why they are leaving. The reason decides which certificates the family gets and whether the child can be re-admitted, so it is not a label to infer from an empty seat."
+        },
+        {
+          "request": {
+            "text": "baqaya bohat hai, naam kaat do aur baqaya maaf kar do",
+            "lang": "ur-Latn",
+            "gloss": "there is a large balance, remove the name and write it off"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.raise",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "route": "School initiated",
+                "reason": "Financial",
+                "reason_detail": "$request.reason_detail",
+                "intended_leaving_date": "$request.intended_leaving_date",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The withdrawal only. No write-off is planned (PR-5)."
+            }
+          ],
+          "outcome": "Raised. Report that the write-off is proposed and approved under the write-off use case by the approver named there — a balance cleared from inside a withdrawal would bypass exactly the control that exists to stop it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-06-PC-2",
+      "intent": {
+        "name": "withdrawal.property.record",
+        "summary": "Record school property returned by a leaving student. One step, and anything not returned stays outstanding.",
+        "routesHere": [
+          "record that the ID card and three library books have come back",
+          {
+            "text": "ID card aur library ki kitabein wapas mil gayi hain",
+            "lang": "ur-Latn",
+            "gloss": "the ID card and the library books have been returned"
+          },
+          {
+            "text": "sports kit wapas nahi aayi",
+            "lang": "ur-Latn",
+            "gloss": "the sports kit has not come back"
+          },
+          {
+            "text": "school ki cheezein wapas darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "record the school property returned"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "fees ka hisab band kar do",
+              "lang": "ur-Latn",
+              "gloss": "settle the fee position"
+            },
+            "goesTo": "withdrawal.clearance.confirm — UC-03-06-PC-3"
+          },
+          {
+            "request": {
+              "text": "cheezein wapas nahi aayin, chhorh do",
+              "lang": "ur-Latn",
+              "gloss": "the items did not come back, let it go"
+            },
+            "goesTo": "Not offered.",
+            "note": "The clearance item stays outstanding rather than being passed over (E4). Clearance is the point at which the school still has standing to ask (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "withdrawal.property.record",
+            "inputs": {
+              "withdrawal_id": "$request.withdrawal_phrase",
+              "items": "$request.items",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Each item is recorded as returned or outstanding, and an item not returned stays on the clearance list (BR-4, E4)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the property rows and the audit entry together or not at all. Nothing closes — the leaving date cannot pass with clearance outstanding, since clearance is the point at which the school still has standing to ask (BR-4, E7)."
+      },
+      "operations": [
+        {
+          "name": "withdrawal.property.record",
+          "method": "POST",
+          "path": "/api/v1/withdrawals/{withdrawal_id}/property",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "withdrawal_id + item, since an item is recorded once",
+          "purpose": "Record which items of school property have been returned.",
+          "parameters": [
+            {
+              "name": "withdrawal_id",
+              "source": "resolved",
+              "sourceRef": "$request.withdrawal_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "withdrawal",
+                "fromPhrase": "$request.withdrawal_phrase",
+                "onNoMatch": "Refuse. No withdrawal matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the route, the intended leaving date and the status."
+              },
+              "notes": "The withdrawal, resolved from the student and its state."
+            },
+            {
+              "name": "items",
+              "source": "request",
+              "sourceRef": "$request.items",
+              "required": true,
+              "type": "object[]",
+              "notes": "Per item: which, and whether it has been returned. The ID card, library books, sports kit and any equipment issued (BR-4). Only what the actor confirmed came back — an item marked returned on assumption is school property nobody has."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The property position.",
+            "fields": [
+              {
+                "name": "withdrawal_id",
+                "type": "string",
+                "description": "The withdrawal."
+              },
+              {
+                "name": "items_returned",
+                "type": "object[]",
+                "description": "Recorded as back."
+              },
+              {
+                "name": "items_outstanding",
+                "type": "object[]",
+                "description": "Still out. Each stays on the clearance list (E4)."
+              },
+              {
+                "name": "clearance_complete",
+                "type": "boolean",
+                "description": "False while any clearance item — fees, property, deposit or credit — remains (BR-4)."
+              },
+              {
+                "name": "intended_leaving_date",
+                "type": "date",
+                "description": "The enrolment does not close with clearance outstanding (E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ITEM_NOT_ON_LIST",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "An item named is not on this student's property list.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never mark an item returned that the actor did not confirm. This row says the school has it back, and an assumed one is a library book nobody will look for again.",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never pass over an outstanding item to complete the clearance. It stays on the list (E4), and clearance is the point at which the school still has standing to ask (BR-4).",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report what is still out and that the leaving date cannot pass with it outstanding (E7). The family is about to leave, and this is the last time anybody will see them.",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A property row is recorded again rather than withdrawn. It states what the school holds."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ID card aur teen kitabein wapas mil gayi hain, sports kit nahi aayi",
+            "lang": "ur-Latn",
+            "gloss": "the ID card and three books are back, the sports kit has not come"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.property.record",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "items": "ID card returned, three library books returned, sports kit outstanding",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only what was confirmed is marked returned (PR-1)."
+            }
+          ],
+          "outcome": "Recorded. Report the sports kit as still outstanding and that the enrolment does not close while it is (PR-3) — the family is here now, which is the point at which the school can still ask."
+        },
+        {
+          "request": {
+            "text": "sab cheezein wapas mil gayi hain, clearance kar do",
+            "lang": "ur-Latn",
+            "gloss": "everything has come back, complete the clearance"
+          },
+          "context": "School Admin, Johar Town branch, with four items on the list and two confirmed.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.property.record",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "items": "$request.items — only the two the actor named",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The two named are recorded; the other two are not marked on \"everything\" (PR-1)."
+            }
+          ],
+          "outcome": "Two items recorded as returned. Report the remaining two by name and ask whether they came back — \"everything\" recorded against a list nobody read item by item is how school property quietly disappears."
+        },
+        {
+          "request": {
+            "text": "kitabein gum ho gayi hain, chhorh do aur aage barho",
+            "lang": "ur-Latn",
+            "gloss": "the books are lost, let it go and move on"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.property.record",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "items": "the books marked outstanding, as stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The items stay outstanding rather than being passed over (PR-2)."
+            }
+          ],
+          "outcome": "Recorded as outstanding. Report that clearance is not complete and the enrolment does not close on it — whether the school charges for them, waives them, or lets the withdrawal proceed regardless is a decision somebody takes, not one a plan makes by marking them returned."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-06-PC-3",
+      "intent": {
+        "name": "withdrawal.clearance.confirm",
+        "summary": "Confirm clearance: settle the fee position, pay out any unused credit and refund the deposit. Accounts, one step.",
+        "routesHere": [
+          "clearance is done — the fees are settled and the deposit is refunded",
+          {
+            "text": "clearance mukammal hai, hisab saaf hai",
+            "lang": "ur-Latn",
+            "gloss": "clearance is complete, the account is settled"
+          },
+          {
+            "text": "family ka bacha hua credit wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "pay out the family's remaining credit"
+          },
+          {
+            "text": "security deposit wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "refund the security deposit"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "baqaya maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "write off the balance"
+            },
+            "goesTo": "fee write-off — module 4",
+            "note": "The write-off is raised and approved under the write-off use case by the approver named there, and is not approved within this one (BR-6, E5)."
+          },
+          {
+            "request": {
+              "text": "school ki cheezein wapas darj karo",
+              "lang": "ur-Latn",
+              "gloss": "record the school property returned"
+            },
+            "goesTo": "withdrawal.property.record — UC-03-06-PC-2"
+          },
+          {
+            "request": {
+              "text": "naam kaat do",
+              "lang": "ur-Latn",
+              "gloss": "close the enrolment"
+            },
+            "goesTo": "withdrawal.approve — UC-03-06-PC-4",
+            "note": "The enrolment closes on approval and on the leaving date, not at clearance (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "withdrawal.clearance.confirm",
+            "inputs": {
+              "withdrawal_id": "$request.withdrawal_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Any unused credit held against the family is paid out through the voucher route as part of clearance — this is the only trigger that payout has (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. An outstanding fee balance is handled by configuration: it may block the withdrawal, block only the certificate, or neither (BR-7).",
+        "atomicity": "One write, atomic in itself: the fee position, the credit payout voucher, the deposit refund and the clearance record together or not at all. The credit payout is the only trigger that payout has (BR-5) — a withdrawal completed without it leaves money the family is owed sitting against a closed record."
+      },
+      "operations": [
+        {
+          "name": "withdrawal.clearance.confirm",
+          "method": "POST",
+          "path": "/api/v1/withdrawals/{withdrawal_id}/clearance",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "withdrawal_id, since a withdrawal is cleared once and a repeat must not pay the credit out twice",
+          "purpose": "Confirm clearance, paying out unused credit and refunding the deposit.",
+          "parameters": [
+            {
+              "name": "withdrawal_id",
+              "source": "resolved",
+              "sourceRef": "$request.withdrawal_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "withdrawal",
+                "fromPhrase": "$request.withdrawal_phrase",
+                "onNoMatch": "Refuse. No withdrawal matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the route, the intended leaving date and the status."
+              },
+              "notes": "The withdrawal, resolved from the student and its state."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The clearance.",
+            "fields": [
+              {
+                "name": "withdrawal_id",
+                "type": "string",
+                "description": "The withdrawal."
+              },
+              {
+                "name": "fee_position",
+                "type": "money",
+                "description": "What is owed, or the credit held (BR-4)."
+              },
+              {
+                "name": "credit_paid_out",
+                "type": "money",
+                "description": "Any unused credit, paid through the voucher route. This is the only trigger that payout has (BR-5)."
+              },
+              {
+                "name": "deposit_refunded",
+                "type": "money",
+                "description": "Any security deposit held (BR-4)."
+              },
+              {
+                "name": "voucher_id",
+                "type": "string",
+                "description": "The payment voucher the payout went through."
+              },
+              {
+                "name": "property_outstanding",
+                "type": "object[]",
+                "description": "Items not yet returned. Clearance is not complete while any remains (E4)."
+              },
+              {
+                "name": "balance_outstanding",
+                "type": "money",
+                "description": "Any unsettled balance."
+              },
+              {
+                "name": "balance_blocks_withdrawal",
+                "type": "boolean",
+                "description": "Configuration set by the Super Admin (BR-7)."
+              },
+              {
+                "name": "balance_blocks_certificate",
+                "type": "boolean",
+                "description": "Configuration. Withholding the certificate is leverage, and it also withholds a document the child needs to enrol anywhere else (BR-7)."
+              },
+              {
+                "name": "clearance_complete",
+                "type": "boolean",
+                "description": "Whether everything is settled."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "BALANCE_BLOCKS_WITHDRAWAL",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "A fee balance is outstanding and the configuration blocks the withdrawal.",
+              "written": "Nothing.",
+              "notWritten": "Clearance not confirmed.",
+              "note": "It cannot be approved until the balance is settled (BR-7)."
+            },
+            {
+              "code": "BALANCE_BLOCKS_CERTIFICATE",
+              "mapsTo": "E3",
+              "httpStatus": 200,
+              "meaning": "A fee balance is outstanding and the configuration blocks only the certificate.",
+              "written": "Clearance is confirmed and the withdrawal proceeds.",
+              "notWritten": "The leaving certificate is held (BR-7).",
+              "treatedAsSuccess": true,
+              "note": "Not a refusal. Report which document is being held and why."
+            },
+            {
+              "code": "PROPERTY_OUTSTANDING",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "School property has not been returned.",
+              "written": "Nothing.",
+              "notWritten": "Clearance not confirmed.",
+              "note": "The item stays outstanding rather than being passed over."
+            },
+            {
+              "code": "WRITE_OFF_ATTEMPTED",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "A write-off was attempted from within the withdrawal.",
+              "written": "Nothing.",
+              "notWritten": "Nothing written off.",
+              "note": "It is raised and approved under the write-off use case (BR-6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write off a balance here. E5 is BR-6 working — a withdrawal must not become a route around the write-off approval, and a balance cleared inside one is money the school lost without deciding to.",
+          "derivedFrom": [
+            "BR-6",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the credit payout explicitly. This is the only trigger that payout has (BR-5), and a clearance that skipped it leaves money the family is owed against a record about to close.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report which configuration applies to an outstanding balance. Blocking the withdrawal, blocking only the certificate and blocking neither are three different outcomes for the family (BR-7), and which the school does is not decided anywhere in this use case.",
+          "derivedFrom": [
+            "BR-7",
+            "E2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say plainly when a leaving certificate is being held. It is effectively required for the child to enrol anywhere else — withholding it is leverage, and it should be a stated decision rather than a side effect (BR-7).",
+          "derivedFrom": [
+            "BR-7",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never confirm clearance with property outstanding. It stays on the list (E4), and this is the last point at which the school has standing to ask (BR-4).",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A confirmed clearance is not reversed — the credit has been paid out and the deposit refunded. A figure found wrong afterwards is corrected as its own record."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "clearance mukammal hai — hisab saaf, deposit wapas",
+            "lang": "ur-Latn",
+            "gloss": "clearance is complete — the account is settled and the deposit returned"
+          },
+          "context": "Accounts, Johar Town branch, property all returned.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.clearance.confirm",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Confirmed. Report the deposit refunded and any unused credit paid out through the voucher route (PR-2) — that payout happens here or not at all."
+        },
+        {
+          "request": {
+            "text": "baqaya 18,000 hai, maaf kar ke clearance kar do",
+            "lang": "ur-Latn",
+            "gloss": "there is 18,000 outstanding, waive it and clear them"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.clearance.confirm",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The clearance is emitted; nothing is written off (PR-1). The API returns whichever balance rule the configuration sets."
+            }
+          ],
+          "outcome": "Report that the 18,000 is written off under the write-off use case, by the approver named there, with the recovery attempts recorded — not inside this. Then report which configuration applies (PR-3): whether the balance blocks the withdrawal, blocks only the leaving certificate, or neither."
+        },
+        {
+          "request": {
+            "text": "baqaya hai, certificate rok lo aur clearance kar do",
+            "lang": "ur-Latn",
+            "gloss": "there is a balance, hold the certificate and clear them"
+          },
+          "context": "Accounts, Johar Town branch, configuration blocking only the certificate.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.clearance.confirm",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns BALANCE_BLOCKS_CERTIFICATE (E3) on the success path."
+            }
+          ],
+          "outcome": "Clearance is confirmed and the withdrawal proceeds, with the leaving certificate held. Say so plainly (PR-4) — that document is effectively required for the child to enrol anywhere else, so holding it is leverage against the family and worth naming as a decision rather than reporting as a status."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-06-PC-4",
+      "intent": {
+        "name": "withdrawal.approve",
+        "summary": "Approve a withdrawal, which closes the enrolment on the leaving date and requests the family's certificates. One step.",
+        "routesHere": [
+          "approve this withdrawal",
+          {
+            "text": "ye withdrawal manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this withdrawal"
+          },
+          {
+            "text": "clearance ho gayi hai, naam kaat do",
+            "lang": "ur-Latn",
+            "gloss": "clearance is done, close the enrolment"
+          },
+          {
+            "text": "manzoori de do aur certificates jari karwa do",
+            "lang": "ur-Latn",
+            "gloss": "approve it and have the certificates issued"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "withdrawal manzoor nahi",
+              "lang": "ur-Latn",
+              "gloss": "the withdrawal is not approved"
+            },
+            "goesTo": "withdrawal.return — UC-03-06-PC-5"
+          },
+          {
+            "request": {
+              "text": "baad mein bacha wapas aa sakta hai?",
+              "lang": "ur-Latn",
+              "gloss": "can the child come back later?"
+            },
+            "goesTo": "re-admission — UC-03-01",
+            "note": "Re-admission reads the withdrawn record to bring the student back, where the reason permits it (BR-3, BR-12, A7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "withdrawal.approve",
+            "inputs": {
+              "withdrawal_id": "$request.withdrawal_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches the roster, the invoicing, the attendance and the portal. On the leaving date the enrolment closes, the student comes off the section roster, attendance stops being expected, alerts stop, and no further invoice is raised (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by the School Admin on a disciplinary withdrawal, and clearance still outstanding, are both refused.",
+        "atomicity": "One write, atomic in itself: the approval, the certificate requests, the closure of the enrolment on the leaving date, the end of forward-looking portal access and the record set to Withdrawn, together or not at all. The certificates the family needs are requested as part of this rather than separately — the leaving certificate, the character certificate and the result or transcript, which are what the next school will require (BR-9). The guardian keeps read access to fee history, receipts and results; a family still needs their own records after they leave (BR-11). The record is deactivated and never deleted (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "withdrawal.approve",
+          "method": "POST",
+          "path": "/api/v1/withdrawals/{withdrawal_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "withdrawal_id, since a withdrawal is approved once",
+          "purpose": "Approve the withdrawal, closing the enrolment on the leaving date.",
+          "parameters": [
+            {
+              "name": "withdrawal_id",
+              "source": "resolved",
+              "sourceRef": "$request.withdrawal_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "withdrawal",
+                "fromPhrase": "$request.withdrawal_phrase",
+                "onNoMatch": "Refuse. No withdrawal matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the route, the intended leaving date and the status."
+              },
+              "notes": "The withdrawal, resolved from the student and its state."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval and what it closes.",
+            "fields": [
+              {
+                "name": "withdrawal_id",
+                "type": "string",
+                "description": "The withdrawal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved, and Withdrawn on the leaving date."
+              },
+              {
+                "name": "leaving_date",
+                "type": "date",
+                "description": "When the enrolment closes (BR-10)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The School Admin for a family application, the Principal for a disciplinary decision (BR-8)."
+              },
+              {
+                "name": "certificates_requested",
+                "type": "string[]",
+                "description": "The school leaving certificate, the character certificate and the result or transcript (BR-9)."
+              },
+              {
+                "name": "certificates_held",
+                "type": "string[]",
+                "description": "Any held because a balance is outstanding and the configuration blocks them (BR-7, E3)."
+              },
+              {
+                "name": "removed_from_roster",
+                "type": "boolean",
+                "description": "On the leaving date, so class counts and teacher lists are correct (BR-10)."
+              },
+              {
+                "name": "portal_access",
+                "type": "string",
+                "description": "Forward-looking access ends; read access to fee history, receipts and results is retained (BR-11)."
+              },
+              {
+                "name": "re_admission_permitted",
+                "type": "boolean",
+                "description": "Derived from the reason (BR-3)."
+              },
+              {
+                "name": "record_state",
+                "type": "string",
+                "description": "Withdrawn and deactivated. Never deleted (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DISCIPLINARY_NEEDS_PRINCIPAL",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The School Admin approved a withdrawal initiated on a disciplinary decision.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "The Principal signs a disciplinary decision and it is not configurable away (BR-8)."
+            },
+            {
+              "code": "CLEARANCE_OUTSTANDING",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The leaving date is reached with clearance outstanding.",
+              "written": "Nothing.",
+              "notWritten": "The enrolment does not close.",
+              "note": "Clearance is the point at which the school still has standing to ask (BR-4)."
+            },
+            {
+              "code": "BALANCE_BLOCKS_WITHDRAWAL",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "A balance is outstanding and the configuration blocks the withdrawal.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "It cannot be approved until the balance is settled (BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a disciplinary withdrawal as the School Admin. E6 is BR-8 working — the Principal signs a decision that ends a child's place at the school, and the configuration cannot move it down.",
+          "derivedFrom": [
+            "BR-8",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report exactly what closes and when. On the leaving date the student comes off the roster, attendance stops being expected, alerts stop and no further invoice is raised (BR-10) — several teams see the effect and none of them is in this conversation.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the certificates requested, and any held. They are what the next school will require (BR-9), and a held leaving certificate is a child who cannot enrol elsewhere (BR-7).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that the guardian keeps read access. Forward-looking access ends but fee history, receipts and results stay readable — a family still needs their own records after they leave (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never describe the record as deleted. It is set to Withdrawn and deactivated, because results, the fee ledger, ledger entries and audit trails all reference it, and re-admission reads it to bring the student back (BR-12, E8).",
+          "derivedFrom": [
+            "BR-12",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approved withdrawal is not undone. A student who returns comes back through re-admission, which reads the withdrawn record (BR-12, A7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "clearance mukammal hai, ye withdrawal manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "clearance is complete, approve this withdrawal"
+          },
+          "context": "School Admin, Johar Town branch, on a family application.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.approve",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved. Report the leaving date and what happens on it — off the roster, no more attendance expected, no more alerts, no further invoice (PR-2) — the three certificates requested (PR-3), and that the guardian keeps read access to their own records (PR-4)."
+        },
+        {
+          "request": {
+            "text": "disciplinary case hai, main manzoor kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "it is a disciplinary case, I will approve it"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.approve",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns DISCIPLINARY_NEEDS_PRINCIPAL (E6)."
+            }
+          ],
+          "outcome": "Not approved. Report that the Principal signs a withdrawal taken on a disciplinary decision — and that where the school is ending a place on discipline, the expulsion route with its hearing and appeal may be what is actually meant."
+        },
+        {
+          "request": {
+            "text": "naam kaat do, kitabein baad mein aa jayengi",
+            "lang": "ur-Latn",
+            "gloss": "close the enrolment, the books will come back later"
+          },
+          "context": "School Admin, Johar Town branch, with property outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.approve",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns CLEARANCE_OUTSTANDING (E7)."
+            }
+          ],
+          "outcome": "The enrolment does not close. Report the outstanding items — once the record closes the family has gone, and clearance is the point at which the school still has standing to ask."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-06-PC-5",
+      "intent": {
+        "name": "withdrawal.return",
+        "summary": "Return a withdrawal unapproved, with the reason. One step, and the student stays enrolled.",
+        "routesHere": [
+          "return this withdrawal — the clearance is not complete",
+          {
+            "text": "ye withdrawal wapas bhej do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "return this withdrawal with the reason"
+          },
+          {
+            "text": "manzoor nahi kar sakta, theek karwa lo",
+            "lang": "ur-Latn",
+            "gloss": "I cannot approve it, have it corrected"
+          },
+          {
+            "text": "bacha abhi enrolled rahega",
+            "lang": "ur-Latn",
+            "gloss": "the child stays enrolled for now"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "withdrawal manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the withdrawal"
+            },
+            "goesTo": "withdrawal.approve — UC-03-06-PC-4"
+          },
+          {
+            "request": {
+              "text": "withdrawal khatam kar do, bacha ruk gaya hai",
+              "lang": "ur-Latn",
+              "gloss": "cancel the withdrawal, the child is staying"
+            },
+            "goesTo": "Cancelled on the screen.",
+            "note": "A withdrawal that will not proceed is cancelled and stays on the record. It is never deleted (BR-12, E8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "withdrawal.return",
+            "inputs": {
+              "withdrawal_id": "$request.withdrawal_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The student stays enrolled — invoiced, on the roster, and expected in attendance as before (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. Nothing closes and nothing is issued. The student remains enrolled, which means they continue to be invoiced and marked — the family may believe they have left, and the two states diverge quietly (BR-1)."
+      },
+      "operations": [
+        {
+          "name": "withdrawal.return",
+          "method": "POST",
+          "path": "/api/v1/withdrawals/{withdrawal_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "withdrawal_id, since a withdrawal sits in one place at a time",
+          "purpose": "Return the withdrawal unapproved with the reason.",
+          "parameters": [
+            {
+              "name": "withdrawal_id",
+              "source": "resolved",
+              "sourceRef": "$request.withdrawal_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "withdrawal",
+                "fromPhrase": "$request.withdrawal_phrase",
+                "onNoMatch": "Refuse. No withdrawal matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the route, the intended leaving date and the status."
+              },
+              "notes": "The withdrawal, resolved from the student and its state."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required to return a withdrawal unapproved. Whoever raised it works from this."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "withdrawal_id",
+                "type": "string",
+                "description": "The withdrawal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It goes back to be corrected and raised again."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The configured approver."
+              },
+              {
+                "name": "student_state",
+                "type": "string",
+                "description": "Still enrolled. Invoiced, on the roster and expected in attendance (BR-1)."
+              },
+              {
+                "name": "clearance_outstanding",
+                "type": "object[]",
+                "description": "What is still to settle, where that is why it was returned."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A withdrawal was returned with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The withdrawal is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. Whoever raised the withdrawal works from it, and a family may be waiting on a leaving certificate while it sits unresolved.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report that the student stays enrolled. They continue to be invoiced, marked and alerted on (BR-1) — a family who believes the child has left will be surprised by next month's invoice.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report what is still outstanding on the clearance where that is the reason. It is the thing somebody has to act on.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never plan a fresh withdrawal alongside the return. It is corrected and raised again by whoever raised it.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. The withdrawal is corrected and raised again, or cancelled — and it stays on the record either way (BR-12)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye withdrawal wapas bhej do — clearance mukammal nahi hai",
+            "lang": "ur-Latn",
+            "gloss": "return this withdrawal — the clearance is not complete"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.return",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "reason": "The sports kit and two library books are still outstanding and the deposit has not been refunded.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the approver's own (PR-1)."
+            }
+          ],
+          "outcome": "Returned. Report that the student is still enrolled and still being invoiced (PR-2), and list what is outstanding (PR-3) — the family is likely to think they have already left."
+        },
+        {
+          "request": {
+            "text": "withdrawal wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return the withdrawal"
+          },
+          "context": "Principal, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.return",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what has to be put right — a withdrawal returned with no reason sits unresolved, and meanwhile the child is invoiced and marked absent every day."
+        },
+        {
+          "request": {
+            "text": "bacha ruk gaya hai, withdrawal khatam kar do",
+            "lang": "ur-Latn",
+            "gloss": "the child is staying, cancel the withdrawal"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "withdrawal.return",
+              "inputs": {
+                "withdrawal_id": "$request.withdrawal_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A return is not a cancellation. The two lead to different states."
+            }
+          ],
+          "outcome": "Report the difference before acting: returning sends it back to be corrected and raised again, while cancelling ends it and leaves the student enrolled with the withdrawal on record. Either way nothing is deleted — and if the family is staying, cancelling is what they mean."
+        }
+      ]
+    }
+  ]
+}

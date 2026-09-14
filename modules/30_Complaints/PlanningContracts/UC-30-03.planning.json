@@ -1,0 +1,750 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-30-03",
+    "name": "Let a member of staff raise a complaint, and let them decide at the moment of raising whether it is confidential",
+    "module": "Help Desk & Complaints",
+    "file": "../UseCases/UC-30-03.json",
+    "featureRef": "30.3 Raising a staff complaint"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-30-03-PC-1",
+      "intent": {
+        "name": "complaint.staff.raise",
+        "summary": "Raise a complaint as a member of staff, and choose — once, now — whether it is confidential.",
+        "routesHere": [
+          "raise a complaint that my Saturday lab hours are not being paid",
+          {
+            "text": "meri Saturday ki overtime tankhwah mein nahi aa rahi, shikayat karni hai",
+            "lang": "ur-Latn",
+            "gloss": "my Saturday overtime is not coming into my salary, I want to complain"
+          },
+          {
+            "text": "School Admin ke rawaiye ki confidential shikayat karni hai",
+            "lang": "ur-Latn",
+            "gloss": "I want to make a confidential complaint about the School Admin's behaviour"
+          },
+          {
+            "text": "kaam ka bojh bohot zyada hai, shikayat darj karni hai",
+            "lang": "ur-Latn",
+            "gloss": "the workload is far too heavy, I want to lodge a complaint"
+          },
+          "complain about the broken fume cupboard in the lab"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "kisi student ke walid ki shikayat karni hai",
+              "lang": "ur-Latn",
+              "gloss": "I want to complain about a student's father"
+            },
+            "goesTo": "Not offered as modelled.",
+            "note": "The categories cover the school rather than its families. Whether a member of staff can complain about a parent or a student is an open question this use case raises and does not answer (OQ-5)."
+          },
+          {
+            "request": {
+              "text": "gumnaam shikayat karni hai",
+              "lang": "ur-Latn",
+              "gloss": "I want to complain anonymously"
+            },
+            "goesTo": "Not offered.",
+            "note": "Confidential is not anonymous. A confidential complaint goes to the Principal alone, and the raiser is always named to them — anonymity is a different protection again, and not modelled (OQ-2)."
+          },
+          {
+            "request": {
+              "text": "meri shikayat mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete my complaint"
+            },
+            "goesTo": "complaint.staff.withdraw — this use case.",
+            "note": "A complaint is never deleted. One raised and later withdrawn stays on the record (BR-7, E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.staff.raise",
+            "inputs": {
+              "subject": "$request.subject",
+              "category": "$request.category",
+              "details": "$request.details",
+              "attachment_id": "$request.attachment_phrase",
+              "confidential": "$request.confidential",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and the confidentiality choice decides everything after it. **It is made now, by the raiser, and nobody can change it afterwards** (BR-2, BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. No category, no details, or no confidentiality choice refuses the complaint. Where the acknowledgement cannot be delivered the complaint still stands (E8).",
+        "atomicity": "One write: the complaint against the raiser and the branch, routed by the choice they made, and acknowledged with who holds it (BR-4, BR-5). A confidential complaint is **not sent at all** to any list, report or export reaching the desk or the School Admin — not merely hidden from their screens (BR-9, E6)."
+      },
+      "operations": [
+        {
+          "name": "complaint.staff.raise",
+          "method": "POST",
+          "path": "/api/v1/staff-complaints",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff member + subject + minute, so a double press does not lodge the same complaint twice",
+          "purpose": "Raise a staff complaint, routed by the raiser's confidentiality choice.",
+          "parameters": [
+            {
+              "name": "subject",
+              "source": "request",
+              "sourceRef": "$request.subject",
+              "required": true,
+              "type": "string",
+              "notes": "5 to 200 characters, the raiser's own."
+            },
+            {
+              "name": "category",
+              "source": "request",
+              "sourceRef": "$request.category",
+              "required": true,
+              "type": "enum: Pay and hours|Staff conduct|Workload|Facilities|Management|Safety|Communication|Other",
+              "notes": "What the complaint is about (E1). The raiser's choice."
+            },
+            {
+              "name": "details",
+              "source": "request",
+              "sourceRef": "$request.details",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 5000 characters, **written by the person raising it** (E2). Never drafted here."
+            },
+            {
+              "name": "attachment_id",
+              "source": "resolved",
+              "sourceRef": "$request.attachment_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "uploaded_file",
+                "fromPhrase": "$request.attachment_phrase",
+                "onNoMatch": "Refuse. No uploaded file matches. The document is attached on the screen first.",
+                "onAmbiguous": "Ask, naming the files uploaded for this complaint."
+              },
+              "notes": "A document, where the complaint depends on one (BR-1). Uploaded on the screen first."
+            },
+            {
+              "name": "confidential",
+              "source": "request",
+              "sourceRef": "$request.confidential",
+              "required": true,
+              "type": "boolean",
+              "notes": "**Required, chosen by the raiser at the moment of raising, and permanent** (BR-2, BR-8, E3). True sends it straight to the Principal, bypassing the desk and the School Admin; false sends it to the desk. Never defaulted and never inferred."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The raising member of staff's own record. Never taken from the request — a complaint is raised only as oneself."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The complaint, where it went, and who holds it.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Open, or held by the Principal where it is confidential (BR-3, BR-6)."
+              },
+              {
+                "name": "held_by",
+                "type": "string",
+                "description": "The help desk, or the Principal. Told to the raiser at once (BR-5)."
+              },
+              {
+                "name": "confidential",
+                "type": "boolean",
+                "description": "As the raiser chose it. Nobody can change it from here on (BR-8, E7)."
+              },
+              {
+                "name": "reaches",
+                "type": "string[]",
+                "description": "Who can see it. For a confidential complaint: the Principal, and only those the Principal permits — never the desk or the School Admin, in any list, report or export (BR-3, BR-9)."
+              },
+              {
+                "name": "named_to_principal",
+                "type": "boolean",
+                "description": "True. Confidential is not anonymous — the raiser is always named to the Principal (OQ-2)."
+              },
+              {
+                "name": "can_withdraw",
+                "type": "boolean",
+                "description": "True until it is taken up. False at once for a confidential complaint, which leaves the open state the moment it is raised (BR-3, BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_CATEGORY",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "No category was selected.",
+              "written": "Nothing.",
+              "notWritten": "The complaint is not raised."
+            },
+            {
+              "code": "NO_DETAILS",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No details were given.",
+              "written": "Nothing.",
+              "notWritten": "The complaint is not raised."
+            },
+            {
+              "code": "NO_CONFIDENTIALITY_CHOICE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The confidentiality choice was not made.",
+              "written": "Nothing.",
+              "notWritten": "The complaint is not raised.",
+              "note": "The choice is the raiser's and cannot be changed later (BR-2)."
+            },
+            {
+              "code": "ACKNOWLEDGEMENT_UNDELIVERED",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "The acknowledgement could not be delivered.",
+              "written": "The complaint stands.",
+              "notWritten": "Only the acknowledgement failed.",
+              "treatedAsSuccess": true,
+              "note": "The failure is reported."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never make the confidentiality choice for them, and never default it. It belongs to the person raising it, at the moment of raising — without it, the complaints most worth hearing are the ones least likely to be made (BR-2, E3).",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the choice is permanent before it is made. Nobody can change a complaint from confidential to ordinary afterwards, the raiser included, because reversing it would expose them to exactly the people they chose to avoid (BR-8, E7).",
+          "derivedFrom": [
+            "BR-8",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that confidential is not anonymous. The Principal always knows who raised it — a raiser who assumed otherwise has made a choice on a false premise (OQ-2).",
+          "derivedFrom": [
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Where the complaint concerns the Principal, say plainly that the confidential route has no answer for it. A confidential complaint goes to the Principal by definition, and who works one about the Principal is unresolved — it is the case the route exists for (BR-3, OQ-1).",
+          "derivedFrom": [
+            "BR-3",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say what the route protects and what it does not. It protects the complaint from the desk and the School Admin; nothing protects the person from being disadvantaged for having raised it (BR-3, OQ-4).",
+          "derivedFrom": [
+            "BR-3",
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never write the details. They are the raiser's account, and one a planner drafted is a complaint nobody made (BR-1, E2).",
+          "derivedFrom": [
+            "BR-1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "staff_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "complaint.staff.withdraw",
+        "statement": "An ordinary complaint is withdrawn before it is taken up, and stays on the record (BR-7). A confidential one cannot be withdrawn this way: it leaves the open state the moment it is raised and is held by the Principal (BR-3). The confidentiality choice itself is never reversible (BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "meri Saturday lab ki overtime is term ki kisi pay slip mein nahi aayi, shikayat karni hai",
+            "lang": "ur-Latn",
+            "gloss": "my Saturday lab overtime has not appeared on any pay slip this term, I want to complain"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.raise",
+              "inputs": {
+                "subject": "from their words",
+                "category": "asked — Pay and hours fits",
+                "details": "as they wrote it",
+                "attachment_id": "omitted",
+                "confidential": "asked — never defaulted, and permanent once chosen",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The choice is theirs and is asked outright (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Ask whether it is confidential and say what each answer means before they choose: ordinary goes to the help desk; confidential goes to the Principal alone and never reaches the desk or the School Admin — and either way, it cannot be changed afterwards."
+        },
+        {
+          "request": {
+            "text": "School Admin ke rawaiye ki confidential shikayat karni hai",
+            "lang": "ur-Latn",
+            "gloss": "I want to make a confidential complaint about the School Admin's behaviour"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.raise",
+              "inputs": {
+                "subject": "asked, in their words",
+                "category": "Staff conduct — confirmed",
+                "details": "as they wrote it",
+                "attachment_id": "omitted",
+                "confidential": "true — they asked for it",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Confidential because they said so (PR-1)."
+            }
+          ],
+          "outcome": "Say before raising: it goes to the Principal alone, the School Admin will not see it in any list, report or export, and it can never be made ordinary. Then the two things they should know: the Principal will know it was them — confidential is not anonymous — and nothing in the system protects a raiser from being disadvantaged for having complained."
+        },
+        {
+          "request": {
+            "text": "Principal ke khilaf confidential shikayat karni hai",
+            "lang": "ur-Latn",
+            "gloss": "I want to make a confidential complaint against the Principal"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.raise",
+              "inputs": {
+                "subject": "asked",
+                "category": "asked",
+                "details": "asked",
+                "attachment_id": "omitted",
+                "confidential": "asked — and the consequence stated first",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Nothing is raised until they have heard where it goes (PR-4)."
+            }
+          ],
+          "outcome": "Stop before raising and say it plainly: a confidential complaint goes to the Principal, and there is no other route for one — so a confidential complaint about the Principal would be handed to the Principal. The specification names this as unresolved. Raised as ordinary instead, a complaint naming the Principal routes to the Super Admin — but it then passes through the ordinary queue first. Neither is what they are asking for; the choice is theirs, with that on the table."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-03-PC-2",
+      "intent": {
+        "name": "complaint.staff.withdraw",
+        "summary": "Withdraw your own complaint before anybody takes it up. It stays on the record.",
+        "routesHere": [
+          "withdraw my overtime complaint, payroll has fixed it",
+          {
+            "text": "meri shikayat wapas le lein, masla hal ho gaya",
+            "lang": "ur-Latn",
+            "gloss": "withdraw my complaint, the problem is solved"
+          },
+          {
+            "text": "wo confidential shikayat wapas lena chahta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I want to withdraw that confidential complaint"
+          },
+          "take back my complaint"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "meri shikayat mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete my complaint"
+            },
+            "goesTo": "complaint.staff.withdraw — this use case.",
+            "note": "A complaint is never deleted. One raised and later withdrawn stays on the record (BR-7, E9)."
+          },
+          {
+            "request": {
+              "text": "confidential shikayat ko aam bana dein",
+              "lang": "ur-Latn",
+              "gloss": "make my confidential complaint ordinary"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nobody can change a complaint from confidential to ordinary, the raiser included (BR-8, E7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaint.staff.withdraw",
+            "inputs": {
+              "complaint_id": "$request.complaint_phrase",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The complaint leaves the queue and stays on the record (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A complaint already taken up, or a confidential one held by the Principal, is not withdrawn.",
+        "atomicity": "One state change. **Nothing is deleted** — one raised and later withdrawn stays on the record (BR-7, E9)."
+      },
+      "operations": [
+        {
+          "name": "complaint.staff.withdraw",
+          "method": "POST",
+          "path": "/api/v1/staff-complaints/{complaint_id}/withdraw",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "complaint_id, since a complaint is withdrawn once",
+          "purpose": "Withdraw an open staff complaint before it is taken up.",
+          "parameters": [
+            {
+              "name": "complaint_id",
+              "source": "resolved",
+              "sourceRef": "$request.complaint_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_complaint",
+                "fromPhrase": "$request.complaint_phrase",
+                "onNoMatch": "Refuse. None of this person's open complaints matches. Only an open complaint can be withdrawn.",
+                "onAmbiguous": "Ask, naming their complaints that match with their subjects, dates and where each stands."
+              },
+              "notes": "The raiser's own complaint, named by its subject or its reference."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The raising member of staff's own record. Never taken from the request — a complaint is raised only as oneself."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was withdrawn and what stays.",
+            "fields": [
+              {
+                "name": "complaint_id",
+                "type": "string",
+                "description": "The complaint."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Withdrawn. On the record, never deleted (BR-7)."
+              },
+              {
+                "name": "still_on_record",
+                "type": "boolean",
+                "description": "True, always (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_OPEN",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The complaint has been taken up, or is a confidential one held by the Principal.",
+              "written": "Nothing.",
+              "notWritten": "It is not withdrawn.",
+              "note": "Only an open complaint can be withdrawn, and a confidential complaint leaves the open state the moment it is raised (BR-3). The use case writes no exception for the attempt."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that a confidential complaint cannot be withdrawn this way. It is held by the Principal from the moment it is raised and does not return to the open state — worth knowing before somebody raises one they may regret (BR-3, BR-7).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that it stays on the record. Withdrawing takes it out of the queue, and nothing is ever deleted (BR-7, E9).",
+          "derivedFrom": [
+            "BR-7",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "staff_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Withdrawn is terminal. Raising it again is a fresh complaint, and the withdrawn one stays on the record (BR-7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "meri overtime wali shikayat wapas le lein, payroll ne theek kar diya",
+            "lang": "ur-Latn",
+            "gloss": "withdraw my overtime complaint, payroll has fixed it"
+          },
+          "context": "Teacher, ordinary complaint still open.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.withdraw",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the overtime complaint",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-2)."
+            }
+          ],
+          "outcome": "Withdrawn, and it stays on their record."
+        },
+        {
+          "request": {
+            "text": "wo confidential shikayat wapas lena chahta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I want to withdraw that confidential complaint"
+          },
+          "context": "Teacher, confidential complaint raised yesterday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaint.staff.withdraw",
+              "inputs": {
+                "complaint_id": "$request.complaint_phrase → the confidential complaint",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused (PR-1)."
+            }
+          ],
+          "outcome": "It cannot be withdrawn: a confidential complaint goes to the Principal the moment it is raised and does not return to the open state. The specification offers no route back. What they can do is tell the Principal directly that they no longer wish to pursue it — the complaint itself stays on the record."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-30-03-PC-3",
+      "intent": {
+        "name": "complaints.staff.mine.read",
+        "summary": "Follow your own complaints — where each stands and who holds it.",
+        "routesHere": [
+          "what happened to my overtime complaint?",
+          {
+            "text": "meri shikayat ka kya bana?",
+            "lang": "ur-Latn",
+            "gloss": "what happened to my complaint?"
+          },
+          {
+            "text": "meri shikayat kis ke paas hai?",
+            "lang": "ur-Latn",
+            "gloss": "who has my complaint?"
+          },
+          "show me my complaints"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "doosre staff ki shikayatein dikhayein",
+              "lang": "ur-Latn",
+              "gloss": "show other staff members' complaints"
+            },
+            "goesTo": "Refused.",
+            "note": "A member of staff sees only their own complaints."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "complaints.staff.mine.read",
+            "inputs": {
+              "status": "$request.status",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read of the raiser's own complaints."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written."
+      },
+      "operations": [
+        {
+          "name": "complaints.staff.mine.read",
+          "method": "GET",
+          "path": "/api/v1/staff-complaints/mine",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List the raiser's own staff complaints with their status and who holds each.",
+          "parameters": [
+            {
+              "name": "status",
+              "source": "request",
+              "sourceRef": "$request.status",
+              "required": false,
+              "type": "string",
+              "notes": "One of the lifecycle states, carried as written rather than as an enum."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The raising member of staff's own record. Never taken from the request — a complaint is raised only as oneself."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Where each of the raiser's complaints stands.",
+            "fields": [
+              {
+                "name": "complaints",
+                "type": "object[]",
+                "description": "Subject, category, raised on, confidential or not, status and who holds it (BR-5)."
+              },
+              {
+                "name": "held_by",
+                "type": "string",
+                "description": "Who holds each one — what tells a raiser it is being worked rather than forgotten (BR-5)."
+              },
+              {
+                "name": "days_open",
+                "type": "integer",
+                "description": "How long each has been open. Nothing sets a limit (BR-6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_CATEGORY",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The status filter named nothing recognisable.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned.",
+              "note": "The use case's only listing-adjacent exception; a bad filter is asked about rather than widened."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Lead with who holds it. That is what the acknowledgement exists to tell a raiser (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say how long it has been open where nobody has taken it up. It sits open until somebody does, and nothing sets a time by which they must (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "staff_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "meri shikayat ka kya bana?",
+            "lang": "ur-Latn",
+            "gloss": "what happened to my complaint?"
+          },
+          "context": "Teacher, one confidential complaint held by the Principal for nine days.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "complaints.staff.mine.read",
+              "inputs": {
+                "status": "omitted",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-1)."
+            }
+          ],
+          "outcome": "It is with the Principal and has been for nine days. Nothing sets a time within which it must be taken forward, so say the number plainly."
+        }
+      ]
+    }
+  ]
+}

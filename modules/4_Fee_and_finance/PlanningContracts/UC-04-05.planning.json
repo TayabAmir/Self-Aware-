@@ -1,0 +1,468 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-05",
+    "name": "Record money received against the right invoice, by whichever route it arrived, and issue the receipt",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-05.json",
+    "featureRef": "4.5 Recording a payment and issuing the receipt"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-05-PC-1",
+      "intent": {
+        "name": "fee.payment.record",
+        "summary": "Record money received against an invoice, by whichever route it arrived, and issue the numbered receipt. One step, and it is never edited afterwards.",
+        "routesHere": [
+          "record 5000 cash received against Ayesha's September invoice today",
+          {
+            "text": "Ayesha ki September ki fees 5000 cash mili hai, record kar do",
+            "lang": "ur-Latn",
+            "gloss": "5000 cash has come in for Ayesha's September fee, record it"
+          },
+          {
+            "text": "bank se stamped copy aayi hai, challan CH-2026-0417",
+            "lang": "ur-Latn",
+            "gloss": "the stamped copy has come back from the bank, challan CH-2026-0417"
+          },
+          {
+            "text": "family ne aadhi fees di hai — 2000",
+            "lang": "ur-Latn",
+            "gloss": "the family has paid half the fee — 2000"
+          },
+          "enter the challan payment, the bank stamped it on Friday",
+          {
+            "text": "counter pe paisay jama hue hain",
+            "lang": "ur-Latn",
+            "gloss": "money has been paid at the counter"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "online payment ho gayi hai",
+              "lang": "ur-Latn",
+              "gloss": "the online payment has gone through"
+            },
+            "goesTo": "No intent — it records itself.",
+            "note": "An online payment confirmed by the gateway is recorded automatically with no keying (BR-8). Nothing is keyed for it and nothing should be."
+          },
+          {
+            "request": {
+              "text": "galat student ke against payment lag gayi",
+              "lang": "ur-Latn",
+              "gloss": "the payment went against the wrong student"
+            },
+            "goesTo": "fee.payment.correction.raise — UC-04-12",
+            "note": "A recorded payment is never edited (BR-10, E8). It is reversed and re-recorded with a reason, through its own use case."
+          },
+          {
+            "request": {
+              "text": "challan print kar do",
+              "lang": "ur-Latn",
+              "gloss": "print the challan"
+            },
+            "goesTo": "fee.challan.generate — UC-04-04"
+          },
+          {
+            "request": {
+              "text": "receipt dobara bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the receipt again"
+            },
+            "goesTo": "A6, the receipt reissue path.",
+            "note": "The receipt is issued at the point of recording (BR-11). Sending it again is not a second payment."
+          },
+          {
+            "request": {
+              "text": "paisa aaya hai lekin kis ka pata nahi",
+              "lang": "ur-Latn",
+              "gloss": "money has come in but we do not know whose"
+            },
+            "goesTo": "Held as an unallocated receipt.",
+            "note": "Money received without an invoice to apply it to is held and reported, not absorbed (BR-1) — and never guessed onto an invoice."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.payment.record",
+            "inputs": {
+              "route": "$request.route",
+              "invoice_reference": "$request.invoice_phrase",
+              "amount_received": "$request.amount_received",
+              "payment_date": "$request.payment_date",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. The payment, the numbered receipt, the invoice status and both ledger postings all happen inside it, together or not at all (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. An unmatched challan reference, an amount above the outstanding balance, a future payment date and an invoice already settled are all enforced by the API and arrive as errors. A duplicate online confirmation is recognised and recorded once (E7), which is an outcome to report rather than a failure.",
+        "atomicity": "One write, and the tightest atomicity in the module: the payment, the receipt and both ledger postings are created together or not at all. A payment with no receipt, or a receipt with no posting, is the failure BR-9 exists to prevent, and E6 confirms nothing is saved when the posting fails. Receipt numbers are gapless and never reused, and a failed entry consumes none (BR-7). The receipt goes to the guardian at the point of recording and does not block (E9). The invoice leaves overdue tracking and stops accruing late fee where it is now settled (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "fee.payment.record",
+          "method": "POST",
+          "path": "/api/v1/fee-payments",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "the challan reference or gateway transaction reference where one exists, otherwise invoice_id + amount_received + payment_date + route — a repeat must not credit an invoice twice or consume a second receipt number",
+          "purpose": "Record a payment against an invoice, issue the numbered receipt, apply it to the invoice and post to both ledgers.",
+          "parameters": [
+            {
+              "name": "route",
+              "source": "request",
+              "sourceRef": "$request.route",
+              "required": true,
+              "type": "enum: Online gateway | Bank challan | Cash at office",
+              "notes": "How the money arrived. Held on the record because reconciliation reads it afterwards (BR-2). Online payments are recorded automatically and are not keyed here (BR-8)."
+            },
+            {
+              "name": "invoice_reference",
+              "source": "resolved",
+              "sourceRef": "$request.invoice_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "invoice",
+                "fromPhrase": "$request.invoice_phrase",
+                "onNoMatch": "Refuse. No invoice or challan matches that reference. Never guess which invoice the money belongs to — hold it as an unallocated receipt instead (BR-1).",
+                "onAmbiguous": "Ask, naming the candidates with student, period and outstanding balance."
+              },
+              "notes": "The invoice the money is for, found directly or through the challan reference on the stamped school copy. A bank payment with no matching reference records nothing, because a guess would credit the wrong family (BR-3, E1)."
+            },
+            {
+              "name": "amount_received",
+              "source": "request",
+              "sourceRef": "$request.amount_received",
+              "required": true,
+              "type": "money",
+              "notes": "Greater than zero and not more than the outstanding balance (BR-6, E3, E4). Exactly the figure the actor states — never rounded, never defaulted to the balance, never derived. "
+            },
+            {
+              "name": "payment_date",
+              "source": "request",
+              "sourceRef": "$request.payment_date",
+              "required": true,
+              "type": "date",
+              "notes": "When the money was received, not when it was keyed. A challan paid on Friday and entered on Monday is dated Friday, or the day's collection figure is wrong (BR-4). Not in the future (E5)."
+            },
+            {
+              "name": "bank_stamp_date",
+              "source": "request",
+              "sourceRef": "$request.bank_stamp_date",
+              "required": false,
+              "type": "date",
+              "notes": "From the stamped school copy, for a bank challan route."
+            },
+            {
+              "name": "remarks",
+              "source": "request",
+              "sourceRef": "$request.remarks",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 250 characters. Printed on the receipt."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The payment as recorded, with its receipt.",
+            "fields": [
+              {
+                "name": "payment_id",
+                "type": "string",
+                "description": "The payment."
+              },
+              {
+                "name": "receipt_number",
+                "type": "string",
+                "description": "Gapless per branch and academic session, never reused (BR-7)."
+              },
+              {
+                "name": "amount_received",
+                "type": "string",
+                "description": "As recorded."
+              },
+              {
+                "name": "invoice_status",
+                "type": "string",
+                "description": "Paid, or Partially paid where a balance remains (BR-5)."
+              },
+              {
+                "name": "outstanding_balance",
+                "type": "string",
+                "description": "What is left on the invoice."
+              },
+              {
+                "name": "payment_date",
+                "type": "date",
+                "description": "When the money was received."
+              },
+              {
+                "name": "receipt_delivery_status",
+                "type": "string",
+                "description": "Queued until the provider says otherwise. The payer holds proof without asking (BR-11)."
+              },
+              {
+                "name": "removed_from_overdue",
+                "type": "boolean",
+                "description": "True where the invoice is now settled and stops accruing late fee (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CHALLAN_NOT_FOUND",
+              "mapsTo": "E1",
+              "httpStatus": 404,
+              "meaning": "The challan reference matches no challan.",
+              "written": "Nothing.",
+              "notWritten": "No payment recorded.",
+              "note": "Message: \"No challan matches that reference. Check the stamped copy.\" Never guess the invoice — a guess credits the wrong family (BR-3)."
+            },
+            {
+              "code": "ALREADY_PAID",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The invoice has already been paid in full.",
+              "written": "Nothing.",
+              "notWritten": "No second payment.",
+              "note": "The message names the settling receipt. Money arriving against a settled invoice is an unallocated receipt, not a second payment."
+            },
+            {
+              "code": "AMOUNT_EXCEEDS_BALANCE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The amount is greater than the outstanding balance.",
+              "written": "Nothing.",
+              "notWritten": "No payment recorded.",
+              "note": "An overpayment is refused rather than creating a negative balance (BR-6). Never reduce the amount to fit — the money that arrived is what it is."
+            },
+            {
+              "code": "AMOUNT_NOT_POSITIVE",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "The amount is zero or negative.",
+              "written": "Nothing.",
+              "notWritten": "No payment recorded."
+            },
+            {
+              "code": "DATE_IN_FUTURE",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The payment date is in the future.",
+              "written": "Nothing.",
+              "notWritten": "No payment recorded."
+            },
+            {
+              "code": "POSTING_FAILED",
+              "mapsTo": "E6",
+              "httpStatus": 500,
+              "meaning": "The ledger posting failed.",
+              "written": "Nothing. No payment, no receipt, no posting (BR-9).",
+              "notWritten": "All of it.",
+              "note": "Message: \"The payment could not be recorded. Nothing has been saved.\" No receipt number is consumed (BR-7)."
+            },
+            {
+              "code": "DUPLICATE_CONFIRMATION",
+              "mapsTo": "E7",
+              "httpStatus": 200,
+              "meaning": "An online confirmation arrived twice for the same transaction reference.",
+              "written": "Nothing new. The original payment stands.",
+              "notWritten": "No second payment.",
+              "treatedAsSuccess": true,
+              "note": "The message names the existing receipt. A gateway retrying its callback must not credit an invoice twice (UC-04-03 BR-11)."
+            },
+            {
+              "code": "CANNOT_EDIT",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "An attempt was made to edit a recorded payment.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "A recorded payment is never edited (BR-10). Correcting it is UC-04-12, which reverses the entry and records a new one with a reason."
+            },
+            {
+              "code": "RECEIPT_MESSAGE_FAILED",
+              "mapsTo": "E9",
+              "httpStatus": 200,
+              "meaning": "The receipt message to the guardian failed.",
+              "written": "The payment, the receipt and the postings all stand.",
+              "notWritten": "The guardian has not been sent the receipt.",
+              "treatedAsSuccess": true,
+              "note": "Report both halves. The payer does not hold proof."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply, round or adjust the amount. It is the money that physically arrived, and E3 refusing an amount above the balance is not a prompt to reduce it — an overpayment means the family paid more than the bill, which is a fact somebody has to deal with, not a number to trim.",
+          "derivedFrom": [
+            "BR-6",
+            "E3",
+            "E4",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never guess which invoice the money is for. A bank payment with no matching challan reference records nothing, because a guess credits the wrong family and the error surfaces months later as a family chased for a fee they paid (BR-3, E1).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-3",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never default the payment date to today. It is when the money was received, not when it was keyed — a challan paid on Friday and entered on Monday is dated Friday, or the day's collection figure is wrong (BR-4).",
+          "derivedFrom": [
+            "BR-4",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never key an online payment. A gateway-confirmed payment is recorded automatically with no keying (BR-8), and entering one by hand risks recording it twice under a second receipt number.",
+          "derivedFrom": [
+            "BR-8",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never edit or re-record a payment to correct it. A recorded payment is never edited (BR-10, E8); correcting it is UC-04-12, which reverses the entry and records a new one with a reason.",
+          "derivedFrom": [
+            "BR-10",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never absorb unidentified money into the nearest invoice. Money received without an invoice to apply it to is held as an unallocated receipt and reported (BR-1) — putting it somewhere plausible is how a family ends up credited for someone else's payment.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Report the receipt delivery separately from the payment. The payment stands even where the receipt did not reach the guardian (E9), and a payer without proof will ask again.",
+          "derivedFrom": [
+            "BR-11",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "fee.payment.correction.raise",
+        "statement": "fee.payment.correction.raise, under UC-04-12. A recorded payment is never deleted or edited — the correction reverses the entry, records a new one on the correct account with a reason, supersedes the receipt and restores the invoice statuses. It is an approved act somebody decides on, never a compensating call the controller makes after a failure."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ki September ki fees 5000 cash mili hai, aaj",
+            "lang": "ur-Latn",
+            "gloss": "5000 cash has come in for Ayesha's September fee, today"
+          },
+          "context": "Accounts, Johar Town branch, academic session 2025-26. Today is 08-09-2026 and the invoice is outstanding at PKR 5,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.record",
+              "inputs": {
+                "route": "Cash at office",
+                "invoice_reference": "$request.invoice_phrase → \"Ayesha, Sep 2026\"",
+                "amount_received": 5000,
+                "payment_date": "2026-09-08",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The amount is exactly what the actor stated (PR-1) and the date is the day the money arrived (PR-3)."
+            }
+          ],
+          "outcome": "The payment, a numbered receipt and both ledger postings are created together. The invoice reads Paid, leaves overdue tracking and stops accruing late fee (BR-12). The receipt is queued to the guardian."
+        },
+        {
+          "request": {
+            "text": "bank se stamped copy aayi hai — challan CH-2026-0417, 4000, bank ne jumme ko stamp kiya tha",
+            "lang": "ur-Latn",
+            "gloss": "the stamped copy is back from the bank — challan CH-2026-0417, 4000, the bank stamped it on Friday"
+          },
+          "context": "Accounts, Johar Town branch. Today is Monday 08-09-2026; Friday was the 5th.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.record",
+              "inputs": {
+                "route": "Bank challan",
+                "invoice_reference": "$request.invoice_phrase → \"CH-2026-0417\"",
+                "amount_received": 4000,
+                "payment_date": "2026-09-05",
+                "bank_stamp_date": "2026-09-05",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The challan reference resolves to the invoice — it is not matched by name or amount (PR-2). The payment date is Friday, not today (PR-3)."
+            }
+          ],
+          "outcome": "Recorded against the right invoice and dated Friday, so Friday's collection figure is correct. The receipt is issued to the guardian."
+        },
+        {
+          "request": {
+            "text": "family ne 6000 diye hain lekin bill 5000 ka tha",
+            "lang": "ur-Latn",
+            "gloss": "the family has given 6000 but the bill was 5000"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.record",
+              "inputs": {
+                "route": "Cash at office",
+                "invoice_reference": "$request.invoice_phrase",
+                "amount_received": 6000,
+                "payment_date": "2026-09-08",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The amount is passed as stated. The API returns AMOUNT_EXCEEDS_BALANCE (E3)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the balance is PKR 5,000 and 6,000 arrived — do not record 5,000 and let the extra vanish (PR-1). The extra thousand is money the school is holding, and where it belongs is a decision somebody takes."
+        }
+      ]
+    }
+  ]
+}

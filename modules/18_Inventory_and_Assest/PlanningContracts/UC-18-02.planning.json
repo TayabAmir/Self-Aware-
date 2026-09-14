@@ -1,0 +1,1509 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-18-02",
+    "name": "Ask for the supplies you need, and have every request of the round gather in one place",
+    "module": "Inventory, Assets & Point-of-Sale",
+    "file": "../UseCases/UC-18-02.json",
+    "featureRef": "18.2 Submitting a stock request"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-18-02-PC-1",
+      "intent": {
+        "name": "stock.round.open",
+        "summary": "Open a request round and ask every member of staff what supplies they need.",
+        "routesHere": [
+          "open a stock request round for November",
+          {
+            "text": "is mahine ka stock request round khol dein",
+            "lang": "ur-Latn",
+            "gloss": "open this month's stock request round"
+          },
+          {
+            "text": "staff se poochein ke unhein kya kya chahiye",
+            "lang": "ur-Latn",
+            "gloss": "ask the staff what they need"
+          },
+          "start collecting requests for the term"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye request manzoor kar dein",
+              "lang": "ur-Latn",
+              "gloss": "approve this request"
+            },
+            "goesTo": "stock.request.approve — UC-18-03.",
+            "note": "Asking is not approving. Submitting a request buys nothing and moves no money — the decision to spend is a separate act by whichever role the value requires (BR-9)."
+          },
+          {
+            "request": {
+              "text": "mujhe abhi kuch chahiye, round ka intezaar nahi kar sakta",
+              "lang": "ur-Latn",
+              "gloss": "I need something now, I cannot wait for a round"
+            },
+            "goesTo": "stock.request.submit — this use case, marked urgent.",
+            "note": "A request may be raised outside a round where something is needed urgently, and it is accepted just the same (BR-1, A1, E4)."
+          },
+          {
+            "request": {
+              "text": "sab ka mil kar ek list bana dein",
+              "lang": "ur-Latn",
+              "gloss": "make one combined list for everybody"
+            },
+            "goesTo": "Not offered.",
+            "note": "Each requester submits their own. One person collecting everybody's list by hand is exactly what the round replaces (BR-8)."
+          },
+          {
+            "request": {
+              "text": "jo items kam hain wo khud hi add ho jayein",
+              "lang": "ur-Latn",
+              "gloss": "let the low items add themselves"
+            },
+            "goesTo": "Not offered.",
+            "note": "Items below their reorder level are **offered** for inclusion on each requester's own request, not added to one on their behalf (BR-3, A2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.round.open",
+            "inputs": {
+              "period": "$request.period",
+              "closes_on": "$request.closes_on",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The round opens and staff are told requests are being collected (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report. A round with no closing date is not opened — a round nobody is given a date for is a round nobody answers.",
+        "atomicity": "One write and one notification to staff. Nothing is bought and no money moves: a round is a question, and the answers are separate requests each person submits for themselves (BR-8, BR-9)."
+      },
+      "operations": [
+        {
+          "name": "stock.round.open",
+          "method": "POST",
+          "path": "/api/v1/stock-rounds",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "period + branch, so a double press does not open two rounds for one period and split the school's requests across them",
+          "purpose": "Open a request round for a period and invite staff to submit.",
+          "parameters": [
+            {
+              "name": "period",
+              "source": "request",
+              "sourceRef": "$request.period",
+              "required": true,
+              "type": "string",
+              "notes": "The period the round collects for. How often a round is opened — monthly, per term, or at the school's discretion — is not defined anywhere (OQ-1)."
+            },
+            {
+              "name": "closes_on",
+              "source": "request",
+              "sourceRef": "$request.closes_on",
+              "required": true,
+              "type": "date",
+              "notes": "When the round stops taking requests. After it, the collected requests go to the approver together (BR-6, A4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The round and who was asked.",
+            "fields": [
+              {
+                "name": "round_id",
+                "type": "string",
+                "description": "The round."
+              },
+              {
+                "name": "period",
+                "type": "string",
+                "description": "What it collects for."
+              },
+              {
+                "name": "closes_on",
+                "type": "date",
+                "description": "When it closes to further requests."
+              },
+              {
+                "name": "staff_invited",
+                "type": "integer",
+                "description": "Everybody asked. Any member of staff may submit and no stock permission is needed (BR-2, AC-1)."
+              },
+              {
+                "name": "items_below_reorder_level",
+                "type": "integer",
+                "description": "Items the store already knows are short. Each will be offered to every requester for inclusion, so what the store knows is not left out of the round by accident (BR-3, AC-2)."
+              },
+              {
+                "name": "open_rounds",
+                "type": "integer",
+                "description": "How many rounds are open at once. Nothing in the use case says whether more than one may be."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_ACCOUNTS",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The acting user is not Accounts.",
+              "written": "Nothing.",
+              "notWritten": "No round is opened.",
+              "note": "Accounts open the round at the end of the period (BR-1), but the use case writes no exception for anybody else attempting it — its nine exceptions are all about the request form and none about the round."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say what a round does not do. It collects what people ask for; it buys nothing, approves nothing and moves no money (BR-9, AC-1 of the approval that follows is a separate act).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the low items are offered, not added. Every requester sees what the store already knows is short and chooses whether to include it — nothing joins a request on their behalf (BR-3, A2, AC-2).",
+          "derivedFrom": [
+            "BR-3",
+            "A2",
+            "AC-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never collect the requests yourself. Each member of staff submits their own, and one person typing everybody's list is the thing the round exists to replace (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that an urgent request does not need the round. Something needed at once is raised outside one and accepted just the same, so a round closing is not a deadline on need (BR-1, A1, E4).",
+          "derivedFrom": [
+            "BR-1",
+            "A1",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "stock.round.close",
+        "statement": "A round opened in error is closed to further requests. It is not deleted, and the requests already submitted into it stay on the record (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "November ka stock request round khol dein, 20 tareekh ko band ho jaye",
+            "lang": "ur-Latn",
+            "gloss": "open the November stock request round, closing on the 20th"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.round.open",
+              "inputs": {
+                "period": "November 2026",
+                "closes_on": "20 November",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step, and staff are asked (PR-3)."
+            }
+          ],
+          "outcome": "Report that everybody has been asked and that 7 items are already below their reorder level and will be offered to each requester. Add what the round does not do: nothing is bought, nothing is approved, and a member of staff who needs something before the 20th does not have to wait — an urgent request outside the round is accepted just the same."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-02-PC-2",
+      "intent": {
+        "name": "stock.round.close",
+        "summary": "Close the round to further requests, so the whole of it goes to the approver at once.",
+        "routesHere": [
+          "close the November round",
+          {
+            "text": "November ka round band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "close the November round"
+          },
+          {
+            "text": "ab aur request nahi, round band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "no more requests, close the round"
+          },
+          "close the round and send it up for approval"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye request manzoor kar dein",
+              "lang": "ur-Latn",
+              "gloss": "approve this request"
+            },
+            "goesTo": "stock.request.approve — UC-18-03.",
+            "note": "Asking is not approving. Submitting a request buys nothing and moves no money — the decision to spend is a separate act by whichever role the value requires (BR-9)."
+          },
+          {
+            "request": {
+              "text": "ek request reh gayi hai, usay bhi shamil kar lein",
+              "lang": "ur-Latn",
+              "gloss": "one request is left, include it too"
+            },
+            "goesTo": "Not offered once closed.",
+            "note": "No further request joins a closed round (A4). One raised afterwards is an urgent request outside a round, and it is accepted on its own terms (BR-1)."
+          },
+          {
+            "request": {
+              "text": "staff ko yaad dila dein pehle",
+              "lang": "ur-Latn",
+              "gloss": "remind the staff first"
+            },
+            "goesTo": "stock.round.remind — this use case.",
+            "note": "A round nobody answered buys nothing (A5). Reminding before closing is the order that gets a full round."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.round.close",
+            "inputs": {
+              "round_id": "$request.round_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The collected requests go to the approver together, which is the point of a round — a round read one request at a time cannot be bought for in one order (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. A round that cannot be identified is not closed, since closing the wrong one shuts staff out of the one they are answering.",
+        "atomicity": "One state change. Nothing is approved and nothing is bought — closing only stops the round taking more (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "stock.round.close",
+          "method": "POST",
+          "path": "/api/v1/stock-rounds/{round_id}/close",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "round_id, since a round closes once and a repeat is the same state",
+          "purpose": "Close a request round to further requests.",
+          "parameters": [
+            {
+              "name": "round_id",
+              "source": "resolved",
+              "sourceRef": "$request.round_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "request_round",
+                "fromPhrase": "$request.round_phrase",
+                "onNoMatch": "Refuse. No such round. How often a round is opened is an open question this use case raises and does not answer (OQ-1).",
+                "onAmbiguous": "Ask, naming the rounds that match with their periods and whether each is open."
+              },
+              "notes": "The request round, named by its period."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What the round collected.",
+            "fields": [
+              {
+                "name": "round_id",
+                "type": "string",
+                "description": "The round."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Closed. No further request joins it (A4)."
+              },
+              {
+                "name": "requests",
+                "type": "integer",
+                "description": "How many were submitted."
+              },
+              {
+                "name": "requesters",
+                "type": "integer",
+                "description": "How many people submitted. Set against the number invited, this is how much of the school answered."
+              },
+              {
+                "name": "did_not_submit",
+                "type": "object[]",
+                "description": "Staff who were asked and did not. A round nobody answered buys nothing, and the gap is invisible in a count of requests (A5)."
+              },
+              {
+                "name": "items_below_reorder_level_not_requested",
+                "type": "object[]",
+                "description": "Items the store knows are short that nobody put on a request. They were offered and nobody took them (BR-3)."
+              },
+              {
+                "name": "goes_to",
+                "type": "string",
+                "description": "The approver, with every request of the round on one page (BR-6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_ACCOUNTS",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The acting user is not Accounts.",
+              "written": "Nothing.",
+              "notWritten": "The round stays open.",
+              "note": "Accounts open and close the round (BR-1). The use case writes no exception for anybody else attempting it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Name the items nobody asked for that the store knows are short. They were offered to every requester and left out, and a round that closes without them buys everything except the thing that has actually run out (BR-3, A2).",
+          "derivedFrom": [
+            "BR-3",
+            "A2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say who did not submit. A round is a question to the whole school, and a count of requests received does not show the departments that answered nothing (A5).",
+          "derivedFrom": [
+            "A5",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that closing approves nothing. The round now goes to the approver together, and until they decide, no money moves and nothing is bought (BR-6, BR-9).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that need does not close with the round. Anything wanted afterwards is raised as an urgent request outside a round and is accepted just the same (BR-1, A1).",
+          "derivedFrom": [
+            "BR-1",
+            "A1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no reopening in the lifecycle: a round goes Open, Closed, Approved and no transition runs backwards. A request that missed the round is raised outside one as urgent (BR-1, A1)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "November ka round band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "close the November round"
+          },
+          "context": "Accounts, Johar Town branch, 14 requests from 11 people.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.round.close",
+              "inputs": {
+                "round_id": "$request.round_phrase → November 2026",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-3)."
+            }
+          ],
+          "outcome": "Report the 14 requests going to the approver together. Then the two gaps: three items already below their reorder level that nobody put on a request, and the departments that submitted nothing at all — a round with fourteen requests can still miss the thing the store has actually run out of."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-02-PC-3",
+      "intent": {
+        "name": "stock.round.remind",
+        "summary": "Remind the staff who have not answered the round, since a round nobody answered buys nothing.",
+        "routesHere": [
+          "remind everybody who hasn't submitted for this round",
+          {
+            "text": "jinhon ne request nahi bheji unhein yaad dila dein",
+            "lang": "ur-Latn",
+            "gloss": "remind the ones who have not sent a request"
+          },
+          {
+            "text": "round band hone wala hai, staff ko batayein",
+            "lang": "ur-Latn",
+            "gloss": "the round is about to close, tell the staff"
+          },
+          "chase the departments that have not answered"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "unki taraf se request bana dein",
+              "lang": "ur-Latn",
+              "gloss": "make a request on their behalf"
+            },
+            "goesTo": "Not offered.",
+            "note": "Each requester submits their own, and a request nobody wrote carries a reason nobody gave — which is what the approver reads before deciding to spend (BR-5, BR-8)."
+          },
+          {
+            "request": {
+              "text": "round band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "close the round"
+            },
+            "goesTo": "stock.round.close — this use case.",
+            "note": "Reminding first and closing after is the order that gets a full round (A5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.round.remind",
+            "inputs": {
+              "round_id": "$request.round_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, to the people who have not submitted rather than to everybody (A5)."
+          }
+        ],
+        "onFailure": "Stop and report. A round already closed is not reminded for, since nothing further can join it (A4).",
+        "atomicity": "One notification. Nothing about the round changes and no request is created."
+      },
+      "operations": [
+        {
+          "name": "stock.round.remind",
+          "method": "POST",
+          "path": "/api/v1/stock-rounds/{round_id}/remind",
+          "kind": "action",
+          "idempotent": true,
+          "idempotencyKey": "round_id + the day, so a round is not reminded for twice in one day",
+          "purpose": "Remind staff who have not yet submitted to the round.",
+          "parameters": [
+            {
+              "name": "round_id",
+              "source": "resolved",
+              "sourceRef": "$request.round_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "request_round",
+                "fromPhrase": "$request.round_phrase",
+                "onNoMatch": "Refuse. No such round. How often a round is opened is an open question this use case raises and does not answer (OQ-1).",
+                "onAmbiguous": "Ask, naming the rounds that match with their periods and whether each is open."
+              },
+              "notes": "The request round, named by its period."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who was reminded and what is still missing.",
+            "fields": [
+              {
+                "name": "round_id",
+                "type": "string",
+                "description": "The round."
+              },
+              {
+                "name": "reminded",
+                "type": "integer",
+                "description": "People who were asked and have not submitted."
+              },
+              {
+                "name": "already_submitted",
+                "type": "integer",
+                "description": "People not reminded, because they have."
+              },
+              {
+                "name": "closes_on",
+                "type": "date",
+                "description": "What they were told the deadline is."
+              },
+              {
+                "name": "items_below_reorder_level",
+                "type": "object[]",
+                "description": "What the store already knows is short, which is what the reminder is really about (BR-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ROUND_CLOSED",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The round is already closed.",
+              "written": "Nothing.",
+              "notWritten": "Nobody is reminded.",
+              "note": "No further request joins a closed round (A4), so a reminder would ask for something that cannot be given. The use case writes no exception for it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Remind only those who have not submitted. A reminder to somebody who answered a week ago is how a school teaches its staff to ignore the reminders (A5).",
+          "derivedFrom": [
+            "A5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never write a request for somebody. Each line carries a reason and it is what the approver reads before deciding to spend — a reason invented on their behalf is a spend nobody justified (BR-5, BR-8).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say what the store already knows is short. That is what the round is for, and it is more use in a reminder than the deadline (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A reminder cannot be unsent. There is nothing to reverse — no request was created and no state changed."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "round band hone wala hai, jinhon ne nahi bheja unhein yaad dila dein",
+            "lang": "ur-Latn",
+            "gloss": "the round is about to close, remind the ones who have not sent"
+          },
+          "context": "Accounts, Johar Town branch, 11 of 34 have submitted.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.round.remind",
+              "inputs": {
+                "round_id": "$request.round_phrase → November 2026",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the 23 who have not (PR-1)."
+            }
+          ],
+          "outcome": "Report the 23 reminded and the deadline they were given. Add the part worth putting in front of them: seven items are already below their reorder level and nobody has asked for three of them."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-02-PC-4",
+      "intent": {
+        "name": "stock.request.submit",
+        "summary": "List the supplies you need, with a quantity and a reason for each, and submit them.",
+        "routesHere": [
+          "request 24 black markers and 10 reams of A4 paper for the Grade 9 rooms",
+          {
+            "text": "mujhe 24 marker aur 10 ream A4 paper chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need 24 markers and 10 reams of A4 paper"
+          },
+          {
+            "text": "lab ka reagent khatam ho gaya hai, foran mangwana hai",
+            "lang": "ur-Latn",
+            "gloss": "the lab reagent has run out, it is needed at once"
+          },
+          {
+            "text": "stock request bhejni hai is round ke liye",
+            "lang": "ur-Latn",
+            "gloss": "I want to send a stock request for this round"
+          },
+          "put in a request for the stationery we are short of"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye khareed lein",
+              "lang": "ur-Latn",
+              "gloss": "just buy these"
+            },
+            "goesTo": "stock.request.approve — UC-18-03, and then the advance.",
+            "note": "Submitting a request buys nothing and moves no money. The decision to spend is a separate act, and the cash is released by a different role again (BR-9)."
+          },
+          {
+            "request": {
+              "text": "store se abhi le lein",
+              "lang": "ur-Latn",
+              "gloss": "take it from the store now"
+            },
+            "goesTo": "stock.issue.record — UC-18-05.",
+            "note": "Something already on the shelf is issued, not requested. A request is for what the school has to buy."
+          },
+          {
+            "request": {
+              "text": "naya item bana kar mangwa dein",
+              "lang": "ur-Latn",
+              "gloss": "create a new item and order it"
+            },
+            "goesTo": "stock.item.create — UC-18-01, then this capability.",
+            "note": "A request is raised against an item that already exists. Only the School Admin creates one (BR-1 of UC-18-01)."
+          },
+          {
+            "request": {
+              "text": "sab ki taraf se ek request bhej dein",
+              "lang": "ur-Latn",
+              "gloss": "send one request on everybody's behalf"
+            },
+            "goesTo": "Not offered.",
+            "note": "Each requester submits their own. The reason on each line is what the approver reads before deciding to spend, and it has to be the requester's (BR-5, BR-8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.request.submit",
+            "inputs": {
+              "round_id": "$request.round_phrase",
+              "urgent": "$request.urgent",
+              "lines": "$request.lines",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every line carries an item, a quantity in that item's own unit and a reason, and the request is submitted rather than saved as a draft (BR-4, BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. A line with no quantity, a quantity of zero or less, a line with no reason, or a request with no lines at all each refuses the whole submission, and nothing is left half-submitted.",
+        "atomicity": "One write. Nothing is bought, no money moves and no stock changes — the request joins the round and waits for a decision (BR-9). The requester can follow it from submitted through to settled (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "stock.request.submit",
+          "method": "POST",
+          "path": "/api/v1/stock-requests",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "requester + the lines + the day, so a double press does not put the same request into the round twice",
+          "purpose": "Submit a stock request with its lines.",
+          "parameters": [
+            {
+              "name": "round_id",
+              "source": "resolved",
+              "sourceRef": "$request.round_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "request_round",
+                "fromPhrase": "$request.round_phrase",
+                "onNoMatch": "Refuse only if a round was named and does not exist. A request with no round is accepted as urgent (E4).",
+                "onAmbiguous": "Ask, naming the open rounds."
+              },
+              "notes": "The open round this joins. Omitted where nothing is open — the request is then accepted as urgent rather than refused (BR-1, E4)."
+            },
+            {
+              "name": "urgent",
+              "source": "request",
+              "sourceRef": "$request.urgent",
+              "required": false,
+              "type": "boolean",
+              "notes": "Set where something is needed at once and no round is open. Urgency does not change who approves it — whether it should is an open question this use case raises and does not answer (BR-1, OQ-5)."
+            },
+            {
+              "name": "lines",
+              "source": "request",
+              "sourceRef": "$request.lines",
+              "required": true,
+              "type": "object[]",
+              "notes": "One entry per item: the item, the quantity in that item's own unit, and the reason. **All three are required on every line** (BR-4, BR-5, E1, E2, E3). At least one line (E6). The item is an active stock item — a deactivated one is not offered (E5)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The request and where it now sits.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Submitted. Nothing has been bought and no money has moved (BR-9)."
+              },
+              {
+                "name": "round",
+                "type": "string",
+                "description": "The round it joined, or urgent where none was open (BR-1, E4)."
+              },
+              {
+                "name": "requester",
+                "type": "string",
+                "description": "Whoever submitted it. Any member of staff may, and no stock permission is needed (BR-2, AC-1)."
+              },
+              {
+                "name": "lines",
+                "type": "object[]",
+                "description": "Item, quantity, unit and reason, with what is on hand beside each (BR-3)."
+              },
+              {
+                "name": "low_items_not_included",
+                "type": "object[]",
+                "description": "Items already below their reorder level that were offered and left out. What the store knows is short is easy to leave out of a round by accident (BR-3, A2, AC-2)."
+              },
+              {
+                "name": "estimated_value",
+                "type": "string",
+                "description": "What the approver will be shown, and what decides which role must approve it. Nothing in the system holds a price for a stock item, so where this figure comes from is unanswered (OQ-3)."
+              },
+              {
+                "name": "goes_to",
+                "type": "string",
+                "description": "The round page, where the School Admin sees every request together rather than one at a time (BR-6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_QUANTITY",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A line has no quantity.",
+              "written": "Nothing.",
+              "notWritten": "The request is not submitted."
+            },
+            {
+              "code": "QUANTITY_NOT_POSITIVE",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "A quantity is zero or less.",
+              "written": "Nothing.",
+              "notWritten": "The line is not saved."
+            },
+            {
+              "code": "NO_REASON",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A line has no reason.",
+              "written": "Nothing.",
+              "notWritten": "The request is not submitted.",
+              "note": "The approver reads it before deciding to spend, and a line with none invites a rejection (BR-5, AC-3)."
+            },
+            {
+              "code": "NO_LINES",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "The request has no lines at all.",
+              "written": "Nothing.",
+              "notWritten": "It is not submitted."
+            },
+            {
+              "code": "ITEM_DEACTIVATED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "A deactivated item was added.",
+              "written": "Nothing.",
+              "notWritten": "The request is not submitted.",
+              "note": "The item is no longer stocked (UC-18-01 BR-10)."
+            },
+            {
+              "code": "NO_ROUND_OPEN",
+              "mapsTo": "E4",
+              "httpStatus": 200,
+              "meaning": "No round is open and the request was not marked urgent.",
+              "written": "The request is accepted and treated as urgent.",
+              "notWritten": "Nothing is refused.",
+              "treatedAsSuccess": true,
+              "note": "A request outside a round is permitted, so this is a note rather than a refusal (BR-1, A1)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. It is what the approver reads before deciding to spend the school's money, and a reason a planner supplied is a justification nobody gave (BR-5, E3, AC-3).",
+          "derivedFrom": [
+            "BR-5",
+            "E3",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never round or invent a quantity. It goes into the item's own unit, and a request for \"some paper\" is a number nobody can buy against (BR-4, E1, E2).",
+          "derivedFrom": [
+            "BR-4",
+            "E1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Check the unit before the number. Ten of an item counted in reams and ten counted in boxes are different orders, and the requester rarely says which they meant (BR-4, and the item's unit is fixed at UC-18-01 BR-2).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say what was offered and left out. Items already below their reorder level are put in front of every requester, and the one thing the store has actually run out of is the easiest to leave off a list of what one classroom wants (BR-3, A2, AC-2).",
+          "derivedFrom": [
+            "BR-3",
+            "A2",
+            "AC-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never say the goods are on the way. Submitting buys nothing: the request has to be approved by whichever role its value requires, then cash has to be released by a different role, then somebody has to go and buy it (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never treat a missing round as a refusal. A request outside a round is accepted as urgent, which is the point — a lab out of a reagent cannot wait for the end of the period (BR-1, A1, E4).",
+          "derivedFrom": [
+            "BR-1",
+            "A1",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "stock.request.withdraw",
+        "statement": "It is withdrawn with a reason before it is approved, and stays on the record (BR-10, BR-11). After approval it is no longer the requester's — it is the approver's to reject or the purchase to complete."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Grade 9 ke kamron ke liye 24 kaale marker aur 10 ream A4 paper chahiye, dono khatam ho gaye hain",
+            "lang": "ur-Latn",
+            "gloss": "I need 24 black markers and 10 reams of A4 paper for the Grade 9 rooms, both have run out"
+          },
+          "context": "Teacher, Johar Town branch, November round open.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.request.submit",
+              "inputs": {
+                "round_id": "$request.round_phrase → November 2026",
+                "urgent": "false",
+                "lines": "two lines, quantities and reasons as they gave them",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words on both lines (PR-1)."
+            }
+          ],
+          "outcome": "Confirm the units before submitting — markers are counted in pieces and paper in reams, so 24 and 10 mean what they think. After: report that it has joined the November round and that nothing is bought yet. Add that lab gloves are below their reorder level and were not included, in case the same room needs them."
+        },
+        {
+          "request": {
+            "text": "lab ka reagent khatam ho gaya hai, foran chahiye",
+            "lang": "ur-Latn",
+            "gloss": "the lab reagent has run out, it is needed at once"
+          },
+          "context": "Teacher, no round open.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.request.submit",
+              "inputs": {
+                "round_id": "omitted — no round is open",
+                "urgent": "true",
+                "lines": "the reagent, with the quantity and reason asked for",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Accepted outside a round rather than refused (PR-6)."
+            }
+          ],
+          "outcome": "Ask for the quantity and the reason — both are required and the reason is what the approver reads. After: report that it was accepted as urgent because no round is open, and say the part that matters: urgency does not change who approves it or how fast, which the use case itself leaves unanswered."
+        },
+        {
+          "request": {
+            "text": "thoda sa paper mangwa dein",
+            "lang": "ur-Latn",
+            "gloss": "order a bit of paper"
+          },
+          "context": "Coordinator, November round open.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.request.submit",
+              "inputs": {
+                "round_id": "$request.round_phrase → November 2026",
+                "urgent": "false",
+                "lines": "$request.lines — no quantity and no reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Both are required and neither is ours to supply (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Nothing is submitted. Ask how many reams, and why — the quantity has to be a number somebody can buy against, and the reason is what the approver reads before deciding to spend. Mention that A4 paper is at 12 against a reorder level of 15, so the store already knows it is short."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-02-PC-5",
+      "intent": {
+        "name": "stock.request.withdraw",
+        "summary": "Take back a request before it is approved, with a reason. It stays on the record.",
+        "routesHere": [
+          "withdraw my marker request, the store found a box at the back",
+          {
+            "text": "meri request wapas le lein, store mein mil gaye hain",
+            "lang": "ur-Latn",
+            "gloss": "withdraw my request, they turned up in the store"
+          },
+          {
+            "text": "ab zaroorat nahi rahi, request cancel kar dein",
+            "lang": "ur-Latn",
+            "gloss": "it is not needed any more, cancel the request"
+          },
+          "pull my request for this round"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "manzoor shuda request wapas lein",
+              "lang": "ur-Latn",
+              "gloss": "withdraw a request that has been approved"
+            },
+            "goesTo": "Not offered.",
+            "note": "A request may be withdrawn only before approval. After it, it is the approver's to reject or the purchase to complete (BR-10) — and where an advance has been issued, the money is already out and owed back (UC-18-03 BR-7)."
+          },
+          {
+            "request": {
+              "text": "request bilkul mita dein",
+              "lang": "ur-Latn",
+              "gloss": "erase the request completely"
+            },
+            "goesTo": "Not offered.",
+            "note": "A request is never deleted. A withdrawn or rejected one stays on the record, so a member of staff whose requests are always rejected is visible (BR-11, E9)."
+          },
+          {
+            "request": {
+              "text": "sirf ek line hata dein",
+              "lang": "ur-Latn",
+              "gloss": "remove just one line"
+            },
+            "goesTo": "Not offered.",
+            "note": "A submitted request is withdrawn and resubmitted rather than amended — whether it can be amended at all is an open question this use case raises and does not answer (OQ-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.request.withdraw",
+            "inputs": {
+              "request_id": "$request.request_phrase",
+              "withdrawal_reason": "$request.withdrawal_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The request leaves the round and stays on the record (BR-10, BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. A withdrawal with no reason is refused, and a request already approved cannot be withdrawn at all (BR-10).",
+        "atomicity": "One state change. Nothing was bought and no money had moved, which is why withdrawing before approval costs the school nothing (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "stock.request.withdraw",
+          "method": "POST",
+          "path": "/api/v1/stock-requests/{request_id}/withdraw",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a request is withdrawn once and a repeat is the same state",
+          "purpose": "Withdraw a submitted request with the reason recorded.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.request_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_request",
+                "fromPhrase": "$request.request_phrase",
+                "onNoMatch": "Refuse. No request matches, or it belongs to somebody else — a requester sees their own (BR-7).",
+                "onAmbiguous": "Ask, naming the requests that match with their round, their items and where each stands."
+              },
+              "notes": "The request, named by its number or by what was asked for."
+            },
+            {
+              "name": "withdrawal_reason",
+              "source": "request",
+              "sourceRef": "$request.withdrawal_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters, the requester's own. Required — a request that vanished from the round with no reason looks to the approver like one that was never made."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was withdrawn and what it leaves behind.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Withdrawn. On the record, never deleted (BR-11, E9)."
+              },
+              {
+                "name": "withdrawal_reason",
+                "type": "string",
+                "description": "Why, in the requester's own words."
+              },
+              {
+                "name": "round",
+                "type": "string",
+                "description": "The round it has left. It is no longer part of what the approver sees together (BR-6)."
+              },
+              {
+                "name": "items_still_low",
+                "type": "object[]",
+                "description": "Items on the withdrawn request that are still at or below their reorder level. Withdrawing the request does not change the shelf (BR-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_DECIDED",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The request has already been approved or rejected.",
+              "written": "Nothing.",
+              "notWritten": "The request stays as it is.",
+              "note": "It may be withdrawn only before approval (BR-10). The use case writes no exception for the attempt."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. The approver sees the round as a whole, and a request that disappeared from it with no explanation reads as one that was never made (BR-6, BR-10).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the shelf has not changed. An item withdrawn from a request is still at whatever level it was — if it was below its reorder level, it still is, and it will be offered again next round (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that it stays on the record. Nothing is deleted, and that is deliberate: a member of staff whose requests are always withdrawn or rejected is visible only because the record keeps them (BR-11, E9).",
+          "derivedFrom": [
+            "BR-11",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never offer to amend instead. A submitted request is withdrawn and resubmitted, and whether amendment should exist is unanswered (OQ-4).",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "stock.request.submit",
+        "statement": "A fresh request is submitted. The withdrawn one stays on the record with its reason, and the new one joins the round if it is still open — otherwise it is accepted as urgent (BR-1, BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "meri marker wali request wapas le lein, store mein peeche ek dabba mil gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "withdraw my marker request, a box turned up at the back of the store"
+          },
+          "context": "Teacher, Johar Town branch, request submitted to the open November round.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.request.withdraw",
+              "inputs": {
+                "request_id": "$request.request_phrase → their marker request",
+                "withdrawal_reason": "as they gave it — the store found a box at the back",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Report that it has left the round and stays on the record with the reason. Add the thing the box does not fix: markers are still at 6 against a reorder level of 20, so the store is short whether or not this classroom needs them — the item will be offered again next round."
+        },
+        {
+          "request": {
+            "text": "wo request cancel kar dein",
+            "lang": "ur-Latn",
+            "gloss": "cancel that request"
+          },
+          "context": "Teacher, request already approved with an advance issued.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.request.withdraw",
+              "inputs": {
+                "request_id": "$request.request_phrase → the approved request",
+                "withdrawal_reason": "$request.withdrawal_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused. It is past withdrawal (PR-1 concerns the reason; the state is what blocks it)."
+            }
+          ],
+          "outcome": "It cannot be withdrawn — it was approved and an advance has been issued against it, so the money is already out and owed back by whoever took it. That advance has to be settled against goods or returned as cash, whatever happens to the request. Accounts are the ones who can settle it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-02-PC-6",
+      "intent": {
+        "name": "stock.requests.read",
+        "summary": "See where a request stands, or see the whole round together as the approver does.",
+        "routesHere": [
+          "where does my marker request stand?",
+          {
+            "text": "meri request ka kya bana?",
+            "lang": "ur-Latn",
+            "gloss": "what happened to my request?"
+          },
+          {
+            "text": "is round mein kitni requests aayi hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many requests have come in this round?"
+          },
+          {
+            "text": "kis kis ne kya kya manga hai?",
+            "lang": "ur-Latn",
+            "gloss": "who has asked for what?"
+          },
+          "show me everything requested this round, grouped by item"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ab manzoor kar dein",
+              "lang": "ur-Latn",
+              "gloss": "approve it now"
+            },
+            "goesTo": "stock.request.approve — UC-18-03.",
+            "note": "Reading the round and deciding on it are separate acts, and who may decide depends on the value (BR-9)."
+          },
+          {
+            "request": {
+              "text": "store mein kya para hai?",
+              "lang": "ur-Latn",
+              "gloss": "what is in the store?"
+            },
+            "goesTo": "stock.items.read — UC-18-01.",
+            "note": "What has been asked for and what is on the shelf are different questions, and a round is often raised because nobody looked at the second."
+          },
+          {
+            "request": {
+              "text": "paise kab milenge?",
+              "lang": "ur-Latn",
+              "gloss": "when will the money come?"
+            },
+            "goesTo": "stock.advances.read — UC-18-03.",
+            "note": "The advance against an approved request is Accounts' to issue and is tracked as an amount owed back."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.requests.read",
+            "inputs": {
+              "round_id": "$request.round_phrase",
+              "status": "$request.status",
+              "mine_only": "$request.mine_only",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read, within what the actor may see: a requester sees their own, the School Admin and the Principal see the round together (BR-6, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written, nothing is approved and nothing is bought."
+      },
+      "operations": [
+        {
+          "name": "stock.requests.read",
+          "method": "GET",
+          "path": "/api/v1/stock-requests",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List stock requests with their lines, their round and where each stands.",
+          "parameters": [
+            {
+              "name": "round_id",
+              "source": "resolved",
+              "sourceRef": "$request.round_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "request_round",
+                "fromPhrase": "$request.round_phrase",
+                "onNoMatch": "Refuse. No such round.",
+                "onAmbiguous": "Ask, naming the rounds that match with their periods."
+              },
+              "notes": "Where the question is about one round."
+            },
+            {
+              "name": "status",
+              "source": "request",
+              "sourceRef": "$request.status",
+              "required": false,
+              "type": "enum: Draft|Submitted|Approved|Rejected|Advanced|Purchased|Received|Settled|Withdrawn",
+              "notes": "Where the question is about requests at a particular point — the ones waiting, the ones rejected, the ones whose goods have still not arrived (BR-7)."
+            },
+            {
+              "name": "mine_only",
+              "source": "request",
+              "sourceRef": "$request.mine_only",
+              "required": false,
+              "type": "boolean",
+              "notes": "A requester's own requests. Anybody may ask about theirs; only the School Admin and the Principal see the round as a whole (BR-6, BR-7)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Where each request stands, and what the round adds up to.",
+            "fields": [
+              {
+                "name": "requests",
+                "type": "object[]",
+                "description": "Requester, round, items, quantities, reasons, estimated value and status."
+              },
+              {
+                "name": "by_item",
+                "type": "object[]",
+                "description": "The round grouped by item, with the total quantity asked for across every requester. Whether the same item is bought once against the round or once per requester is an open question this use case raises and does not answer (OQ-2)."
+              },
+              {
+                "name": "awaiting_decision",
+                "type": "integer",
+                "description": "Requests submitted and not yet approved or rejected. Nothing has been bought for any of them (BR-9)."
+              },
+              {
+                "name": "advanced_not_received",
+                "type": "object[]",
+                "description": "Requests where cash has been issued and the goods have not arrived. This is money out of the school with nothing to show for it yet (UC-18-03 BR-6)."
+              },
+              {
+                "name": "rejected_by_requester",
+                "type": "object[]",
+                "description": "Rejections grouped by who asked. A member of staff whose requests are always rejected is visible only because nothing is ever deleted (BR-11)."
+              },
+              {
+                "name": "estimated_value_source",
+                "type": "string",
+                "description": "Unknown. The figure decides which role must approve, and nothing in the system holds a price for a stock item (OQ-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_IN_SCOPE",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The actor is asking about requests that are not theirs.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned.",
+              "note": "A requester sees their own and the round page is the School Admin's and the Principal's (BR-6, BR-7). The use case writes no exception for a request outside that."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Answer \"where does my request stand\" with the stage and what it means. Approved is not bought, advanced is cash out with nothing received, and received is not settled — the states read like progress and only two of them mean the goods exist (BR-7).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Group the round by item when the question is about the round. A round read one request at a time cannot be bought for in one order, which is the whole reason every request gathers on one page (BR-6).",
+          "derivedFrom": [
+            "BR-6",
+            "AC-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name the requests that have cash out and no goods in. That is the module's real exposure, and it is invisible in a list sorted by requester (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never present the estimated value as a price. Nothing in the system holds one for a stock item, and this figure is what decides which role must approve the spend (OQ-3).",
+          "derivedFrom": [
+            "OQ-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "meri request ka kya bana?",
+            "lang": "ur-Latn",
+            "gloss": "what happened to my request?"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.requests.read",
+              "inputs": {
+                "round_id": "omitted",
+                "status": "omitted",
+                "mine_only": "true",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their own requests only (PR-1)."
+            }
+          ],
+          "outcome": "Say which stage it is at and what that actually means — approved is a decision to spend, not goods on a shelf; advanced means somebody has the cash and has not come back yet. Where it was rejected, give the reason as it was written, since that is the whole point of the reason being required."
+        },
+        {
+          "request": {
+            "text": "is round mein kis ne kya manga hai?",
+            "lang": "ur-Latn",
+            "gloss": "who has asked for what this round?"
+          },
+          "context": "School Admin, Johar Town branch, round closed with 14 requests.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.requests.read",
+              "inputs": {
+                "round_id": "$request.round_phrase → November 2026",
+                "status": "Submitted",
+                "mine_only": "false",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The whole round, together (PR-2)."
+            }
+          ],
+          "outcome": "Give it grouped by item with the total quantity across everybody, not request by request — that is what can be bought in one order. Say that whether the same item is bought once for the round or once per requester is not settled anywhere, and that the estimated values shown come from nothing the system holds."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1260 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-04-17",
+  "featureRef": "4.17 Withholding tax on fees",
+  "name": "Deduct, record and remit withholding tax on fees, with every parameter configurable",
+  "module": "Fee",
+  "alsoAffectsModules": [
+    "Finance"
+  ],
+  "priority": "MVP",
+  "priorityReason": "The school acts as collecting agent under law. Getting it wrong is a legal exposure, not an accounting inconvenience.",
+  "goal": {
+    "actor": "Accounts",
+    "capability": "to deduct the tax that applies to school fees, hold it separately, certify it and remit it",
+    "outcome": "the school meets its obligation as collecting agent and can show exactly what it took and where it went"
+  },
+  "primaryActor": "Accounts",
+  "secondaryActors": [
+    {
+      "actor": "School Admin or Principal / Director",
+      "involvement": "Approves the rate, the threshold and any change, because the setting carries legal consequence."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "involvement": "The tax is deducted from them and they receive the certificate they need for their own return."
+    }
+  ],
+  "externalActors": [
+    {
+      "actor": "Government / Regulator",
+      "involvement": "Receives the statutory return and the deposited amount. Holds no login."
+    }
+  ],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "An invoice run assesses each household against the threshold and deducts where it has been crossed.",
+        "source": "UC-04-02"
+      },
+      {
+        "type": "scheduled",
+        "description": "The statutory return period ends and the amount collected is prepared for deposit (BR-10).",
+        "source": "Finance scheduler"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An authenticated session exists. Entering the configuration requires Accounts; approving requires School Admin or Principal.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "A chart of accounts exists with a tax holding account mapped, separate from income and from expense.",
+      "establishedBy": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    },
+    {
+      "condition": "Students are linked to family codes, since the threshold is a household figure rather than a per-student one.",
+      "establishedBy": {
+        "id": "UC-03-01",
+        "name": "View and maintain the student record",
+        "link": "UC-03-01.json"
+      }
+    },
+    {
+      "condition": "An approved configuration is in force. Without one nothing is deducted (BR-2)."
+    }
+  ],
+  "postConditions": [
+    "An approved configuration is in force, holding the rate, the threshold, the fee types that count, whether it is calculated on the gross or after concession, and its effective date.",
+    "Fees paid are tracked per family across the tax year, so the annual household threshold can be judged rather than guessed per invoice.",
+    "Where a household has crossed the threshold, tax has been deducted at the approved rate and shown as its own line on the challan.",
+    "The amount deducted sits in its own holding account as money owed onward, never as school income and never as a school expense.",
+    "Each family can be issued a certificate of tax deducted, which they need to claim it against their own return.",
+    "The statutory return has been prepared, the amount deposited and the deposit recorded, so the holding account clears rather than accumulating indefinitely.",
+    "A change to the configuration has not recalculated invoices already issued.",
+    "Nothing was deducted at a figure somebody typed. Every deduction came from the approved configuration."
+  ],
+  "screens": [
+    {
+      "name": "Withholding tax configuration",
+      "route": "/fee/tax/configuration",
+      "sidebar": "Fee",
+      "columns": [
+        "Version",
+        "Rate",
+        "Threshold",
+        "Fee types counted",
+        "Basis",
+        "Effective from",
+        "Approved by",
+        "Status"
+      ],
+      "defaultSort": "Effective from, newest first",
+      "actions": [
+        "Enter configuration",
+        "Submit for approval",
+        "Approve",
+        "Create new version"
+      ],
+      "visibleTo": [
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Household tax position",
+      "route": "/fee/tax/households",
+      "sidebar": "Fee",
+      "columns": [
+        "Family code",
+        "Household",
+        "Fees counted this year",
+        "Threshold",
+        "Crossed on",
+        "Tax deducted",
+        "Certificate"
+      ],
+      "defaultSort": "Fees counted, highest first",
+      "filters": [
+        "Tax year",
+        "Crossed only",
+        "Branch"
+      ],
+      "actions": [
+        "Open",
+        "Issue certificate",
+        "Export"
+      ],
+      "visibleTo": [
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Tax return",
+      "route": "/fee/tax/returns",
+      "sidebar": "Fee",
+      "columns": [
+        "Period",
+        "Households",
+        "Tax deducted",
+        "Deposited",
+        "Deposit date",
+        "Holding balance",
+        "Status"
+      ],
+      "defaultSort": "Period, newest first",
+      "actions": [
+        "Prepare return",
+        "Record deposit",
+        "Download",
+        "Export"
+      ],
+      "visibleTo": [
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Rate",
+      "type": "decimal",
+      "required": "yes",
+      "validation": "The percentage deducted. Configurable, because the position has changed over the years (BR-1).",
+      "example": 5.0
+    },
+    {
+      "name": "Annual threshold",
+      "type": "money",
+      "required": "yes",
+      "validation": "The household's fees for the tax year above which tax applies. An annual household figure, not a per-invoice one (BR-4).",
+      "example": "PKR 200,000"
+    },
+    {
+      "name": "Fee types counted",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "Which fee types count towards the threshold and are taxed. Not every charge a school raises is a fee for this purpose (BR-5).",
+      "example": "Tuition, admission",
+      "lookupSource": "Active fee types"
+    },
+    {
+      "name": "Basis",
+      "type": "enum",
+      "required": "yes",
+      "validation": "Whether the tax is calculated on the gross fee or on the amount after a concession. The two differ materially (BR-6).",
+      "example": "After concession",
+      "enumValues": [
+        "Gross fee",
+        "After concession"
+      ]
+    },
+    {
+      "name": "Tax year",
+      "type": "text",
+      "required": "yes",
+      "validation": "The year the threshold is assessed across. Set by the tax authority, not the school.",
+      "example": "2026-27"
+    },
+    {
+      "name": "Effective from",
+      "type": "date",
+      "required": "yes",
+      "validation": "When the configuration takes effect. It does not recalculate invoices already issued (BR-8).",
+      "example": "01-07-2026"
+    },
+    {
+      "name": "Fees counted this year",
+      "type": "generated",
+      "required": "no",
+      "validation": "The household's running total of counted fees for the tax year, which is what the threshold is judged against (BR-4).",
+      "example": "PKR 215,000"
+    },
+    {
+      "name": "Crossed on",
+      "type": "generated",
+      "required": "no",
+      "validation": "The date the household passed the threshold.",
+      "example": "12-01-2027"
+    },
+    {
+      "name": "Tax deducted",
+      "type": "generated",
+      "required": "no",
+      "validation": "Calculated from the approved configuration. Never typed (BR-3).",
+      "example": "PKR 750"
+    },
+    {
+      "name": "Certificate number",
+      "type": "generated",
+      "required": "no",
+      "validation": "Unique per household per tax year.",
+      "example": "WHT/LHR/26-27/000188",
+      "format": "WHT/<BranchCode>/<TaxYear>/<Sequence>"
+    },
+    {
+      "name": "Deposit reference",
+      "type": "text",
+      "required": "conditional",
+      "validation": "The challan or reference under which the amount was deposited.",
+      "example": "CPR-2027-4471188",
+      "requiredWhen": "A deposit is being recorded"
+    },
+    {
+      "name": "Deposit date",
+      "type": "date",
+      "required": "conditional",
+      "validation": "When the amount was actually deposited.",
+      "example": "15-02-2027",
+      "requiredWhen": "A deposit is being recorded"
+    },
+    {
+      "name": "Status",
+      "type": "generated",
+      "required": "no",
+      "validation": "See the lifecycle below.",
+      "default": "Draft",
+      "example": "Approved"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Tax configuration",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One per version, with its rate, threshold, basis and effective date. Never deleted (BR-9)."
+    },
+    {
+      "entity": "Configuration approval",
+      "operations": [
+        "create"
+      ],
+      "notes": "One row per approval or return, with who and when. Append only."
+    },
+    {
+      "entity": "Household tax position",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "The running total of counted fees per family per tax year (BR-4)."
+    },
+    {
+      "entity": "Tax deduction",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "One row per deduction, tied to the invoice it was taken on."
+    },
+    {
+      "entity": "Tax certificate",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "One per household per tax year, issued to the family."
+    },
+    {
+      "entity": "Tax return",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One per statutory period, with the amount deposited."
+    },
+    {
+      "entity": "General ledger voucher",
+      "operations": [
+        "create"
+      ],
+      "notes": "Posts to the holding account. Never to income and never to expense (BR-7)."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Every configuration change, every deduction and every deposit."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Accounts",
+      "actions": [
+        "view",
+        "create",
+        "edit"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Enters the configuration for approval, applies it, issues certificates and prepares the return. Cannot approve the configuration (BR-9)."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "approve"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Approves the configuration and any change, because the setting carries legal consequence."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view",
+        "approve"
+      ],
+      "rowScope": "All branches.",
+      "notes": "Approves the configuration alongside the School Admin, and reviews the returns."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own household only.",
+      "notes": "Sees the deduction on the challan and receives the certificate of tax deducted."
+    },
+    {
+      "actor": "Staff",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Read only, since they answer counter questions about a tax line."
+    },
+    {
+      "actor": "Student, Coordinator, Teacher",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "Every parameter is configurable — the rate, the threshold, the fee types counted, the basis and the effective date. The legal position has changed over the years, and a rate written into the software is a rate that will be wrong."
+    },
+    {
+      "id": "BR-2",
+      "rule": "No tax is deducted without an approved configuration in force. A configuration in draft or awaiting approval deducts nothing."
+    },
+    {
+      "id": "BR-3",
+      "rule": "The deduction is calculated from the approved configuration. Nobody types a tax amount."
+    },
+    {
+      "id": "BR-4",
+      "rule": "The threshold is assessed on the household's counted fees across the tax year, not per invoice and not per student. A family with three children reaches it faster than a family with one, and that is the point."
+    },
+    {
+      "id": "BR-5",
+      "rule": "Only the configured fee types count towards the threshold and are taxed. Not every charge a school raises is a fee for this purpose."
+    },
+    {
+      "id": "BR-6",
+      "rule": "Whether the tax is calculated on the gross fee or after a concession is configured, because the two differ materially for a family holding a large reduction."
+    },
+    {
+      "id": "BR-7",
+      "rule": "The amount deducted is held in its own ledger account as money owed onward. It is never school income and never a school expense, because the school is collecting agent rather than the party taxed."
+    },
+    {
+      "id": "BR-8",
+      "rule": "A change to the configuration takes effect from its own date and does not recalculate invoices already issued."
+    },
+    {
+      "id": "BR-9",
+      "rule": "Accounts enter the configuration and the School Admin or Principal approves it. A setting with legal consequence is not one person's decision."
+    },
+    {
+      "id": "BR-10",
+      "rule": "Accounts prepare the statutory return for the period, deposit the amount collected and record the deposit against the holding account, so the balance clears rather than accumulating indefinitely."
+    },
+    {
+      "id": "BR-11",
+      "rule": "Each family is issued a certificate of tax deducted, which the parent needs to claim the amount against their own return. A deduction with no certificate leaves the family out of pocket."
+    },
+    {
+      "id": "BR-12",
+      "rule": "Sales tax is a different mechanism and is not handled here. Tuition is generally not subject to it, and a school charging it on a canteen or a shop does so elsewhere."
+    },
+    {
+      "id": "BR-13",
+      "rule": "Where a household's tax position is corrected — an invoice cancelled or credited after tax was deducted — the deduction is adjusted and the certificate reissued rather than left overstated."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Tax configuration",
+      "states": [
+        "Draft",
+        "Awaiting approval",
+        "Approved",
+        "Returned",
+        "Superseded"
+      ],
+      "initial": "Draft",
+      "terminal": [
+        "Superseded"
+      ],
+      "transitions": [
+        {
+          "from": "Draft",
+          "to": "Awaiting approval",
+          "triggeredBy": "Accounts",
+          "condition": "Submitted with every parameter set."
+        },
+        {
+          "from": "Awaiting approval",
+          "to": "Approved",
+          "triggeredBy": "School Admin or Principal / Director",
+          "condition": "Approved. Only then does it take effect (BR-2)."
+        },
+        {
+          "from": "Awaiting approval",
+          "to": "Returned",
+          "triggeredBy": "School Admin or Principal / Director",
+          "condition": "Returned with a reason."
+        },
+        {
+          "from": "Returned",
+          "to": "Awaiting approval",
+          "triggeredBy": "Accounts",
+          "condition": "Corrected and resubmitted."
+        },
+        {
+          "from": "Approved",
+          "to": "Superseded",
+          "triggeredBy": "System",
+          "condition": "A later version is approved and its effective date arrives (BR-8)."
+        }
+      ]
+    },
+    {
+      "entity": "Tax return",
+      "states": [
+        "Open",
+        "Prepared",
+        "Deposited",
+        "Filed"
+      ],
+      "initial": "Open",
+      "terminal": [
+        "Filed"
+      ],
+      "transitions": [
+        {
+          "from": "Open",
+          "to": "Prepared",
+          "triggeredBy": "Accounts",
+          "condition": "The period closes and the amount is totalled."
+        },
+        {
+          "from": "Prepared",
+          "to": "Deposited",
+          "triggeredBy": "Accounts",
+          "condition": "The amount is deposited and the reference recorded (BR-10)."
+        },
+        {
+          "from": "Deposited",
+          "to": "Filed",
+          "triggeredBy": "Accounts",
+          "condition": "The statutory return is filed."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Accounts",
+      "navigation": "Login → Fee → Withholding tax configuration → Enter configuration",
+      "userAction": "Enters the rate, the annual threshold, which fee types count, whether it is calculated on the gross fee or after a concession, and the effective date.",
+      "function": "enterTaxConfiguration(rate, threshold, feeTypes, basis, effectiveFrom)",
+      "systemResponse": "Validates each parameter and holds the configuration at Draft.",
+      "rules": [
+        "BR-1",
+        "BR-5",
+        "BR-6"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "Accounts",
+      "navigation": "Withholding tax configuration → Submit for approval",
+      "userAction": "Submits the configuration.",
+      "function": "submitTaxConfiguration(configurationId)",
+      "systemResponse": "Routes it to the School Admin or Principal. Nothing is deducted in the meantime.",
+      "rules": [
+        "BR-2",
+        "BR-9"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "School Admin / Principal / Director",
+      "navigation": "Login → Fee → Withholding tax configuration → Approve",
+      "userAction": "Reviews the parameters and approves the configuration.",
+      "function": "approveTaxConfiguration(configurationId)",
+      "systemResponse": "Records the approval and brings the configuration into force from its effective date.",
+      "rules": [
+        "BR-2",
+        "BR-8",
+        "BR-9"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "trackHouseholdFees(familyCode, taxYear)",
+      "systemResponse": "Tracks fees paid per family across the tax year, since the threshold is an annual household figure rather than a per-invoice one.",
+      "rules": [
+        "BR-4",
+        "BR-5"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "deductWithholdingTax(familyCode, invoiceId)",
+      "systemResponse": "Deducts at the approved rate once the household has crossed the threshold, and shows it as its own line on the challan.",
+      "rules": [
+        "BR-3",
+        "BR-6"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "postToTaxHoldingAccount(deductionId)",
+      "systemResponse": "Posts the amount to its own holding account as money owed onward, never as income and never as expense.",
+      "rules": [
+        "BR-7"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "Accounts",
+      "navigation": "Login → Fee → Household tax position → Issue certificate",
+      "userAction": "Issues each family their certificate of tax deducted.",
+      "function": "issueTaxCertificate(familyCode, taxYear)",
+      "systemResponse": "Produces the certificate the parent needs to claim the amount against their own return.",
+      "rules": [
+        "BR-11"
+      ]
+    },
+    {
+      "step": 8,
+      "actor": "Accounts",
+      "navigation": "Login → Fee → Tax return → Prepare return → Record deposit",
+      "userAction": "Prepares the statutory return, deposits the amount collected and records the deposit.",
+      "function": "prepareTaxReturn(period); recordTaxDeposit(returnId, reference, depositDate)",
+      "systemResponse": "Clears the holding account by the amount deposited, so the balance does not accumulate indefinitely.",
+      "rules": [
+        "BR-10"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 4,
+      "condition": "A household has several children enrolled",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "Their fees are counted together against the threshold, so a family with three children reaches it faster than a family with one (BR-4).",
+      "function": "trackHouseholdFees(familyCode, taxYear)",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 5,
+      "condition": "The household holds a concession",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "The tax is calculated on the gross fee or on the amount after the concession, according to the approved configuration, because the two differ materially (BR-6).",
+      "function": "deductWithholdingTax(familyCode, invoiceId)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 1,
+      "condition": "The rate or threshold changes in law",
+      "actor": "Accounts",
+      "navigation": "Withholding tax configuration → Create new version",
+      "behaviour": "A new version is entered with its own effective date and goes through approval again. Invoices already issued are not recalculated (BR-8).",
+      "function": "enterTaxConfiguration(rate, threshold, feeTypes, basis, effectiveFrom)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 3,
+      "condition": "The approver does not accept the configuration",
+      "actor": "School Admin / Principal / Director",
+      "navigation": "Withholding tax configuration → Return with a reason",
+      "behaviour": "It returns to Accounts and nothing is deducted in the meantime, since only an approved configuration is in force (BR-2).",
+      "function": "returnTaxConfiguration(configurationId, reason)",
+      "resumesAtStep": 1
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 7,
+      "condition": "An invoice on which tax was deducted is cancelled or credited",
+      "actor": "Accounts",
+      "navigation": "Login → Fee → Household tax position → Adjust",
+      "behaviour": "The deduction is adjusted and the certificate reissued, rather than the household's position being left overstated (BR-13).",
+      "function": "adjustTaxDeduction(deductionId, reason)",
+      "resumesAtStep": 8
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 8,
+      "condition": "The statutory period closes",
+      "actor": "Accounts",
+      "navigation": "Tax return → Prepare return",
+      "behaviour": "The amount collected in the period is totalled, deposited and recorded, and the holding account clears by that amount (BR-10).",
+      "function": "prepareTaxReturn(period)"
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 5,
+      "condition": "No approved configuration is in force",
+      "systemResponse": "Nothing is deducted (BR-2).",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E2",
+      "atStep": 5,
+      "condition": "The household has not crossed the threshold",
+      "systemResponse": "No tax is deducted and no line appears (BR-4).",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E3",
+      "atStep": 1,
+      "condition": "The rate is outside a sensible range",
+      "systemResponse": "The configuration is not saved.",
+      "messageShown": "Enter a rate between 0 and 100 percent.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E4",
+      "atStep": 1,
+      "condition": "No fee type is selected as counting",
+      "systemResponse": "The configuration is not saved (BR-5).",
+      "messageShown": "Select which fee types count towards the threshold.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E5",
+      "atStep": 3,
+      "condition": "Accounts attempt to approve their own configuration",
+      "systemResponse": "The approval is refused (BR-9).",
+      "messageShown": "Only a School Admin or the Principal can approve this. It carries legal consequence.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 5,
+      "condition": "The configuration is missing when an invoice run reaches a household that has crossed",
+      "systemResponse": "Those students are excluded from the run rather than billed without the tax due on them.",
+      "messageShown": "Withholding tax is not configured. Set the rate and threshold before issuing invoices for these households.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 8,
+      "condition": "A deposit is recorded with no reference",
+      "systemResponse": "It is not recorded (BR-10).",
+      "messageShown": "Enter the deposit reference. The holding account cannot be cleared without it.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E8",
+      "atStep": 8,
+      "condition": "The deposit does not match the amount collected in the period",
+      "systemResponse": "The difference is shown rather than the holding account being forced to zero.",
+      "messageShown": "The deposit is PKR 500 less than the amount collected. Explain the difference before filing.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E9",
+      "atStep": 7,
+      "condition": "A certificate is requested for a household with no deduction",
+      "systemResponse": "No certificate is issued.",
+      "messageShown": "No tax has been deducted from this household this year.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Tax deducted",
+      "recipient": "Parent / Guardian",
+      "channels": [
+        "whatsapp"
+      ],
+      "template": "WITHHOLDING_TAX_DEDUCTED",
+      "contents": [
+        "Household",
+        "Amount deducted",
+        "The rate applied",
+        "That a certificate will be issued"
+      ],
+      "retry": "Per the Messaging module policy.",
+      "blocking": false
+    },
+    {
+      "event": "Certificate issued",
+      "recipient": "Parent / Guardian",
+      "channels": [
+        "whatsapp",
+        "email"
+      ],
+      "template": "WITHHOLDING_TAX_CERTIFICATE",
+      "contents": [
+        "Household",
+        "Tax year",
+        "Total deducted",
+        "Certificate number",
+        "Link to download"
+      ],
+      "retry": "Per the Messaging module policy.",
+      "blocking": false
+    },
+    {
+      "event": "Configuration awaiting approval",
+      "recipient": "School Admin and Principal / Director",
+      "channels": [
+        "inApp"
+      ],
+      "template": "TAX_CONFIGURATION_AWAITING_APPROVAL",
+      "contents": [
+        "Rate",
+        "Threshold",
+        "Fee types counted",
+        "Basis",
+        "Effective from",
+        "Entered by"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Return period closing",
+      "recipient": "Accounts",
+      "channels": [
+        "inApp"
+      ],
+      "template": "TAX_RETURN_DUE",
+      "contents": [
+        "Period",
+        "Amount collected",
+        "Holding account balance",
+        "Filing deadline"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "Tax is added as the final line when an invoice is raised, after every other adjustment.",
+      "affects": {
+        "id": "UC-04-02",
+        "name": "Issuing fee invoices at different scopes",
+        "link": "UC-04-02.json"
+      }
+    },
+    {
+      "effect": "The challan shows the deduction as its own line.",
+      "affects": {
+        "id": "UC-04-04",
+        "name": "Printable payment slips and challans",
+        "link": "UC-04-04.json"
+      }
+    },
+    {
+      "effect": "The holding account balance appears in the general ledger and the trial balance as a liability.",
+      "affects": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    },
+    {
+      "effect": "The deposit is raised as a payment voucher when the amount is remitted.",
+      "affects": {
+        "id": "UC-04-19",
+        "name": "Accounting vouchers for money in and out",
+        "link": "UC-04-19.json"
+      }
+    },
+    {
+      "effect": "A cancelled or credited invoice adjusts the household's tax position.",
+      "affects": {
+        "id": "UC-04-10",
+        "name": "Crediting a wrong charge already paid",
+        "link": "UC-04-10.json"
+      }
+    }
+  ],
+  "integrations": [
+    {
+      "system": "Government / Regulator",
+      "direction": "outbound",
+      "sends": "Nothing electronically from this use case. The statutory return and the deposit are made outside the system.",
+      "expects": "A deposit reference recorded against the return",
+      "timeout": "Not applicable",
+      "retry": "Not applicable",
+      "onFailure": "An unrecorded deposit leaves the holding account uncleared, which is reported rather than hidden."
+    }
+  ],
+  "reports": [
+    {
+      "name": "Household tax position",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Family code",
+        "Household",
+        "Fees counted",
+        "Threshold",
+        "Crossed on",
+        "Tax deducted",
+        "Certificate issued"
+      ],
+      "grouping": "By crossed or not crossed",
+      "totals": "Households crossed and total tax deducted in the year"
+    },
+    {
+      "name": "Certificate of tax deducted",
+      "formats": [
+        "pdf",
+        "print"
+      ],
+      "columns": [
+        "Household",
+        "Tax year",
+        "Fees paid",
+        "Rate",
+        "Tax deducted",
+        "Certificate number",
+        "Issued on"
+      ],
+      "grouping": "None",
+      "totals": "Total deducted for the household in the tax year"
+    },
+    {
+      "name": "Tax return and deposits",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Period",
+        "Households",
+        "Tax deducted",
+        "Deposited",
+        "Deposit reference",
+        "Deposit date",
+        "Holding balance"
+      ],
+      "grouping": "By period",
+      "totals": "Collected, deposited and still held"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "An approved configuration of 5% above PKR 200,000 for the tax year",
+      "when": "a household crosses PKR 200,000 in counted fees",
+      "then": "tax is deducted at 5% and appears as its own line on the challan"
+    },
+    {
+      "id": "AC-2",
+      "given": "The same household before crossing the threshold",
+      "when": "an invoice is raised",
+      "then": "no tax is deducted and no tax line appears"
+    },
+    {
+      "id": "AC-3",
+      "given": "A household with three children whose fees together exceed the threshold",
+      "when": "the position is assessed",
+      "then": "they are treated as having crossed, because the threshold is a household figure and not a per-student one"
+    },
+    {
+      "id": "AC-4",
+      "given": "A configuration entered but not yet approved",
+      "when": "invoices are raised",
+      "then": "nothing is deducted"
+    },
+    {
+      "id": "AC-5",
+      "given": "A configuration entered by Accounts",
+      "when": "the same Accounts user attempts to approve it",
+      "then": "the approval is refused"
+    },
+    {
+      "id": "AC-6",
+      "given": "A deduction of PKR 750",
+      "when": "the general ledger is inspected",
+      "then": "it sits in the tax holding account, not in income and not in expense"
+    },
+    {
+      "id": "AC-7",
+      "given": "A configuration whose basis is After concession, and a household holding a 20% concession",
+      "when": "tax is calculated",
+      "then": "it is calculated on the reduced amount, not the gross"
+    },
+    {
+      "id": "AC-8",
+      "given": "A rate change approved with a later effective date",
+      "when": "an invoice issued before it is checked",
+      "then": "it is unchanged, and the new rate applies only from its effective date"
+    },
+    {
+      "id": "AC-9",
+      "given": "A household with tax deducted during the year",
+      "when": "a certificate is issued",
+      "then": "it states the fees paid, the rate, the total deducted and its certificate number"
+    },
+    {
+      "id": "AC-10",
+      "given": "A period's collections deposited and recorded",
+      "when": "the holding account is inspected",
+      "then": "it has cleared by the amount deposited rather than accumulating"
+    },
+    {
+      "id": "AC-11",
+      "given": "An invoice on which tax was deducted, later credited",
+      "when": "the household position is checked",
+      "then": "the deduction has been adjusted and the certificate reissued"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-04-02",
+        "name": "Issuing fee invoices at different scopes",
+        "link": "UC-04-02.json",
+        "why": "Applies the deduction as the final line of the calculation."
+      },
+      {
+        "id": "UC-04-13",
+        "name": "Scholarship, discount and concession",
+        "link": "UC-04-13.json",
+        "why": "Supplies the concession where the basis is after concession.",
+        "optional": true
+      },
+      {
+        "id": "UC-03-01",
+        "name": "View and maintain the student record",
+        "link": "UC-03-01.json",
+        "why": "Supplies the family code the threshold is assessed against."
+      },
+      {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json",
+        "why": "Holds the tax account and shows the balance."
+      },
+      {
+        "id": "UC-04-19",
+        "name": "Accounting vouchers for money in and out",
+        "link": "UC-04-19.json",
+        "why": "Raises the voucher when the amount is deposited."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Keeps configuration and approval in separate hands."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      }
+    ],
+    "masterData": [
+      "Tax rate, threshold, counted fee types and basis, all approved",
+      "Tax year calendar",
+      "Chart of accounts with a tax holding account",
+      "Family codes"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Sales tax on canteen, shop or uniform sales, which is a different mechanism",
+      "handledBy": {
+        "id": "UC-18-01",
+        "name": "Inventory and stock management",
+        "link": "UC-18-01.json"
+      }
+    },
+    {
+      "item": "Raising the invoice the tax is deducted on",
+      "handledBy": {
+        "id": "UC-04-02",
+        "name": "Issuing fee invoices at different scopes",
+        "link": "UC-04-02.json"
+      }
+    },
+    {
+      "item": "The concession the basis may be calculated after",
+      "handledBy": {
+        "id": "UC-04-13",
+        "name": "Scholarship, discount and concession",
+        "link": "UC-04-13.json"
+      }
+    },
+    {
+      "item": "The payment voucher raised to deposit the amount",
+      "handledBy": {
+        "id": "UC-04-19",
+        "name": "Accounting vouchers for money in and out",
+        "link": "UC-04-19.json"
+      }
+    },
+    {
+      "item": "Tax on staff salaries",
+      "handledBy": {
+        "id": "UC-12-04",
+        "name": "Payroll processing",
+        "link": "UC-12-04.json"
+      }
+    },
+    {
+      "item": "Filing the return with the authority, which is done outside the system",
+      "handledBy": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Configurability",
+        "requirement": "No rate, threshold or basis is written into the software. Every parameter is configured and approved, because the legal position has changed before and will change again."
+      },
+      {
+        "aspect": "Account separation",
+        "requirement": "Tax collected never touches income or expense. It is a liability from the moment it is deducted until it is deposited."
+      },
+      {
+        "aspect": "Annual tracking",
+        "requirement": "The household's counted fees are tracked across the whole tax year, and a household's position is calculable at any point in it."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Configurations, deductions, certificates and returns are retained 7 years or the statutory period, whichever is longer."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "What are the current rate and annual threshold?",
+      "assumption": "Not specified, and the feature is explicit that they must be confirmed with the school accountant before going live.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Which fee types count towards the threshold — tuition only, or admission and others too?",
+      "assumption": "Not specified.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Is the tax calculated on the gross fee or after a concession?",
+      "assumption": "Configurable, but the school's answer is not specified and the two differ materially.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "What is the tax year, and does it match the academic session?",
+      "assumption": "It does not. The tax year is set by the authority and will straddle two sessions.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "How often must the return be filed and the amount deposited?",
+      "assumption": "Not specified, and it decides the period the return covers.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Where a household crosses the threshold mid-year, is tax due on the fees paid before crossing or only after?",
+      "assumption": "Only after, as modelled. This is a legal question and must be confirmed.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Where siblings attend different branches, is the household assessed across both?",
+      "assumption": "Not specified, and family codes may span branches.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "money",
+      "area": "Money",
+      "rule": "All monetary values are stored as fixed-point decimals in the smallest currency unit, never as floating point. Displayed as PKR with a thousands separator and two decimal places. Rounding is half-up at the line."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

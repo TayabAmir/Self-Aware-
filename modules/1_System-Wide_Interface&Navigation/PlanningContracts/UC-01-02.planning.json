@@ -1,0 +1,303 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-01-02",
+    "name": "End the session and return to the login screen",
+    "module": "Admin — system-wide",
+    "file": "../UseCases/UC-01-02.json",
+    "featureRef": "1.2 Sign out"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-01-02-PC-1",
+      "intent": {
+        "name": "session.end",
+        "summary": "End the controller's own session and invalidate it server-side. One step, no lookups, nothing to resolve.",
+        "routesHere": [
+          "sign me out",
+          {
+            "text": "logout kar do",
+            "lang": "ur-Latn",
+            "gloss": "log me out"
+          },
+          "log out",
+          {
+            "text": "mujhe sign out kar do",
+            "lang": "ur-Latn",
+            "gloss": "sign me out"
+          },
+          {
+            "text": "session band kar do",
+            "lang": "ur-Latn",
+            "gloss": "close my session"
+          },
+          {
+            "text": "main ja raha hoon, account band kar do",
+            "lang": "ur-Latn",
+            "gloss": "I'm leaving, close my account"
+          },
+          "end my session",
+          {
+            "text": "driver app se logout kar do",
+            "lang": "ur-Latn",
+            "gloss": "log me out of the driver app"
+          },
+          "log out of the driver app"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "sab devices se logout kar do",
+              "lang": "ur-Latn",
+              "gloss": "log me out of all my devices"
+            },
+            "goesTo": "Not offered.",
+            "note": "UC-01-02 ends the current device's session only, and its open question OQ-1 records that this has not been decided. Do not plan a loop over sessions the API does not expose."
+          },
+          {
+            "request": "log me in / sign in again",
+            "goesTo": "UC-01-01 — not planned",
+            "note": "There is no operation that creates a session."
+          },
+          {
+            "request": {
+              "text": "is user ka account band kar do",
+              "lang": "ur-Latn",
+              "gloss": "close this user's account"
+            },
+            "goesTo": "UC-25-01 — Role-based access control",
+            "note": "Withdrawing an account is account management, not a sign-out. No actor can sign another out (Permissions & Data Scope). Note that band kar do serves both 'end my session' and 'close the account' — the object of the sentence decides which, and where it is unclear the plan is not emitted."
+          },
+          {
+            "request": "how long before my session times out",
+            "goesTo": "UC-25-05 — Password management",
+            "note": "The idle timeout value lives in the password policy. Its own open question OQ-2 records that the value is not yet set."
+          },
+          {
+            "request": "keep me signed in / extend my session",
+            "goesTo": "Not offered.",
+            "note": "This use case ends sessions; it does not extend them."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "session.end",
+            "inputs": {
+              "session_id": "$session.session_id",
+              "reason": "user"
+            },
+            "note": "The only step. Nothing is resolved beforehand because nothing in the request is needed — the session that is ending is the one the controller is running in."
+          }
+        ],
+        "onFailure": "Stop and report. There is nothing to undo and nothing to retry: the session is invalidated server-side or it is not. A session that had already expired comes back as success (E1), not as a failure.",
+        "atomicity": "One step, atomic in itself. The session is invalidated and the audit entry written together, or neither happens. No student, staff, fee or academic record changes either way. Note that every operation the controller attempts after this step returns E3 — the plan is terminal for the run."
+      },
+      "operations": [
+        {
+          "name": "session.end",
+          "method": "POST",
+          "path": "/api/v1/sessions/current/end",
+          "kind": "deactivate",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Invalidate the session on the server so a token retained from before it cannot be replayed, clear the client session, and write the audit entry.",
+          "parameters": [
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "The controller's own session. Never read from the request, even where the request names another device, another application or another person (BR-5)."
+            },
+            {
+              "name": "reason",
+              "source": "literal",
+              "sourceRef": "user",
+              "required": true,
+              "type": "constant: user",
+              "notes": "Always the literal user. An idle-timeout end is written by the session service and carries reason timeout (BR-3); a plan can never produce that value."
+            }
+          ],
+          "returns": {
+            "description": "Confirmation that the session is dead, and where the actor now stands.",
+            "fields": [
+              {
+                "name": "session_id",
+                "type": "string",
+                "description": "The session that was ended."
+              },
+              {
+                "name": "ended_at",
+                "type": "datetime",
+                "description": "DD-MM-YYYY HH:mm, school-local, per the dates-times-numbers convention."
+              },
+              {
+                "name": "end_reason",
+                "type": "enum: user | timeout",
+                "description": "Always user for a planned end. Present so the audit entry can be quoted back."
+              },
+              {
+                "name": "application",
+                "type": "enum: Main system | Driver app",
+                "description": "Which session ended. Taken from the session, not the request (BR-5)."
+              },
+              {
+                "name": "redirect_to",
+                "type": "string",
+                "description": "/login, or /driver/login for a driver session."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SESSION_ALREADY_ENDED",
+              "mapsTo": "E1",
+              "httpStatus": 200,
+              "meaning": "The session had already expired or been ended.",
+              "written": "Nothing further. An audit entry for the original end already exists.",
+              "notWritten": "No second audit entry, and no school record.",
+              "treatedAsSuccess": true,
+              "note": "The actor reaches the login screen either way, so this is the same outcome as a clean run. Do not report it as a failure and do not retry."
+            },
+            {
+              "code": "TRANSPORT_UNAVAILABLE",
+              "mapsTo": "E2",
+              "httpStatus": 0,
+              "meaning": "The call did not reach the server.",
+              "written": "Nothing on the server. Client-side session data is cleared immediately and the server session is invalidated at next contact.",
+              "notWritten": "No audit entry, and the server session is still live until then.",
+              "note": "Report the sign-out as cleared on this device but not yet confirmed on the server. Do not claim the token is dead."
+            },
+            {
+              "code": "FORBIDDEN",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "A session_id other than the controller's own was submitted.",
+              "written": "Nothing.",
+              "notWritten": "No session ended, no audit entry.",
+              "note": "This can only arise from a planner breaking PR-1. UC-01-02 defines no E-id for it because the screen offers no way to reach it — see the open question below."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "session_id always comes from $session. A request naming another person, another device or another campus is not a sign-out this plan can perform — it is account suspension (UC-25-01) or something the system does not offer (OQ-1). Never lift a session id out of the request.",
+          "derivedFrom": [
+            "Permissions & Data Scope",
+            "BR-5",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never emit this step in the same plan as anything else. It invalidates the session every later step depends on, and every subsequent operation returns E3. A sign-out is always the whole plan.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never plan a sign-out to clear a failed write, discard a half-finished form, or reset state. Unsaved data is discarded without a prompt (BR-4) and nothing already written is rolled back by it.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "reason is the literal user, never a value from the request. A timeout end is written by the session service; a plan that claims one falsifies the audit log.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-6",
+            "audit-trail"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never name the application in the plan. The session already identifies whether it is a driver session or a main-system one, and a driver sign-out must not touch a main-system session held by the same person.",
+          "derivedFrom": [
+            "BR-5",
+            "AC-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never re-emit the step after SESSION_ALREADY_ENDED. It is the success path, not a retryable failure.",
+          "derivedFrom": [
+            "E1"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-sign-out. A session is recreated only by signing in at /login, which is UC-01-01 and carries no planning contract. The controller must not attempt a compensating call, and must not offer to sign the actor back in."
+      },
+      "resolvedPlans": [
+        {
+          "request": "sign me out",
+          "context": "Staff, Johar Town branch, session 2025-26, main system.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "session.end",
+              "inputs": {
+                "session_id": "$session.session_id",
+                "reason": "user"
+              }
+            }
+          ],
+          "outcome": "The session is invalidated server-side, client storage is cleared, the audit entry records an explicit end, and the actor is at /login. Any token captured beforehand is now rejected (AC-2)."
+        },
+        {
+          "request": {
+            "text": "driver app se logout kar do",
+            "lang": "ur-Latn",
+            "gloss": "log me out of the driver app"
+          },
+          "context": "Driver, signed in at /driver/login, and also holding a main-system session on another device.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "session.end",
+              "inputs": {
+                "session_id": "$session.session_id",
+                "reason": "user"
+              },
+              "note": "Identical to the plan above. The plan names no application: $session already is the driver session, so the main-system session is untouched (BR-5, AC-4)."
+            }
+          ],
+          "outcome": "The driver session ends and the actor is at /driver/login. The main-system session on the other device is still active."
+        },
+        {
+          "request": {
+            "text": "main ja raha hoon, is machine se band kar do",
+            "lang": "ur-Latn",
+            "gloss": "I'm leaving, close me off this machine"
+          },
+          "context": "Accounts, on a shared front-desk machine, with a half-typed fee receipt form open.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "session.end",
+              "inputs": {
+                "session_id": "$session.session_id",
+                "reason": "user"
+              },
+              "note": "No step is added to save or warn about the open form. Unsaved data is discarded without a prompt (BR-4)."
+            }
+          ],
+          "outcome": "The session is invalidated and the typed receipt is gone. Nothing was written to the fee ledger, because nothing had been saved."
+        }
+      ]
+    }
+  ]
+}

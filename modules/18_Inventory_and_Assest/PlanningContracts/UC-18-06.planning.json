@@ -1,0 +1,1969 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-18-06",
+    "name": "Count the shelf against the system, and correct the balance with an approved adjustment",
+    "module": "Inventory, Assets & Point-of-Sale",
+    "file": "../UseCases/UC-18-06.json",
+    "featureRef": "18.6 Stock count and adjustment"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-18-06-PC-1",
+      "intent": {
+        "name": "stock.count.schedule",
+        "summary": "Schedule a stock count. Counting is periodic and not optional — a balance nobody has checked is one nobody trusts.",
+        "routesHere": [
+          "schedule a stock count for the end of December",
+          {
+            "text": "December ke aakhir mein stock count rakh dein",
+            "lang": "ur-Latn",
+            "gloss": "schedule a stock count for the end of December"
+          },
+          {
+            "text": "stationery ka count karwana hai is hafte",
+            "lang": "ur-Latn",
+            "gloss": "we want a count of the stationery this week"
+          },
+          "set up the term-end count for the whole store"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye adjustment mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete this adjustment"
+            },
+            "goesTo": "Not offered.",
+            "note": "An adjustment is never deleted, and neither is a count. A wrong adjustment is corrected by a further adjustment (BR-9, E9)."
+          },
+          {
+            "request": {
+              "text": "count ki zaroorat nahi, balance theek hai",
+              "lang": "ur-Latn",
+              "gloss": "no need for a count, the balance is right"
+            },
+            "goesTo": "Not offered.",
+            "note": "Physical stock never matches the system — items are taken unrecorded, damaged, expired or quietly removed — and without a count the balance drifts until nobody trusts it and the whole module becomes dead weight (BR-1)."
+          },
+          {
+            "request": {
+              "text": "ek item ka balance abhi theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "just correct one item's balance now"
+            },
+            "goesTo": "stock.adjustment.raise — this use case.",
+            "note": "An adjustment outside a count is possible where a known error must be corrected, and it carries the same reason and the same approval (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.count.schedule",
+            "inputs": {
+              "scheduled_for": "$request.scheduled_for",
+              "scope_category_ids": "$request.scope_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing is counted and no balance moves — this fixes when and over what."
+          }
+        ],
+        "onFailure": "Stop and report. A date in the past is refused; a scope naming a category nobody matches is asked about rather than widened to the whole store.",
+        "atomicity": "One write. No balance changes anywhere: a scheduled count is a commitment to look at the shelf, and the looking is a separate act by a separate person (BR-2)."
+      },
+      "operations": [
+        {
+          "name": "stock.count.schedule",
+          "method": "POST",
+          "path": "/api/v1/stock-counts",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "scheduled date + scope + branch, so a double press does not put two counts over the same shelf on one day",
+          "purpose": "Schedule a stock count over a scope of items.",
+          "parameters": [
+            {
+              "name": "scheduled_for",
+              "source": "request",
+              "sourceRef": "$request.scheduled_for",
+              "required": true,
+              "type": "date",
+              "notes": "When the count is to be taken. Counts are periodic, not occasional — how often is not specified anywhere (BR-1, OQ-1)."
+            },
+            {
+              "name": "scope_category_ids",
+              "source": "resolved",
+              "sourceRef": "$request.scope_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "stock_category",
+                "fromPhrase": "$request.scope_phrase",
+                "onNoMatch": "Refuse. No such category.",
+                "onAmbiguous": "Ask, naming the categories that match with how many items each holds."
+              },
+              "notes": "The categories the count covers. Omitted covers every active item. Whether a school counts everything or counts by category in rotation is an open question this use case raises and does not answer (OQ-2)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The count and what it will cover.",
+            "fields": [
+              {
+                "name": "count_id",
+                "type": "string",
+                "description": "The count."
+              },
+              {
+                "name": "scheduled_for",
+                "type": "date",
+                "description": "When."
+              },
+              {
+                "name": "items_in_scope",
+                "type": "integer",
+                "description": "How many items the counter will have to count. Every one of them is counted or reported uncounted — an item left out is reported as uncounted rather than as matching (BR-7)."
+              },
+              {
+                "name": "days_since_last_count",
+                "type": "integer",
+                "description": "How long since the last one. A balance nobody has checked since June is one nobody should be trusting (BR-1, E10)."
+              },
+              {
+                "name": "items_never_counted",
+                "type": "object[]",
+                "description": "Items whose balance has never been confirmed by any count. Their figure is arithmetic over receipts and issues and nothing more (BR-1)."
+              },
+              {
+                "name": "counter_must_not_be",
+                "type": "string",
+                "description": "The storekeeper the count is checking. A storekeeper counting their own store is checking their own work, which is not a check (BR-2, E1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DATE_IN_PAST",
+              "mapsTo": null,
+              "httpStatus": 400,
+              "meaning": "The date is in the past.",
+              "written": "Nothing.",
+              "notWritten": "No count is scheduled.",
+              "note": "The use case writes no exception for it — its ten exceptions are all about counting and adjusting, and none about scheduling."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say how long it has been. A count scheduled after eight months and one scheduled after four weeks are the same act and different situations — and a balance that has drifted for eight months will produce differences that nobody can now explain (BR-1, E10).",
+          "derivedFrom": [
+            "BR-1",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name who cannot take it. The storekeeper the count is checking is barred from taking it, and that has to be arranged before the day rather than discovered on it (BR-2, E1).",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never treat a count as optional or as a formality. Physical stock never matches the system, and the point is not to confirm the balance but to find out by how much it is wrong (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say what the scope leaves out. An item outside the scope is not counted and is not reported as matching — it simply carries on with an unchecked figure (BR-7, OQ-2).",
+          "derivedFrom": [
+            "BR-7",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "stock.count.schedule",
+        "statement": "A count not yet begun is rescheduled. Nothing has been counted and no balance has moved, so there is nothing to undo — but the count itself is never deleted once taken (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "December ke aakhir mein poore store ka count rakh dein",
+            "lang": "ur-Latn",
+            "gloss": "schedule a count of the whole store for the end of December"
+          },
+          "context": "School Admin, Johar Town branch, last count taken in June.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.count.schedule",
+              "inputs": {
+                "scheduled_for": "31 December",
+                "scope_category_ids": "omitted — every item",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The whole store (PR-4)."
+            }
+          ],
+          "outcome": "Report the count scheduled over 148 items — and say that the last one was in June, so six months of drift will surface at once and some of those differences will be too old for anybody to explain. Add that the storekeeper cannot take it, which needs arranging now rather than on the day."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-06-PC-2",
+      "intent": {
+        "name": "stock.count.start",
+        "summary": "Begin the count. The system balances are frozen at this moment, so an issue during the count is not a difference.",
+        "routesHere": [
+          "start the December stock count",
+          {
+            "text": "stock count shuru kar dein",
+            "lang": "ur-Latn",
+            "gloss": "start the stock count"
+          },
+          {
+            "text": "main count lene ja raha hoon, khol dein",
+            "lang": "ur-Latn",
+            "gloss": "I am going to take the count, open it"
+          },
+          "begin counting the stationery cupboard"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "main hi storekeeper hoon, main hi ginti kar leta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I am the storekeeper, I will count it myself"
+            },
+            "goesTo": "Refused.",
+            "note": "The count is taken by somebody other than the storekeeper. A storekeeper counting their own store is checking their own work, which is not a check (BR-2, E1)."
+          },
+          {
+            "request": {
+              "text": "count ke dauran issue rok dein",
+              "lang": "ur-Latn",
+              "gloss": "stop issues during the count"
+            },
+            "goesTo": "Not needed.",
+            "note": "The system quantity is taken at the moment the count begins, so an issue recorded while it is in progress does not appear as a difference (BR-6, E7). The store keeps working."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.count.start",
+            "inputs": {
+              "count_id": "$request.count_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it does one thing that matters: it takes the system quantity for every item in scope, now (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. A count begun by the storekeeper it is checking is refused outright and does not open (E1).",
+        "atomicity": "One state change and a snapshot. No balance moves — the snapshot is what the counted figures will be measured against, and it is why an issue during the count is not a difference (BR-6, E7)."
+      },
+      "operations": [
+        {
+          "name": "stock.count.start",
+          "method": "POST",
+          "path": "/api/v1/stock-counts/{count_id}/start",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "count_id, since a count begins once and a second start would re-freeze the balances mid-count",
+          "purpose": "Begin a scheduled count and freeze the system quantities for comparison.",
+          "parameters": [
+            {
+              "name": "count_id",
+              "source": "resolved",
+              "sourceRef": "$request.count_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_count",
+                "fromPhrase": "$request.count_phrase",
+                "onNoMatch": "Refuse. No scheduled count matches.",
+                "onAmbiguous": "Ask, naming the counts that match with their dates, their scope and where each stands."
+              },
+              "notes": "The count, named by its date or its scope."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What the counter is measuring against.",
+            "fields": [
+              {
+                "name": "count_id",
+                "type": "string",
+                "description": "The count."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "In progress."
+              },
+              {
+                "name": "counted_by",
+                "type": "string",
+                "description": "Whoever begins it. Never the storekeeper the count is checking (BR-2, E1)."
+              },
+              {
+                "name": "system_quantities_taken_at",
+                "type": "datetime",
+                "description": "The moment the balances were frozen. Anything issued or received after this is not a difference (BR-6, E7)."
+              },
+              {
+                "name": "items_in_scope",
+                "type": "integer",
+                "description": "How many have to be counted or reported uncounted (BR-7)."
+              },
+              {
+                "name": "items",
+                "type": "object[]",
+                "description": "Item, unit and the frozen system quantity, in each item's own unit (BR-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "COUNTER_IS_STOREKEEPER",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The counter is the storekeeper being counted against.",
+              "written": "Nothing.",
+              "notWritten": "The count does not begin.",
+              "note": "A storekeeper counting their own store is checking their own work (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that the balances are frozen from this moment. An issue or a receipt recorded during the count is not a difference, and a counter who does not know that will chase a discrepancy that is not one (BR-6, E7).",
+          "derivedFrom": [
+            "BR-6",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never let the storekeeper take it. The separation is the whole value of the count, and a count taken by the person being checked produces a balance that agrees with itself (BR-2, E1).",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Give the frozen figures per item in the item's own unit. A counter working in boxes against a system counting pieces produces differences on every line (BR-3, E3).",
+          "derivedFrom": [
+            "BR-3",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A count in progress is not un-started — the snapshot has been taken. It is completed or left submitted with items reported uncounted, and neither the count nor its adjustments are ever deleted (BR-7, BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "December wala stock count shuru kar dein",
+            "lang": "ur-Latn",
+            "gloss": "start the December stock count"
+          },
+          "context": "Staff, Johar Town branch, not the storekeeper.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.count.start",
+              "inputs": {
+                "count_id": "$request.count_phrase → the 31 December count",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The balances freeze now (PR-1)."
+            }
+          ],
+          "outcome": "Report the count open over 148 items with the system figure beside each, in that item's own unit. Say the one thing a counter needs to know: the balances were frozen at this moment, so anything the store issues or receives while the counting is going on will not show up as a difference."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-06-PC-3",
+      "intent": {
+        "name": "stock.count.record",
+        "summary": "Enter what was physically on the shelf, item by item, against the frozen system figure.",
+        "routesHere": [
+          "record 11 markers counted against the December count",
+          {
+            "text": "count mein marker 11 nikle hain",
+            "lang": "ur-Latn",
+            "gloss": "11 markers were found in the count"
+          },
+          {
+            "text": "stationery ki ginti daal dein — paper 38 ream",
+            "lang": "ur-Latn",
+            "gloss": "enter the stationery count — paper 38 reams"
+          },
+          {
+            "text": "ye item ginti nahi kar sake, uncounted rakh dein",
+            "lang": "ur-Latn",
+            "gloss": "we could not count this item, leave it uncounted"
+          },
+          "enter the counted quantities for the lab cupboard"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "balance seedha 11 kar dein",
+              "lang": "ur-Latn",
+              "gloss": "just set the balance to 11"
+            },
+            "goesTo": "Not offered.",
+            "note": "Counting does not change the balance. A difference raises an adjustment, and the adjustment is approved before the balance moves — the balance does not move on the counter's say-so (BR-5, E6)."
+          },
+          {
+            "request": {
+              "text": "jo nahi ginte wo theek maan lein",
+              "lang": "ur-Latn",
+              "gloss": "assume the uncounted ones match"
+            },
+            "goesTo": "Refused.",
+            "note": "An item left uncounted is reported as uncounted rather than as matching. Those are two different facts and only one of them is a check (BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.count.record",
+            "inputs": {
+              "count_id": "$request.count_phrase",
+              "lines": "$request.lines",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, repeatable as the counter works through the shelf. The differences are shown; nothing is corrected (BR-3, BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. A negative quantity or one entered in a different unit from the item's is refused, and the line is not saved.",
+        "atomicity": "One write into the count. **No balance changes.** The counted figures sit beside the frozen system figures and the differences are shown — correcting them is a separate, approved act (BR-3, BR-5, E6)."
+      },
+      "operations": [
+        {
+          "name": "stock.count.record",
+          "method": "POST",
+          "path": "/api/v1/stock-counts/{count_id}/lines",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "count_id + the item, so re-entering a line replaces that item's figure rather than adding a second count of it",
+          "purpose": "Record counted quantities against the frozen system figures.",
+          "parameters": [
+            {
+              "name": "count_id",
+              "source": "resolved",
+              "sourceRef": "$request.count_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_count",
+                "fromPhrase": "$request.count_phrase",
+                "onNoMatch": "Refuse. No count is in progress that matches.",
+                "onAmbiguous": "Ask, naming the counts that match with their dates, their scope and where each stands."
+              },
+              "notes": "The count, named by its date or its scope."
+            },
+            {
+              "name": "lines",
+              "source": "request",
+              "sourceRef": "$request.lines",
+              "required": true,
+              "type": "object[]",
+              "notes": "One entry per item: the item and the counted quantity, zero or more (E2), in that item's own unit (BR-3, E3). An item that could not be counted is entered as uncounted rather than left out — uncounted and matching are different facts (BR-7)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was found and how it differs.",
+            "fields": [
+              {
+                "name": "count_id",
+                "type": "string",
+                "description": "The count."
+              },
+              {
+                "name": "recorded",
+                "type": "object[]",
+                "description": "Item, system quantity, counted quantity and the difference — counted less system, negative where less was found (BR-3)."
+              },
+              {
+                "name": "differences",
+                "type": "object[]",
+                "description": "Only the lines that differ. Each needs an adjustment with a reason before the balance moves (BR-4, BR-5)."
+              },
+              {
+                "name": "uncounted",
+                "type": "object[]",
+                "description": "Items reported as uncounted. Not treated as matching (BR-7)."
+              },
+              {
+                "name": "remaining",
+                "type": "integer",
+                "description": "Items in scope with nothing recorded yet. The count cannot be submitted with none counted at all (E8)."
+              },
+              {
+                "name": "repeat_differences",
+                "type": "object[]",
+                "description": "Items that also differed at the previous count. A shelf that is short every count is not an accident (BR-11)."
+              },
+              {
+                "name": "balance_moved",
+                "type": "boolean",
+                "description": "False. Counting shows; approving corrects (BR-5, E6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NEGATIVE_QUANTITY",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "A counted quantity is negative.",
+              "written": "Nothing.",
+              "notWritten": "The line is not saved."
+            },
+            {
+              "code": "WRONG_UNIT",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A counted quantity is entered in a different unit from the item's.",
+              "written": "Nothing.",
+              "notWritten": "The line is not saved.",
+              "note": "The difference would be arithmetic between two different things (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that counting corrects nothing. The balance moves only when an adjustment with a reason is approved, and a counter who thinks they have fixed the shelf will not raise one (BR-5, E6).",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never record an uncounted item as matching. Uncounted is a reported fact and matching is a checked one, and collapsing the two turns a partial count into a clean bill of health (BR-7).",
+          "derivedFrom": [
+            "BR-7",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Check the unit before the number on every line. A shelf counted in boxes against a system counting pieces produces a difference on every row and none of them is real (BR-3, E3).",
+          "derivedFrom": [
+            "BR-3",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Name the items that also differed last time. A shelf short at every count is not an accident, and it is invisible in a single count's figures (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A recorded line is replaced by recording the item again — nothing about the shelf has been changed by writing the figure down. The count itself is never deleted (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "marker 11 nikle hain, paper 38 ream",
+            "lang": "ur-Latn",
+            "gloss": "11 markers were found, 38 reams of paper"
+          },
+          "context": "Staff taking the December count, Johar Town branch, system says 14 and 40.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.count.record",
+              "inputs": {
+                "count_id": "$request.count_phrase → the December count",
+                "lines": "markers 11, paper 38",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Both in their own units — pieces and reams (PR-3)."
+            }
+          ],
+          "outcome": "Report both differences: markers 3 short, paper 2 short. Nothing has changed on the system — each difference needs an adjustment with a reason and somebody's approval before the balance moves. Add that markers were also short at the last count, which is worth explaining rather than adjusting away twice."
+        },
+        {
+          "request": {
+            "text": "baqi cheezein nahi gin sake, unhein theek hi maan lein",
+            "lang": "ur-Latn",
+            "gloss": "we could not count the rest, just take them as correct"
+          },
+          "context": "Staff taking the count.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.count.record",
+              "inputs": {
+                "count_id": "$request.count_phrase → the count in progress",
+                "lines": "the remaining items, marked uncounted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Uncounted, not matching (PR-2)."
+            }
+          ],
+          "outcome": "They go down as uncounted, not as correct. The difference matters: an uncounted item carries a figure nobody has checked, and recording it as matching would say somebody looked at the shelf and agreed with it. The count will report them as uncounted when it is submitted."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-06-PC-4",
+      "intent": {
+        "name": "stock.count.submit",
+        "summary": "Submit the count, so its differences can be raised as adjustments.",
+        "routesHere": [
+          "submit the December count",
+          {
+            "text": "count mukammal ho gaya hai, submit kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the count is finished, submit it"
+          },
+          {
+            "text": "ginti khatam, ab aage bhej dein",
+            "lang": "ur-Latn",
+            "gloss": "counting is done, send it on"
+          },
+          "close the count and list the differences"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "differences khud hi theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "just correct the differences yourself"
+            },
+            "goesTo": "stock.adjustment.raise — this use case, one per difference.",
+            "note": "Each difference carries its own reason and its own approval. A blanket correction is a difference nobody investigated (BR-4, BR-5)."
+          },
+          {
+            "request": {
+              "text": "kuch bhi nahi gina, phir bhi submit kar dein",
+              "lang": "ur-Latn",
+              "gloss": "nothing was counted, submit it anyway"
+            },
+            "goesTo": "Refused.",
+            "note": "A count with no item counted at all is not submitted (E8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.count.submit",
+            "inputs": {
+              "count_id": "$request.count_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every item in scope is counted or reported uncounted, and the differences go forward as adjustments to be raised (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A count with nothing counted at all is refused, and one with items still untouched submits them as uncounted rather than as matching (BR-7, E8).",
+        "atomicity": "One state change. **No balance has moved and none will until each adjustment is approved** (BR-5, E6)."
+      },
+      "operations": [
+        {
+          "name": "stock.count.submit",
+          "method": "POST",
+          "path": "/api/v1/stock-counts/{count_id}/submit",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "count_id, since a count is submitted once and a repeat is the same submission",
+          "purpose": "Submit a completed count and list its differences.",
+          "parameters": [
+            {
+              "name": "count_id",
+              "source": "resolved",
+              "sourceRef": "$request.count_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_count",
+                "fromPhrase": "$request.count_phrase",
+                "onNoMatch": "Refuse. No count is in progress that matches.",
+                "onAmbiguous": "Ask, naming the counts that match with their dates, their scope and where each stands."
+              },
+              "notes": "The count, named by its date or its scope."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What the count found.",
+            "fields": [
+              {
+                "name": "count_id",
+                "type": "string",
+                "description": "The count."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Submitted. Adjustments are raised next (BR-4)."
+              },
+              {
+                "name": "counted",
+                "type": "integer",
+                "description": "Items counted."
+              },
+              {
+                "name": "uncounted",
+                "type": "object[]",
+                "description": "Items in scope that were not counted. Reported as uncounted, never as matching (BR-7)."
+              },
+              {
+                "name": "differences",
+                "type": "object[]",
+                "description": "Item, system quantity, counted quantity and the difference. Each needs an adjustment with a reason (BR-4)."
+              },
+              {
+                "name": "shortages",
+                "type": "object[]",
+                "description": "Where less was found than the system says. This is stock the school believed it had (BR-3)."
+              },
+              {
+                "name": "overages",
+                "type": "object[]",
+                "description": "Where more was found. Usually a receipt or a return that was never recorded, and just as much a sign the balance is not being kept (BR-3)."
+              },
+              {
+                "name": "repeat_differences",
+                "type": "object[]",
+                "description": "Items that differed at the previous count too. A shelf short every count is not an accident (BR-11)."
+              },
+              {
+                "name": "balance_moved",
+                "type": "boolean",
+                "description": "False, still. Approving each adjustment is what moves it (BR-5, E6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOTHING_COUNTED",
+              "mapsTo": "E8",
+              "httpStatus": 400,
+              "meaning": "Every item in scope is uncounted.",
+              "written": "Nothing.",
+              "notWritten": "The count is not submitted."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Give shortages and overages separately. More on the shelf than the system says is not good news — it is a receipt or a return that was never recorded, and it says the balance is not being kept just as loudly as a shortage does (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the uncounted items as a gap in the check, not as a clean result. A count that covered 40 of 148 items has checked 40 balances (BR-7, E8).",
+          "derivedFrom": [
+            "BR-7",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name the repeats. An item short at this count and the last is a pattern, and adjusting it away a second time is how it stays invisible (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that nothing has been corrected yet. Each difference needs its own reason and its own approval before any balance moves (BR-4, BR-5, E6).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A submitted count is not un-submitted, and a count is never deleted (BR-9). A figure found to be wrong is corrected by the adjustment raised against it, or by a further adjustment afterwards (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "count mukammal ho gaya, submit kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the count is finished, submit it"
+          },
+          "context": "Staff who took the count, Johar Town branch, 140 of 148 items counted.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.count.submit",
+              "inputs": {
+                "count_id": "$request.count_phrase → the December count",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-2)."
+            }
+          ],
+          "outcome": "Report 9 differences over 140 items counted — 6 short, 3 over — and 8 items that were never counted and are reported as uncounted rather than as agreeing. Say that the three overages are receipts or returns that were never recorded, which is the same problem as a shortage from the other side. Two items were also short at the last count. Nothing has moved: each of the nine needs a reason and an approval."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-06-PC-5",
+      "intent": {
+        "name": "stock.adjustment.raise",
+        "summary": "Raise an adjustment for a difference, with the reason. Nothing moves until it is approved.",
+        "routesHere": [
+          "raise an adjustment for the three missing markers — they went to the parents' evening unrecorded",
+          {
+            "text": "teen marker kam hain, adjustment bana dein wajah ke saath",
+            "lang": "ur-Latn",
+            "gloss": "three markers are short, raise an adjustment with the reason"
+          },
+          {
+            "text": "balance theek karna hai, ek receipt darj nahi hui thi",
+            "lang": "ur-Latn",
+            "gloss": "the balance needs correcting, a receipt was never recorded"
+          },
+          {
+            "text": "toota hua remote wapas aaya tha, us ka adjustment bana dein",
+            "lang": "ur-Latn",
+            "gloss": "the broken remote came back, raise its adjustment"
+          },
+          "correct the paper balance, we found two reams behind the cupboard"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "balance seedha theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "just correct the balance directly"
+            },
+            "goesTo": "Not offered.",
+            "note": "The balance changes when the adjustment is approved and not before. It does not move on the counter's say-so (BR-5, E6)."
+          },
+          {
+            "request": {
+              "text": "bina wajah ke adjustment bana dein",
+              "lang": "ur-Latn",
+              "gloss": "raise it without a reason"
+            },
+            "goesTo": "Refused.",
+            "note": "A difference with no explanation is a difference nobody investigated (BR-4, E4)."
+          },
+          {
+            "request": {
+              "text": "ye adjustment mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete this adjustment"
+            },
+            "goesTo": "Not offered.",
+            "note": "An adjustment is never deleted. A wrong one is corrected by a further adjustment (BR-9, E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.adjustment.raise",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "count_id": "$request.count_phrase",
+              "quantity": "$request.quantity",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It goes to the approver; the balance is untouched (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. An adjustment with no reason is not raised (E4), and no balance moves either way.",
+        "atomicity": "One write. **The balance does not change here** — it changes when the adjustment is approved, and the approval is recorded (BR-5, E6). Whether an adjustment also posts to the ledger as a write-off of stock, or only changes the quantity, is an open question this use case raises and does not answer (OQ-4)."
+      },
+      "operations": [
+        {
+          "name": "stock.adjustment.raise",
+          "method": "POST",
+          "path": "/api/v1/stock-adjustments",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "item + count + quantity, so a double press does not raise two adjustments for one difference and move the balance twice",
+          "purpose": "Raise a stock adjustment with its reason, for approval.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No such item.",
+                "onAmbiguous": "Ask, naming the items that match with their category and unit."
+              },
+              "notes": "The item whose balance is wrong."
+            },
+            {
+              "name": "count_id",
+              "source": "resolved",
+              "sourceRef": "$request.count_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_count",
+                "fromPhrase": "$request.count_phrase",
+                "onNoMatch": "Refuse. No submitted count matches.",
+                "onAmbiguous": "Ask, naming the submitted counts with their dates and their outstanding differences."
+              },
+              "notes": "The count this difference came from. Omitted where the adjustment is made outside a count to correct a known error, which carries the same reason and the same approval (BR-10)."
+            },
+            {
+              "name": "quantity",
+              "source": "request",
+              "sourceRef": "$request.quantity",
+              "required": true,
+              "type": "number",
+              "notes": "The change, in the item's own unit. Negative decreases the balance, positive increases it — the direction follows from the sign rather than being chosen separately (BR-3)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "10 to 500 characters, the raiser's own. Required on every adjustment (BR-4, E4) — this is the whole record of why the school's stock figure changed."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The adjustment and what it is waiting for.",
+            "fields": [
+              {
+                "name": "adjustment_id",
+                "type": "string",
+                "description": "The adjustment."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. The balance is unchanged (BR-5)."
+              },
+              {
+                "name": "item",
+                "type": "string",
+                "description": "Which item."
+              },
+              {
+                "name": "direction",
+                "type": "string",
+                "description": "Increase or decrease, from the sign of the quantity."
+              },
+              {
+                "name": "quantity",
+                "type": "number",
+                "description": "The change, in the item's own unit."
+              },
+              {
+                "name": "balance_before",
+                "type": "number",
+                "description": "What the system says now."
+              },
+              {
+                "name": "balance_after_if_approved",
+                "type": "number",
+                "description": "What it would say. Not what it says (BR-5, E6)."
+              },
+              {
+                "name": "source",
+                "type": "string",
+                "description": "Count, damaged return, or correction. A damaged returnable item comes here with the reason carried from the return (BR-8, UC-18-05 BR-8)."
+              },
+              {
+                "name": "previous_adjustments_on_item",
+                "type": "object[]",
+                "description": "What has been adjusted on this item before, with the reasons. An item adjusted down at every count is a pattern rather than a series of accidents (BR-11)."
+              },
+              {
+                "name": "approver",
+                "type": "string",
+                "description": "The School Admin, or the Principal where the configuration names them. Never the person who raised it (BR-5, E5). Whether a large difference should need the Principal rather than the School Admin is unanswered — there is one approver regardless of size (OQ-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "An adjustment was raised with no reason.",
+              "written": "Nothing.",
+              "notWritten": "No adjustment is raised.",
+              "note": "A difference with no explanation is a difference nobody investigated (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. It is the entire record of why the school's stock figure changed, and \"stock count adjustment\" explains nothing to anybody reading it in a year (BR-4, E4).",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that nothing has moved. The balance changes on approval and not before — an adjustment raised is a proposal, not a correction (BR-5, E6).",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Show what has been adjusted on this item before. An item adjusted down at every count is a pattern, and each adjustment on its own looks like an accident (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Treat an increase as seriously as a decrease. More on the shelf than the system says is a receipt or a return that was never recorded, and adjusting it up quietly closes the question of where it came from (BR-3, BR-4).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never claim the adjustment writes anything off in the books. Whether it posts to the ledger or only changes the quantity is not settled anywhere — Accounts see it and nothing is stated to post (OQ-4).",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "stock.adjustment.return",
+        "statement": "An adjustment awaiting approval is returned with a reason and the balance is unchanged. One already approved is corrected by a further adjustment, never deleted (BR-9, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "teen marker kam hain — parents evening ke liye le gaye thay aur darj nahi hue",
+            "lang": "ur-Latn",
+            "gloss": "three markers are short — they were taken for the parents' evening and never recorded"
+          },
+          "context": "Staff who took the count, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.adjustment.raise",
+              "inputs": {
+                "item_id": "$request.item_phrase → Whiteboard marker, black",
+                "count_id": "$request.count_phrase → the December count",
+                "quantity": "-3",
+                "reason": "as they gave it — taken for the parents' evening and never recorded",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words, and the sign gives the direction (PR-1)."
+            }
+          ],
+          "outcome": "Report that it is with the School Admin and the balance is still 14 — it becomes 11 when the adjustment is approved. Add that this item was also adjusted down at the last count, for a similar reason: three occasions of stock leaving unrecorded is a way of working rather than three accidents."
+        },
+        {
+          "request": {
+            "text": "do ream zyada mile hain, alamari ke peeche pare thay",
+            "lang": "ur-Latn",
+            "gloss": "two extra reams were found, they were behind the cupboard"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.adjustment.raise",
+              "inputs": {
+                "item_id": "$request.item_phrase → A4 paper",
+                "count_id": "$request.count_phrase → the December count",
+                "quantity": "+2",
+                "reason": "as they gave it — found behind the cupboard",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "An increase, treated exactly as seriously (PR-4)."
+            }
+          ],
+          "outcome": "Raised for approval. Worth saying plainly: two reams the system did not know about means a receipt or a return that was never recorded, so this is the same problem as a shortage seen from the other side. The adjustment fixes the figure and not the recording."
+        },
+        {
+          "request": {
+            "text": "balance theek kar dein",
+            "lang": "ur-Latn",
+            "gloss": "correct the balance"
+          },
+          "context": "Staff, no count in progress, no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.adjustment.raise",
+              "inputs": {
+                "item_id": "$request.item_phrase → the item named",
+                "count_id": "omitted — outside a count",
+                "quantity": "$request.quantity",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The reason is required (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is raised. An adjustment outside a count is allowed where a known error has to be corrected, but it carries the same reason and the same approval — ask what the true figure is and why the system is wrong. And note that correcting one item by hand is not a substitute for a count: every other balance stays unchecked."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-06-PC-6",
+      "intent": {
+        "name": "stock.adjustment.approve",
+        "summary": "Approve the adjustment. This is the act that changes the balance.",
+        "routesHere": [
+          "approve the marker adjustment",
+          {
+            "text": "marker wala adjustment manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve the marker adjustment"
+          },
+          {
+            "text": "count ke saare adjustments approve kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve all the adjustments from the count"
+          },
+          "sign off the stock corrections from the December count"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "main ne hi ginti ki thi, main hi approve kar deta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I took the count, I will approve it myself"
+            },
+            "goesTo": "Refused.",
+            "note": "The counter cannot approve their own adjustment. Only the School Admin can (BR-5, E5) — otherwise one person counts the shelf, decides what the difference was, and changes the figure to match."
+          },
+          {
+            "request": {
+              "text": "manzoor nahi karna, dobara ginti karwayein",
+              "lang": "ur-Latn",
+              "gloss": "do not approve it, have it recounted"
+            },
+            "goesTo": "stock.adjustment.return — this use case.",
+            "note": "It goes back with a reason and the balance stays as it was."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.adjustment.approve",
+            "inputs": {
+              "adjustment_id": "$request.adjustment_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it is the only thing in the module that moves a balance without stock physically moving (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by the person who raised it is refused outright and the balance stays where it was (E5).",
+        "atomicity": "One write and one balance change. The approval is recorded against the adjustment — the balance did not move on the counter's say-so, and afterwards the record shows who agreed to the change (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "stock.adjustment.approve",
+          "method": "POST",
+          "path": "/api/v1/stock-adjustments/{adjustment_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "adjustment_id, since an adjustment is approved once and a repeat would move the balance twice",
+          "purpose": "Approve a stock adjustment and change the balance.",
+          "parameters": [
+            {
+              "name": "adjustment_id",
+              "source": "resolved",
+              "sourceRef": "$request.adjustment_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_adjustment",
+                "fromPhrase": "$request.adjustment_phrase",
+                "onNoMatch": "Refuse. No adjustment awaiting approval matches.",
+                "onAmbiguous": "Ask, naming the adjustments awaiting approval with their items, directions, quantities and reasons."
+              },
+              "notes": "The adjustment, named by its item or by the count it came from."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What changed and on whose authority.",
+            "fields": [
+              {
+                "name": "adjustment_id",
+                "type": "string",
+                "description": "The adjustment."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved. Terminal — a wrong one is corrected by a further adjustment, never reversed (BR-9, E9)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "Who agreed to it (BR-5)."
+              },
+              {
+                "name": "balance_before",
+                "type": "number",
+                "description": "What the system said."
+              },
+              {
+                "name": "balance_after",
+                "type": "number",
+                "description": "What it says now. **The shelf did not change; the figure did.**"
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "Why, as it was written. This is the record the school has of a stock figure changing (BR-4)."
+              },
+              {
+                "name": "item_adjusted_down_total",
+                "type": "number",
+                "description": "Everything this item has been adjusted down by, across every count. A shelf short every count is not an accident (BR-11)."
+              },
+              {
+                "name": "now_below_reorder_level",
+                "type": "boolean",
+                "description": "Whether the corrected balance puts the item below its level, which offers it for the next request (UC-18-01 BR-7)."
+              },
+              {
+                "name": "ledger",
+                "type": "string",
+                "description": "Nothing is stated to post. Whether an adjustment writes stock off in the books or only changes the quantity is unanswered (OQ-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SELF_APPROVAL",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "The person who raised the adjustment is trying to approve it.",
+              "written": "Nothing.",
+              "notWritten": "The balance is unchanged.",
+              "note": "Only the School Admin can approve an adjustment (BR-5). Otherwise one person counts the shelf, decides what the difference was and changes the figure to match."
+            },
+            {
+              "code": "BALANCE_CHANGED_BEFORE_APPROVAL",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "An attempt was made to change the balance before approval.",
+              "written": "Nothing.",
+              "notWritten": "There is no such route (BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say plainly that the shelf has not changed. This moves the school's figure to match what somebody found — the stock itself was already whatever it was (BR-3, BR-5).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Read the reason before approving, and say it back. It is the only record of why the figure changed, and the approver is the last person who can ask for a better one (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never approve an adjustment the acting user raised. One person counting, explaining and approving is the arrangement the separation exists to prevent (BR-5, E5).",
+          "derivedFrom": [
+            "BR-5",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Give what the item has been adjusted down by in total. Three markers here and three at the last count is six, and the pattern only appears when they are added up (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never say the loss has been written off. Nothing is stated to post to the ledger, and whether an adjustment does so at all is unanswered (OQ-4). Approving corrects a quantity, not the books.",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approved adjustment is terminal and is never deleted. A wrong one is corrected by a **further** adjustment, with its own reason and its own approval, so the record shows both (BR-9, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "marker wala adjustment manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve the marker adjustment"
+          },
+          "context": "School Admin, Johar Town branch, adjustment of -3 raised by the counter.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.adjustment.approve",
+              "inputs": {
+                "adjustment_id": "$request.adjustment_phrase → the marker adjustment",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The balance moves now (PR-1)."
+            }
+          ],
+          "outcome": "Read the reason back before approving: taken for the parents' evening and never recorded. After: the figure goes from 14 to 11 — the shelf was always 11. Add that this item has now been adjusted down by 6 across two counts for the same kind of reason, which is a way of working rather than two accidents, and that nothing has been written off in the books."
+        },
+        {
+          "request": {
+            "text": "saare adjustments manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve all the adjustments"
+          },
+          "context": "School Admin, nine adjustments from the December count, two raised by the School Admin themselves.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.adjustment.approve",
+              "inputs": {
+                "adjustment_id": "$request.adjustment_phrase → each adjustment in turn",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One approval per adjustment; each carries its own reason (PR-2)."
+            }
+          ],
+          "outcome": "Seven can be approved. Two cannot — they were raised by the same person now approving them, and the separation is the point. Ask somebody else to approve those, and note before signing the rest that three of the nine are on items that also differed at the last count."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-06-PC-7",
+      "intent": {
+        "name": "stock.adjustment.return",
+        "summary": "Send an adjustment back unapproved, with a reason. The balance stays as it was.",
+        "routesHere": [
+          "return the marker adjustment — recount the cupboard first",
+          {
+            "text": "ye adjustment wapas bhej dein, dobara ginti karwa lein",
+            "lang": "ur-Latn",
+            "gloss": "send this adjustment back, have it recounted"
+          },
+          {
+            "text": "wajah kaafi nahi hai, wapas kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the reason is not enough, return it"
+          },
+          "send the paper adjustment back for a better explanation"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "manzoor kar dein",
+              "lang": "ur-Latn",
+              "gloss": "approve it"
+            },
+            "goesTo": "stock.adjustment.approve — this use case.",
+            "note": "The other answer, and it is the one that moves the balance."
+          },
+          {
+            "request": {
+              "text": "main khud wajah likh deta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I will write the reason myself"
+            },
+            "goesTo": "Not offered.",
+            "note": "The reason belongs to whoever raised it — they are the person who looked at the shelf. An approver who writes it has explained a difference they did not see (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.adjustment.return",
+            "inputs": {
+              "adjustment_id": "$request.adjustment_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It goes back to be corrected and resubmitted, and the balance is unchanged (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. A return with no reason is refused — the counter would have nothing to act on.",
+        "atomicity": "One state change. No balance moves, which is the whole difference between returning and approving (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "stock.adjustment.return",
+          "method": "POST",
+          "path": "/api/v1/stock-adjustments/{adjustment_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "adjustment_id, since an adjustment carries one decision at a time",
+          "purpose": "Return an adjustment unapproved, with the reason.",
+          "parameters": [
+            {
+              "name": "adjustment_id",
+              "source": "resolved",
+              "sourceRef": "$request.adjustment_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_adjustment",
+                "fromPhrase": "$request.adjustment_phrase",
+                "onNoMatch": "Refuse. No adjustment awaiting approval matches.",
+                "onAmbiguous": "Ask, naming the adjustments awaiting approval with their items, directions, quantities and reasons."
+              },
+              "notes": "The adjustment, named by its item or by the count it came from."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters, the approver's own. Required to return an adjustment — \"not approved\" sends back the same figure with the same explanation."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Where it goes and what stays true.",
+            "fields": [
+              {
+                "name": "adjustment_id",
+                "type": "string",
+                "description": "The adjustment."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It is corrected and resubmitted (BR-5)."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "What the approver asked for, in their own words."
+              },
+              {
+                "name": "balance_unchanged",
+                "type": "number",
+                "description": "What the system still says. Nothing moved (BR-5)."
+              },
+              {
+                "name": "shelf_still_says",
+                "type": "number",
+                "description": "What the counter found. The difference has not gone away — it is unexplained rather than uncorrected (BR-4)."
+              },
+              {
+                "name": "count_incomplete",
+                "type": "boolean",
+                "description": "Where this adjustment came from a count, the count is not complete until every adjustment is approved or returned."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No reason was given.",
+              "written": "Nothing.",
+              "notWritten": "The adjustment stays awaiting approval.",
+              "note": "The use case requires a reason to return an adjustment, and E4 is the exception it writes for a missing reason on an adjustment."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. The approver is asking for something — a recount, a better explanation — and \"not approved\" sends back the same figure unchanged (BR-4, BR-5).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the difference has not gone away. Returning leaves the system saying 14 and the shelf holding 11; the discrepancy is now unexplained rather than uncorrected, which is worse (BR-3, BR-4).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never rewrite the raiser's reason. They looked at the shelf and the approver did not (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that the count stays open. A count is complete only when every adjustment is approved or returned, so a returned one holds the whole count open until somebody deals with it (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "stock.adjustment.approve",
+        "statement": "It comes back corrected and can be approved then. Nothing was undone, because nothing had moved (BR-5)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye adjustment wapas bhej dein, stationery ki alamari dobara ginwayein",
+            "lang": "ur-Latn",
+            "gloss": "return this adjustment, have the stationery cupboard recounted"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.adjustment.return",
+              "inputs": {
+                "adjustment_id": "$request.adjustment_phrase → the marker adjustment",
+                "return_reason": "as they put it — recount the stationery cupboard before this is approved",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Report it back with the counter. The balance still says 14 and the shelf still holds 11 — returning has not closed the gap, it has left it unexplained. The December count stays open until this one is dealt with."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-06-PC-8",
+      "intent": {
+        "name": "stock.counts.read",
+        "summary": "See what counts have been taken, what they found, and which shelves are short every time.",
+        "routesHere": [
+          "when was the last stock count and what did it find?",
+          {
+            "text": "aakhri stock count kab hua tha aur kya nikla tha?",
+            "lang": "ur-Latn",
+            "gloss": "when was the last stock count and what did it find?"
+          },
+          {
+            "text": "kaunse items har count mein kam nikalte hain?",
+            "lang": "ur-Latn",
+            "gloss": "which items come up short at every count?"
+          },
+          {
+            "text": "kitne adjustments manzoori ka intezaar kar rahe hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many adjustments are waiting for approval?"
+          },
+          "show me the adjustments approved this year"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ab count karwa dein",
+              "lang": "ur-Latn",
+              "gloss": "have a count taken now"
+            },
+            "goesTo": "stock.count.schedule — this use case.",
+            "note": "Reading what past counts found and scheduling the next are separate acts."
+          },
+          {
+            "request": {
+              "text": "abhi kitna para hai?",
+              "lang": "ur-Latn",
+              "gloss": "how much is there now?"
+            },
+            "goesTo": "stock.items.read — UC-18-01.",
+            "note": "The current balance is the other question — and it is worth knowing whether anybody has ever checked it."
+          },
+          {
+            "request": {
+              "text": "adjustment manzoor kar dein",
+              "lang": "ur-Latn",
+              "gloss": "approve the adjustment"
+            },
+            "goesTo": "stock.adjustment.approve — this use case.",
+            "note": "Reading the list and moving a balance are separate."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.counts.read",
+            "inputs": {
+              "from_date": "$request.from_date",
+              "to_date": "$request.to_date",
+              "item_phrase": "$request.item_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. No balance moves by looking."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written. Neither a count nor an adjustment is ever deleted, so the record it reads is complete (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "stock.counts.read",
+          "method": "GET",
+          "path": "/api/v1/stock-counts",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return counts taken, what they found, and the adjustments raised from them.",
+          "parameters": [
+            {
+              "name": "from_date",
+              "source": "request",
+              "sourceRef": "$request.from_date",
+              "required": false,
+              "type": "date",
+              "notes": "The start of the period asked about."
+            },
+            {
+              "name": "to_date",
+              "source": "request",
+              "sourceRef": "$request.to_date",
+              "required": false,
+              "type": "date",
+              "notes": "The end of it."
+            },
+            {
+              "name": "item_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No such item.",
+                "onAmbiguous": "Ask, naming the items that match with their category and unit."
+              },
+              "notes": "Where the question is about one item across counts."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What has been checked and what keeps going missing.",
+            "fields": [
+              {
+                "name": "counts",
+                "type": "object[]",
+                "description": "Date, scope, who counted, items counted, items uncounted and differences found."
+              },
+              {
+                "name": "days_since_last_count",
+                "type": "integer",
+                "description": "How long the balance has gone unchecked. A balance nobody has looked at since June is one nobody should be relying on (BR-1, E10)."
+              },
+              {
+                "name": "items_never_counted",
+                "type": "object[]",
+                "description": "Items whose figure has never been confirmed by any count at all (BR-1)."
+              },
+              {
+                "name": "repeat_differences",
+                "type": "object[]",
+                "description": "Items that differed at more than one count, with the total adjusted each way. A shelf short every count is not an accident (BR-11)."
+              },
+              {
+                "name": "adjustments_awaiting_approval",
+                "type": "object[]",
+                "description": "Differences found and not yet corrected. The system and the shelf are known to disagree and the figure still says the old number (BR-5)."
+              },
+              {
+                "name": "total_adjusted_down",
+                "type": "string",
+                "description": "Everything written off the balance across the period, by item. Nothing is stated to post to the ledger, so this figure exists here and nowhere else (OQ-4)."
+              },
+              {
+                "name": "counts_by_storekeeper",
+                "type": "object[]",
+                "description": "Any count taken by the storekeeper it was checking. There should be none (BR-2, E1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the count screens.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned.",
+              "note": "The use case writes no exception for it — its exceptions are all about counting and adjusting."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Lead with how long it has been. Every other figure here depends on somebody having looked at the shelf recently, and \"no count since June\" is the answer to most questions about whether the balance can be trusted (BR-1, E10).",
+          "derivedFrom": [
+            "BR-1",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the items that differ every time. A shelf short at three counts running has been telling the school something for a year, and each adjustment on its own reads as an accident (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Give the total adjusted down. It is the value of stock the school believed it had and did not, and nothing posts it anywhere else — whether an adjustment writes off in the books is unanswered (OQ-4).",
+          "derivedFrom": [
+            "BR-4",
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Name the differences still awaiting approval. For those, the school knows the figure is wrong and is still using it (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Name the items never counted at all. Their balance is arithmetic over receipts and issues, and no one has ever checked it against a shelf (BR-1, BR-7).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "aakhri stock count kab hua tha aur kya nikla tha?",
+            "lang": "ur-Latn",
+            "gloss": "when was the last stock count and what did it find?"
+          },
+          "context": "Principal, all branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.counts.read",
+              "inputs": {
+                "from_date": "omitted",
+                "to_date": "omitted",
+                "item_phrase": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-1)."
+            }
+          ],
+          "outcome": "Answer with the date first and the gap since — six months — then what it found: 9 differences, 6 short, and 8 items never counted. Then the two things that only appear across counts: the items short at every count, and any difference still waiting for approval, where the school knows its figure is wrong and is still using it."
+        },
+        {
+          "request": {
+            "text": "kaunse items har count mein kam nikalte hain?",
+            "lang": "ur-Latn",
+            "gloss": "which items come up short at every count?"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.counts.read",
+              "inputs": {
+                "from_date": "the last two years",
+                "to_date": "today",
+                "item_phrase": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Across counts, which is the only way the pattern shows (PR-2)."
+            }
+          ],
+          "outcome": "Give the items with how many counts each was short at and the total adjusted down. Say plainly what the figure means: that is stock the school paid for, believed it had, and wrote off a few units at a time with a reason each time. Nothing else in the system adds it up, and nothing posts it to the books."
+        }
+      ]
+    }
+  ]
+}

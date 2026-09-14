@@ -1,0 +1,1466 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-05-11",
+    "name": "Record a student's absence in advance, have it approved, and have it marked as leave rather than as an unexplained absence",
+    "module": "Attendance",
+    "file": "../UseCases/UC-05-11.json",
+    "featureRef": "5.11 Student leave request and approval"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-05-11-PC-1",
+      "intent": {
+        "name": "leave.request.submit",
+        "summary": "Record that a student will be away, with the dates and why. One step, and it excuses nothing until it is approved.",
+        "routesHere": [
+          "submit leave for Ayesha from 12 to 14 October, family wedding",
+          {
+            "text": "Ayesha ki chhutti ki darkhwast do — 12 se 14 October, shadi hai",
+            "lang": "ur-Latn",
+            "gloss": "submit Ayesha's leave request — 12 to 14 October, there is a wedding"
+          },
+          {
+            "text": "mera bacha kal nahi aa sakega, bemar hai",
+            "lang": "ur-Latn",
+            "gloss": "my child will not be able to come tomorrow, he is unwell"
+          },
+          {
+            "text": "counter pe aa kar chhutti ki darkhwast dena chahte hain",
+            "lang": "ur-Latn",
+            "gloss": "they want to submit a leave request at the counter"
+          },
+          {
+            "text": "teen din ki bimari ki chhutti chahiye, doctor ka certificate hai",
+            "lang": "ur-Latn",
+            "gloss": "we need three days sick leave, we have the doctor's certificate"
+          },
+          "record leave for this student, medical appointment on Thursday"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the leave"
+            },
+            "goesTo": "leave.request.approve — UC-05-11-PC-3",
+            "note": "The guardian submits; approving it is the school's decision, not the family's (BR-2)."
+          },
+          {
+            "request": {
+              "text": "darkhwast wapas le lo",
+              "lang": "ur-Latn",
+              "gloss": "withdraw the request"
+            },
+            "goesTo": "leave.request.cancel — UC-05-11-PC-5",
+            "note": "A guardian may cancel before the start date (BR-10)."
+          },
+          {
+            "request": {
+              "text": "bacha aaj nahi aaya, absent laga do",
+              "lang": "ur-Latn",
+              "gloss": "the child did not come today, mark them absent"
+            },
+            "goesTo": "attendance.daily.mark — UC-05-01",
+            "note": "An absence with no request is marked as an absence. Leave records why a child was away and whether it was excused (BR-1)."
+          },
+          {
+            "request": {
+              "text": "jo din pehle absent laga tha, us ki chhutti dena chahte hain",
+              "lang": "ur-Latn",
+              "gloss": "we want to apply leave to a day already marked absent"
+            },
+            "goesTo": "leave.request.submit, then approval",
+            "note": "Leave may be applied after the fact to a date already marked absent — the commonest case where a child was unwell that morning (BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "leave.request.submit",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "leave_type": "$request.leave_type",
+              "from_date": "$request.from_date",
+              "to_date": "$request.to_date",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Off-days and holidays in the range are excluded and not consumed by the leave (BR-6, BR-12), and a request raised by the student is held until the guardian endorses it (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing document for long sick leave, dates out of order, a range with no working day, dates outside the student's enrolment and an overlap with existing leave are all enforced by the API and arrive as errors.",
+        "atomicity": "One write: the request, its dates and the guardian's reason, together with the audit entry or not at all. **Nothing is excused yet** — the student is still marked absent on those days until the request is approved (BR-5). Days the calendar records as off-days or holidays are excluded and not consumed, so a family does not spend leave on a day the school was shut (BR-6). Where the student raised it, it is held for the guardian's endorsement and does not reach the Coordinator (BR-3)."
+      },
+      "operations": [
+        {
+          "name": "leave.request.submit",
+          "method": "POST",
+          "path": "/api/v1/leave-requests",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "student_id + from_date + to_date, since a student carries one request per date range",
+          "purpose": "Record a student leave request with its dates, type and the guardian's stated reason.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No enrolled student matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with class and section."
+              },
+              "notes": "The guardian's own child, or the student themselves. Dates before placement or after leaving are refused (BR-13, E4)."
+            },
+            {
+              "name": "leave_type",
+              "source": "request",
+              "sourceRef": "$request.leave_type",
+              "required": true,
+              "type": "enum: Sick | Family | Religious | Bereavement | Medical appointment",
+              "notes": "What the absence is for. It decides whether a document is required (BR-4), so it is read from what the family said and never chosen to avoid one."
+            },
+            {
+              "name": "from_date",
+              "source": "request",
+              "sourceRef": "$request.from_date",
+              "required": true,
+              "type": "date",
+              "notes": "The first day of the leave."
+            },
+            {
+              "name": "to_date",
+              "source": "request",
+              "sourceRef": "$request.to_date",
+              "required": true,
+              "type": "date",
+              "notes": "The last day. On or after the from date (E2)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters, written by the guardian. What the Coordinator weighs (BR-2). The family's own words, whether typed in the app or taken at the counter."
+            },
+            {
+              "name": "supporting_document_id",
+              "source": "resolved",
+              "sourceRef": "$request.document_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "uploaded_file",
+                "fromPhrase": "$request.document_phrase",
+                "onNoMatch": "Refuse. No uploaded document matches.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required for sick leave beyond the configured number of days (BR-4, E1). A day off for a cold does not need a certificate."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The request as recorded.",
+            "fields": [
+              {
+                "name": "leave_request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Submitted, or Awaiting endorsement where the student raised it (BR-3)."
+              },
+              {
+                "name": "days_counted",
+                "type": "integer",
+                "description": "The working days the leave actually covers, with off-days and holidays excluded (BR-6, BR-12)."
+              },
+              {
+                "name": "dates_excluded",
+                "type": "date[]",
+                "description": "Closed days inside the range that are not consumed by the leave."
+              },
+              {
+                "name": "raised_by",
+                "type": "string",
+                "description": "Whether the guardian or the student raised it (BR-3)."
+              },
+              {
+                "name": "needs_endorsement",
+                "type": "boolean",
+                "description": "True where a student raised it. Until the guardian endorses it, it does not reach the Coordinator."
+              },
+              {
+                "name": "frequency_flag",
+                "type": "boolean",
+                "description": "Set where the household has requested leave beyond the configured frequency. Flagged to the Coordinator rather than blocked (BR-11)."
+              },
+              {
+                "name": "dates_already_marked_absent",
+                "type": "date[]",
+                "description": "Days already marked absent that approval would amend (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DOCUMENT_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "Sick leave beyond the configured days with no document.",
+              "written": "Nothing.",
+              "notWritten": "No request recorded.",
+              "note": "The message names the threshold. A day off for a cold does not need a certificate; a fortnight does (BR-4)."
+            },
+            {
+              "code": "DATES_OUT_OF_ORDER",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The to date is before the from date.",
+              "written": "Nothing.",
+              "notWritten": "No request recorded."
+            },
+            {
+              "code": "NO_WORKING_DAY",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The range contains no working day.",
+              "written": "Nothing.",
+              "notWritten": "No request recorded.",
+              "note": "Message: \"Those dates are all holidays. No leave is needed.\" A family should not spend leave on a day the school was shut (BR-6)."
+            },
+            {
+              "code": "OUTSIDE_ENROLMENT",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The dates fall before the student was placed or after they left.",
+              "written": "Nothing.",
+              "notWritten": "No request recorded."
+            },
+            {
+              "code": "OVERLAPS_APPROVED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The dates overlap leave already approved for this student.",
+              "written": "Nothing.",
+              "notWritten": "No request recorded.",
+              "note": "The message names the covered dates."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. It is what the Coordinator weighs (BR-2), and a reason a planner wrote describes what it inferred about a family's circumstances rather than what they said.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never choose the leave type to avoid a document. The type decides whether one is required (BR-4), and recording a fortnight's illness as Family leave to get past E1 misstates why a child was away.",
+          "derivedFrom": [
+            "BR-4",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe the request as excusing the absence. Nothing is excused until it is approved (BR-2, BR-5) — the child is still marked absent on those days meanwhile, and the family will assume otherwise.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the days actually counted and the dates excluded. Off-days and holidays inside the range are not consumed (BR-6, BR-12), so a Friday-to-Monday request may count two days rather than four — and the family should know which.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never endorse a student's own request. A request raised by a student is held until the guardian endorses it, and only then does it reach the Coordinator — a student must not be able to authorise their own absence (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report the frequency flag rather than treating it as a refusal. Repeated requests are flagged to the Coordinator rather than blocked, because a family with a genuinely ill child asks often (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A submitted request is approved, rejected or cancelled by the guardian before it starts (BR-10); nothing here withdraws one. No attendance mark has changed and nothing is excused."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ki chhutti ki darkhwast do — 12 se 14 October, khandan mein shadi hai",
+            "lang": "ur-Latn",
+            "gloss": "submit Ayesha's leave request — 12 to 14 October, there is a family wedding"
+          },
+          "context": "Parent, signed in to the portal. 13 October is a Sunday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.submit",
+              "inputs": {
+                "student_id": "$request.student_phrase → \"Ayesha\"",
+                "leave_type": "Family",
+                "from_date": "2026-10-12",
+                "to_date": "2026-10-14",
+                "reason": "Family wedding out of the city; the family will be away for three days.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the guardian's own (PR-1). The type is Family because that is what they described (PR-2)."
+            }
+          ],
+          "outcome": "The request is Submitted covering two working days — 13 October is excluded and not consumed (BR-6). Report that (PR-4). Nothing is excused yet; Ayesha would still be marked absent on those days until the Coordinator approves it (PR-3)."
+        },
+        {
+          "request": {
+            "text": "bacha do hafte se bemar hai, chhutti chahiye",
+            "lang": "ur-Latn",
+            "gloss": "the child has been ill for two weeks, we need leave"
+          },
+          "context": "Staff, Johar Town branch, recording at the counter, with no document supplied.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.submit",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "leave_type": "Sick",
+                "from_date": "$request.from_date",
+                "to_date": "$request.to_date",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Sick, because that is what it is. Never recorded as Family to get past the document rule (PR-2). The API returns DOCUMENT_REQUIRED (E1)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that sick leave beyond the configured number of days needs a medical certificate, and ask the family to bring one — do not re-type it as a different kind of leave."
+        },
+        {
+          "request": {
+            "text": "bacha subah bemar tha, kal absent laga tha — us din ki chhutti dena chahte hain",
+            "lang": "ur-Latn",
+            "gloss": "the child was unwell that morning and was marked absent — we want to apply leave for that day"
+          },
+          "context": "Parent, signed in to the portal.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.submit",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "leave_type": "Sick",
+                "from_date": "2026-09-07",
+                "to_date": "2026-09-07",
+                "reason": "The child was unwell that morning and was kept at home.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Leave may be applied after the fact to a date already marked absent (BR-9) — the commonest case there is."
+            }
+          ],
+          "outcome": "The request is Submitted and dates_already_marked_absent names 7 September. On approval the attendance record for that day is amended from Absent to leave (BR-9) — but not before."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-11-PC-2",
+      "intent": {
+        "name": "leave.request.endorse",
+        "summary": "Endorse a leave request the student raised themselves, so it reaches the Coordinator. Guardian only, one step.",
+        "routesHere": [
+          "endorse my child's leave request",
+          {
+            "text": "mere bache ne khud darkhwast di hai, main tasdeeq karta hoon",
+            "lang": "ur-Latn",
+            "gloss": "my child submitted it themselves, I endorse it"
+          },
+          {
+            "text": "darkhwast ki tasdeeq kar do",
+            "lang": "ur-Latn",
+            "gloss": "endorse the request"
+          },
+          {
+            "text": "haan ye sahi hai, aage bhej do",
+            "lang": "ur-Latn",
+            "gloss": "yes this is right, send it on"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the leave"
+            },
+            "goesTo": "leave.request.approve — UC-05-11-PC-3",
+            "note": "Endorsement is the guardian confirming the request is genuine; approving it is the school's decision (BR-2, BR-3)."
+          },
+          {
+            "request": {
+              "text": "nayi darkhwast do",
+              "lang": "ur-Latn",
+              "gloss": "submit a new request"
+            },
+            "goesTo": "leave.request.submit — UC-05-11-PC-1"
+          },
+          {
+            "request": {
+              "text": "ye darkhwast rad kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject this request"
+            },
+            "goesTo": "leave.request.cancel — UC-05-11-PC-5",
+            "note": "A guardian who does not endorse a request cancels it; rejecting is the Coordinator's act."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "leave.request.endorse",
+            "inputs": {
+              "leave_request_id": "$request.leave_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Until the guardian endorses it the request does not reach the Coordinator — a student must not be able to authorise their own absence (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. A request that needs no endorsement is reported rather than endorsed twice.",
+        "atomicity": "One write: the endorsement and the audit entry together or not at all. The request moves from Awaiting endorsement to Submitted and reaches the Coordinator. Nothing is excused — approving it is still the school's decision (BR-2)."
+      },
+      "operations": [
+        {
+          "name": "leave.request.endorse",
+          "method": "POST",
+          "path": "/api/v1/leave-requests/{leave_request_id}/endorse",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "leave_request_id, since a request carries one endorsement",
+          "purpose": "Record the guardian's endorsement of a student-raised request so it reaches the Coordinator.",
+          "parameters": [
+            {
+              "name": "leave_request_id",
+              "source": "resolved",
+              "sourceRef": "$request.leave_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "leave_request",
+                "fromPhrase": "$request.leave_phrase",
+                "onNoMatch": "Refuse. No leave request matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with student, dates, type and status."
+              },
+              "notes": "The leave request, resolved from the student and dates the actor named."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The request as endorsed.",
+            "fields": [
+              {
+                "name": "leave_request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Submitted. It now reaches the Coordinator."
+              },
+              {
+                "name": "raised_by",
+                "type": "string",
+                "description": "The student who raised it."
+              },
+              {
+                "name": "endorsed_by",
+                "type": "string",
+                "description": "The guardian."
+              },
+              {
+                "name": "days_counted",
+                "type": "integer",
+                "description": "The working days it covers."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ENDORSEMENT_NOT_NEEDED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The request was raised by the guardian and needs no endorsement.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "It already reached the Coordinator when it was submitted."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never endorse on the guardian's behalf. The whole point is that a student cannot authorise their own absence (BR-3), and an endorsement recorded by anybody else defeats it.",
+          "derivedFrom": [
+            "BR-3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never describe endorsement as approval. It confirms the request is genuine; whether the absence is excused is the school's decision (BR-2).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the dates and the reason back to the guardian before endorsing. They are confirming what their child wrote, and it is the first time they may have seen it.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An endorsement is not withdrawn. Where the guardian changes their mind before the leave starts, they cancel the request (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mere bache ne khud darkhwast di hai — 12 se 14 October — main tasdeeq karta hoon",
+            "lang": "ur-Latn",
+            "gloss": "my child submitted it themselves — 12 to 14 October — I endorse it"
+          },
+          "context": "Parent, signed in to the portal.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.endorse",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The dates and the reason are read back to the guardian before the plan is emitted (PR-3)."
+            }
+          ],
+          "outcome": "The request reaches the Coordinator. Nothing is excused yet — approving it is the school's decision (PR-2)."
+        },
+        {
+          "request": {
+            "text": "darkhwast ki tasdeeq kar do",
+            "lang": "ur-Latn",
+            "gloss": "endorse the request"
+          },
+          "context": "Parent, on a request they submitted themselves.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.endorse",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns ENDORSEMENT_NOT_NEEDED (E5)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the request was raised by the guardian and already reached the Coordinator when it was submitted."
+        },
+        {
+          "request": {
+            "text": "bache ki darkhwast aage bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the child's request on"
+          },
+          "context": "Staff, Johar Town branch, at the counter.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.endorse",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Endorsement is the guardian's act, and a Staff member cannot supply it (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that the guardian has to endorse it — a student must not be able to authorise their own absence, and endorsing it from the office would do exactly that."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-11-PC-3",
+      "intent": {
+        "name": "leave.request.approve",
+        "summary": "Approve a leave request, which marks the student as on leave for those days and suppresses the absence alert. Coordinator or School Admin, one step.",
+        "routesHere": [
+          "approve Ayesha's leave for the wedding",
+          {
+            "text": "chhutti manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the leave"
+          },
+          {
+            "text": "ye darkhwast manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this request"
+          },
+          {
+            "text": "bimari ki chhutti manzoor karo, certificate laga hua hai",
+            "lang": "ur-Latn",
+            "gloss": "approve the sick leave, the certificate is attached"
+          },
+          "approve the leave and amend the day already marked absent"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "darkhwast rad kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject the request"
+            },
+            "goesTo": "leave.request.reject — UC-05-11-PC-4"
+          },
+          {
+            "request": {
+              "text": "hazri theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the attendance"
+            },
+            "goesTo": "leave.request.approve, which does it",
+            "note": "On each approved leave day the student is marked as approved leave automatically (BR-5), and a day already marked absent is amended (BR-9)."
+          },
+          {
+            "request": {
+              "text": "walidain ko bata do",
+              "lang": "ur-Latn",
+              "gloss": "tell the parents"
+            },
+            "goesTo": "leave.request.approve, which tells them",
+            "note": "The decision is notified as part of the approval."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "leave.request.approve",
+            "inputs": {
+              "leave_request_id": "$request.leave_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches the attendance record. On each approved leave day the student is marked as approved leave automatically, so whoever marks that section sees it already applied (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. A student request without endorsement, and an overlap with leave already approved, are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the approval, a leave mark on each working day covered, any amendment to a day already marked absent, and the audit entry together or not at all. Whoever marks that section's attendance sees the mark already applied and does not have to remember (BR-5). Approved leave suppresses the absence alert for those days and is counted separately from unexplained absence (BR-7). Where a day was already marked absent, the attendance record is amended with the reason kept (BR-9) — the original mark stays visible."
+      },
+      "operations": [
+        {
+          "name": "leave.request.approve",
+          "method": "POST",
+          "path": "/api/v1/leave-requests/{leave_request_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "leave_request_id, since a request carries one approval and a repeat must not apply the marks twice",
+          "purpose": "Approve a leave request and apply the leave mark to every working day it covers.",
+          "parameters": [
+            {
+              "name": "leave_request_id",
+              "source": "resolved",
+              "sourceRef": "$request.leave_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "leave_request",
+                "fromPhrase": "$request.leave_phrase",
+                "onNoMatch": "Refuse. No leave request matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with student, dates, type and status."
+              },
+              "notes": "The leave request, resolved from the student and dates the actor named."
+            },
+            {
+              "name": "amendment_reason",
+              "source": "request",
+              "sourceRef": "$request.amendment_reason",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required where leave is applied to a date already marked absent (BR-9) — the attendance record is being amended after the fact, and the reason stays with it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The leave as approved and applied.",
+            "fields": [
+              {
+                "name": "leave_request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved, and Applied once the marks are written."
+              },
+              {
+                "name": "days_applied",
+                "type": "date[]",
+                "description": "The working days now carrying a leave mark (BR-5)."
+              },
+              {
+                "name": "dates_excluded",
+                "type": "date[]",
+                "description": "Off-days and holidays, not consumed by the leave (BR-6)."
+              },
+              {
+                "name": "attendance_amended",
+                "type": "object[]",
+                "description": "Days already marked absent, amended with the original mark kept visible (BR-9)."
+              },
+              {
+                "name": "alerts_suppressed",
+                "type": "integer",
+                "description": "Absence alerts that will not now be sent for those days (BR-7)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The Coordinator or School Admin."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status of the decision."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_ENDORSED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "A student's request reached approval without the guardian's endorsement.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "A student must not be able to authorise their own absence (BR-3)."
+            },
+            {
+              "code": "OVERLAPS_APPROVED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The dates overlap leave already approved for this student.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "The message names the covered dates."
+            },
+            {
+              "code": "ALREADY_MARKED",
+              "mapsTo": "E9",
+              "httpStatus": 200,
+              "meaning": "A leave day arrives after attendance was already marked.",
+              "written": "The leave is approved and the mark is amended.",
+              "notWritten": "Nothing lost — the original mark stays visible.",
+              "treatedAsSuccess": true,
+              "note": "Report which days were amended (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a student-raised request that the guardian has not endorsed. E5 is BR-3 working, and endorsing it to get past the refusal would let a student authorise their own absence.",
+          "derivedFrom": [
+            "BR-3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report which days were actually applied and which were excluded. Off-days and holidays are not consumed (BR-6), so a four-day request may apply two marks — and the family is counting days.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where attendance was already marked and has been amended. The original mark stays visible (BR-9), and the teacher who marked the child absent should know it has changed.",
+          "derivedFrom": [
+            "BR-9",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the alerts suppressed. Approved leave suppresses the absence alert for those days (BR-7), and that is the family's main reason for telling the school in advance.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain a correction to the attendance record. The leave mark is applied by the approval itself (BR-5) — marking it separately would write the same fact twice.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. Where the child comes in after all, the guardian cancels before the start date and the attendance mark reverts (BR-10); after it has begun, only the days from today can be cancelled (E7). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ki shadi wali chhutti manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve Ayesha's leave for the wedding"
+          },
+          "context": "Coordinator, Johar Town branch, on a 12–14 October request where the 13th is a Sunday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.approve",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "amendment_reason is omitted — no day in the range has been marked yet."
+            }
+          ],
+          "outcome": "Two leave marks applied, for the 12th and the 14th. The 13th is excluded and not consumed (PR-2). Absence alerts for those days are suppressed, and the guardian is told."
+        },
+        {
+          "request": {
+            "text": "kal wali bimari ki chhutti manzoor kar do, us din absent laga hua tha",
+            "lang": "ur-Latn",
+            "gloss": "approve yesterday's sick leave, the child was marked absent that day"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.approve",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "amendment_reason": "Approved sick leave applied after the fact; the child was unwell that morning.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "amendment_reason is supplied because a day already marked absent is being amended (BR-9)."
+            }
+          ],
+          "outcome": "The leave is approved and yesterday's Absent becomes a leave mark, with the original still visible (BR-9). Report that to whoever marked it (PR-3) — the register they saved has changed."
+        },
+        {
+          "request": {
+            "text": "bache ki apni darkhwast manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the child's own request"
+          },
+          "context": "Coordinator, Johar Town branch, on a student-raised request the guardian has not endorsed.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.approve",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_ENDORSED (E5)."
+            }
+          ],
+          "outcome": "Nothing is approved. Report that the guardian has to endorse it first — and never endorse it to get past this (PR-1), which would let a student authorise their own absence."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-11-PC-4",
+      "intent": {
+        "name": "leave.request.reject",
+        "summary": "Reject a leave request with the reason the family is told. Coordinator or School Admin, one step.",
+        "routesHere": [
+          "reject this leave request — it's exam week",
+          {
+            "text": "ye chhutti ki darkhwast rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "reject this leave request"
+          },
+          {
+            "text": "imtihan hain, chhutti nahi de sakte",
+            "lang": "ur-Latn",
+            "gloss": "the exams are on, we cannot give leave"
+          },
+          {
+            "text": "wajah ke saath rad karo",
+            "lang": "ur-Latn",
+            "gloss": "reject it with a reason"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the leave"
+            },
+            "goesTo": "leave.request.approve — UC-05-11-PC-3"
+          },
+          {
+            "request": {
+              "text": "kam din ki chhutti de do",
+              "lang": "ur-Latn",
+              "gloss": "give fewer days of leave"
+            },
+            "goesTo": "Not offered.",
+            "note": "A request is approved or rejected as it stands. A shorter leave is a fresh request from the family."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "leave.request.reject",
+            "inputs": {
+              "leave_request_id": "$request.leave_phrase",
+              "rejection_reason": "$request.rejection_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A rejection carries a written reason — the family is told why, and a refusal with no explanation is not permitted (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. The reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the rejection, the reason and the audit entry together or not at all. No leave mark is applied, no absence alert is suppressed, and the student will be marked absent on those days like any other. The family is told why (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "leave.request.reject",
+          "method": "POST",
+          "path": "/api/v1/leave-requests/{leave_request_id}/reject",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "leave_request_id, since a request carries one decision",
+          "purpose": "Reject a leave request with the reason, and tell the family.",
+          "parameters": [
+            {
+              "name": "leave_request_id",
+              "source": "resolved",
+              "sourceRef": "$request.leave_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "leave_request",
+                "fromPhrase": "$request.leave_phrase",
+                "onNoMatch": "Refuse. No leave request matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with student, dates, type and status."
+              },
+              "notes": "The leave request, resolved from the student and dates the actor named."
+            },
+            {
+              "name": "rejection_reason",
+              "source": "request",
+              "sourceRef": "$request.rejection_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (BR-8, E6). The family is told why, so a refusal with no explanation is not permitted. The Coordinator's own words."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The rejection.",
+            "fields": [
+              {
+                "name": "leave_request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Rejected. Terminal."
+              },
+              {
+                "name": "rejection_reason",
+                "type": "string",
+                "description": "As given, sent to the family."
+              },
+              {
+                "name": "rejected_by",
+                "type": "string",
+                "description": "The Coordinator or School Admin."
+              },
+              {
+                "name": "days_not_excused",
+                "type": "date[]",
+                "description": "The days the student will be marked absent on if they stay away."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "A rejection was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not rejected.",
+              "note": "Message: \"Give a reason. The family is told why.\" Ask; never compose one."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the rejection reason. The family is told it (BR-8), and a reason a planner wrote is the school telling a family something nobody decided to say.",
+          "derivedFrom": [
+            "BR-8",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never soften the reason on the way through. A family told their child's absence will not be excused needs to know why, in the school's own words.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the days will be marked absent. Nothing is excused and no alert is suppressed — if the child stays away regardless, those days count as unexplained absence (BR-1, BR-7).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never reject part of a request. It is approved or rejected as it stands, and a shorter leave is a fresh request from the family.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A rejection is terminal. Where the school changes its mind, the family submits a fresh request. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye chhutti rad kar do — us hafte imtihan hain",
+            "lang": "ur-Latn",
+            "gloss": "reject this leave — the exams are that week"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.reject",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "rejection_reason": "The examinations are scheduled for that week and the papers cannot be sat later.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Rejected and the family is told why. Report that the days are not excused (PR-3) — if the child stays away they will be marked absent and the alert will go."
+        },
+        {
+          "request": {
+            "text": "darkhwast rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "reject the request"
+          },
+          "context": "Coordinator, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.reject",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "rejection_reason": "$request.rejection_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: the reason is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the family should be told — a refusal with no explanation is not permitted."
+        },
+        {
+          "request": {
+            "text": "teen din ki jagah ek din ki chhutti de do",
+            "lang": "ur-Latn",
+            "gloss": "give one day's leave instead of three"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.reject",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "rejection_reason": "$request.rejection_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted for a partial approval — there is no capability for one (PR-4)."
+            }
+          ],
+          "outcome": "Report that a request is approved or rejected as it stands. Rejecting it with that reason, and asking the family to submit a one-day request, is the route — and that is two decisions, one of them theirs."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-11-PC-5",
+      "intent": {
+        "name": "leave.request.cancel",
+        "summary": "Cancel a leave request before it starts, so the attendance mark reverts. Guardian, one step.",
+        "routesHere": [
+          "cancel the leave, my child will come after all",
+          {
+            "text": "chhutti cancel kar do, bacha aa jayega",
+            "lang": "ur-Latn",
+            "gloss": "cancel the leave, the child will come"
+          },
+          {
+            "text": "shadi mulatwi ho gayi hai, darkhwast wapas le lo",
+            "lang": "ur-Latn",
+            "gloss": "the wedding has been postponed, withdraw the request"
+          },
+          {
+            "text": "chhutti ki zaroorat nahi rahi",
+            "lang": "ur-Latn",
+            "gloss": "the leave is no longer needed"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti rad kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject the leave"
+            },
+            "goesTo": "leave.request.reject — UC-05-11-PC-4",
+            "note": "Rejecting is the school's decision; cancelling is the family's."
+          },
+          {
+            "request": {
+              "text": "nayi tareekhon ki chhutti chahiye",
+              "lang": "ur-Latn",
+              "gloss": "we need leave for different dates"
+            },
+            "goesTo": "leave.request.cancel then submit",
+            "note": "Changing the dates is cancelling one request and submitting another."
+          },
+          {
+            "request": {
+              "text": "chhutti shuru ho chuki hai, poori cancel kar do",
+              "lang": "ur-Latn",
+              "gloss": "the leave has started, cancel all of it"
+            },
+            "goesTo": "Not offered in full.",
+            "note": "Once the leave has begun only the days from today can be cancelled (E7). Days already taken stay as they are."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "leave.request.cancel",
+            "inputs": {
+              "leave_request_id": "$request.leave_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A guardian may cancel before the start date and the attendance mark reverts — a child who came in after all is not recorded as away (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. A cancellation after the leave has begun is handled rather than refused — days from today are cancelled and days already taken stay (E7).",
+        "atomicity": "One write: the cancellation, the reverted attendance marks and the audit entry together or not at all. Where the leave has not begun, every leave mark reverts and the days become ordinary working days — the student will be marked normally. Where it has begun, only the days from today are cancelled; days already taken stay as they are (E7)."
+      },
+      "operations": [
+        {
+          "name": "leave.request.cancel",
+          "method": "POST",
+          "path": "/api/v1/leave-requests/{leave_request_id}/cancel",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "leave_request_id, since a request carries one cancellation",
+          "purpose": "Cancel a leave request, reverting the leave marks on days not yet taken.",
+          "parameters": [
+            {
+              "name": "leave_request_id",
+              "source": "resolved",
+              "sourceRef": "$request.leave_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "leave_request",
+                "fromPhrase": "$request.leave_phrase",
+                "onNoMatch": "Refuse. No leave request matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with student, dates, type and status."
+              },
+              "notes": "The leave request, resolved from the student and dates the actor named."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The cancellation, and what reverted.",
+            "fields": [
+              {
+                "name": "leave_request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Cancelled. Terminal."
+              },
+              {
+                "name": "days_reverted",
+                "type": "date[]",
+                "description": "Leave marks removed; the student is markable normally again (BR-10)."
+              },
+              {
+                "name": "days_retained",
+                "type": "date[]",
+                "description": "Days already taken, where the leave had begun. They stay as they are (E7)."
+              },
+              {
+                "name": "cancelled_by",
+                "type": "string",
+                "description": "The guardian."
+              },
+              {
+                "name": "alerts_resume",
+                "type": "boolean",
+                "description": "True where absence alerts are no longer suppressed for the reverted days (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_BEGUN",
+              "mapsTo": "E7",
+              "httpStatus": 200,
+              "meaning": "The guardian cancelled after the leave had begun.",
+              "written": "Days from today are cancelled.",
+              "notWritten": "Days already taken stay as they are.",
+              "treatedAsSuccess": true,
+              "note": "Message names both. Not a refusal — report which days reverted and which did not."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never cancel on the school's behalf. Cancelling is the family's act; refusing leave is the school's, and they are different records with different meanings (BR-10, BR-8).",
+          "derivedFrom": [
+            "BR-8",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report which days reverted and which did not. Once the leave has begun only the days from today are cancelled (E7), and a family expecting the whole request withdrawn will be surprised.",
+          "derivedFrom": [
+            "BR-10",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that alerts resume for the reverted days. Approved leave suppressed them (BR-7); once cancelled, a child who stays away will be marked absent and the parent messaged.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain a fresh request onto a cancellation. Changing the dates is two acts, and the new dates are the family's to state.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Cancelled is terminal. Where the family needs the leave after all, they submit a fresh request — which is approved or rejected on its own merits."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "chhutti cancel kar do, shadi mulatwi ho gayi hai",
+            "lang": "ur-Latn",
+            "gloss": "cancel the leave, the wedding has been postponed"
+          },
+          "context": "Parent, signed in to the portal, three days before the leave starts.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.cancel",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Both leave marks revert and the days become ordinary working days (BR-10). Report that alerts resume (PR-3) — if the child is away on those days now, the parent will be messaged."
+        },
+        {
+          "request": {
+            "text": "chhutti cancel kar do, bacha kal se aa jayega",
+            "lang": "ur-Latn",
+            "gloss": "cancel the leave, the child will come from tomorrow"
+          },
+          "context": "Parent, on a three-day leave that started yesterday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.cancel",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns ALREADY_BEGUN (E7) on the success path."
+            }
+          ],
+          "outcome": "Tomorrow's leave mark reverts; yesterday's and today's stay as they are. Report both lists (PR-2) — the family asked to cancel the leave and two days of it remain."
+        },
+        {
+          "request": {
+            "text": "is bache ki chhutti cancel kar do, hum nahi de rahe",
+            "lang": "ur-Latn",
+            "gloss": "cancel this child's leave, we are not granting it"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "leave.request.cancel",
+              "inputs": {
+                "leave_request_id": "$request.leave_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The school refusing leave is a rejection with a reason, not a cancellation (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that cancelling is the family's act and rejecting is the school's — and that a rejection needs a reason the family is told."
+        }
+      ]
+    }
+  ]
+}

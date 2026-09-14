@@ -1,0 +1,1288 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-04-19",
+  "featureRef": "4.19 Accounting vouchers for money in and out",
+  "name": "Record a movement as a voucher, approved by a chain that matches its size, and paid separately",
+  "module": "Finance",
+  "alsoAffectsModules": [
+    "Fee"
+  ],
+  "priority": "MVP",
+  "priorityReason": "The manual door into the ledger. Every movement the fee system has no route for arrives through here.",
+  "goal": {
+    "actor": "Accounts",
+    "capability": "to record a cash movement, expense or refund as a formal entry through an approval chain that matches its size",
+    "outcome": "money moves only with the right person's authority, and approving a payment is never the same act as making it"
+  },
+  "primaryActor": "Accounts",
+  "secondaryActors": [
+    {
+      "actor": "School Admin",
+      "involvement": "Approves vouchers at or above the lower threshold."
+    },
+    {
+      "actor": "Principal / Director",
+      "involvement": "Sets both thresholds and approves vouchers at or above the higher one."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "A refund is approved and needs a payment voucher, which is the existing route for money leaving.",
+        "source": "UC-04-11"
+      },
+      {
+        "type": "event",
+        "description": "Withholding tax is deposited and the payment is recorded as a voucher.",
+        "source": "UC-04-17"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "A chart of accounts exists with the accounts to debit and credit. No feature creates it, and this cannot work without it (BR-2).",
+      "establishedBy": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    },
+    {
+      "condition": "Both approval thresholds are set by the Principal. They are not settable by the School Admin they constrain (BR-4).",
+      "establishedBy": {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json"
+      }
+    },
+    {
+      "condition": "An authenticated session exists and the acting user is Accounts, School Admin or Principal.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "Where a budget line applies, the budget for the period has been approved.",
+      "establishedBy": {
+        "id": "UC-04-20",
+        "name": "Budgeting",
+        "link": "UC-04-20.json"
+      }
+    }
+  ],
+  "postConditions": [
+    "The voucher exists with its amount, its two accounts, its date and its description, entered once rather than twice.",
+    "It has passed the approval chain its amount required, and no higher approval was bypassed.",
+    "On final approval it has posted to the ledger and created a payable, since the school now owes the money.",
+    "The printed voucher is the authorisation to release the money, not a second record for somebody to key back in.",
+    "An approved but unpaid voucher stays visible as a liability, so the school's commitments are not hidden until they are paid.",
+    "The later payment has discharged the payable and posted the cash movement, and the two are separate acts by separate people.",
+    "Where a budget line applies, the remaining balance was checked and an excess was pushed to the next approval level rather than blocked.",
+    "Nothing was posted without approval, and no voucher below the lower threshold waited on an approver it did not need."
+  ],
+  "screens": [
+    {
+      "name": "Vouchers",
+      "route": "/finance/vouchers",
+      "sidebar": "Finance",
+      "columns": [
+        "Voucher",
+        "Date",
+        "Type",
+        "Description",
+        "Debit account",
+        "Credit account",
+        "Amount",
+        "Budget line",
+        "Status"
+      ],
+      "defaultSort": "Date, newest first",
+      "filters": [
+        "Type",
+        "Status",
+        "Date range",
+        "Amount range",
+        "Account",
+        "Awaiting my approval"
+      ],
+      "actions": [
+        "Create voucher",
+        "Open",
+        "Approve",
+        "Return",
+        "Print",
+        "Record payment",
+        "Export"
+      ],
+      "visibleTo": [
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Create voucher",
+      "route": "/finance/vouchers/new",
+      "sidebar": "Finance",
+      "columns": [
+        "Line",
+        "Account",
+        "Debit",
+        "Credit"
+      ],
+      "actions": [
+        "Select type",
+        "Enter amount and accounts",
+        "Attach supporting document",
+        "Save as draft",
+        "Submit"
+      ],
+      "visibleTo": [
+        "Accounts"
+      ]
+    },
+    {
+      "name": "Approval thresholds",
+      "route": "/finance/vouchers/thresholds",
+      "sidebar": "Finance",
+      "columns": [
+        "Threshold",
+        "Amount",
+        "Approver",
+        "Set by",
+        "Set on"
+      ],
+      "actions": [
+        "Set thresholds"
+      ],
+      "visibleTo": [
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Payables",
+      "route": "/finance/payables",
+      "sidebar": "Finance",
+      "columns": [
+        "Voucher",
+        "Payee",
+        "Amount",
+        "Approved on",
+        "Days outstanding",
+        "Status"
+      ],
+      "defaultSort": "Approved on, oldest first",
+      "filters": [
+        "Payee",
+        "Age",
+        "Amount range"
+      ],
+      "actions": [
+        "Open",
+        "Record payment",
+        "Print voucher"
+      ],
+      "visibleTo": [
+        "Accounts",
+        "School Admin",
+        "Principal / Director"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Voucher type",
+      "type": "enum",
+      "required": "yes",
+      "validation": "What kind of movement this is.",
+      "example": "Payment voucher",
+      "enumValues": [
+        "Payment voucher",
+        "Receipt voucher",
+        "Journal voucher",
+        "Contra voucher"
+      ]
+    },
+    {
+      "name": "Amount",
+      "type": "money",
+      "required": "yes",
+      "validation": "Greater than zero. It decides which approval the voucher needs (BR-3).",
+      "example": "PKR 24,000"
+    },
+    {
+      "name": "Debit account",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "From the chart of accounts.",
+      "example": "5200 — Repairs and maintenance",
+      "lookupSource": "Chart of accounts"
+    },
+    {
+      "name": "Credit account",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "From the chart of accounts. Must differ from the debit account (BR-6).",
+      "example": "1010 — Cash in hand",
+      "lookupSource": "Chart of accounts"
+    },
+    {
+      "name": "Voucher date",
+      "type": "date",
+      "required": "yes",
+      "validation": "When the movement occurred. Not in the future, and within an open period.",
+      "default": "Today",
+      "example": "28-09-2026"
+    },
+    {
+      "name": "Description",
+      "type": "text",
+      "required": "yes",
+      "validation": "20 to 500 characters. What the money was for, in terms a reader can follow later.",
+      "example": "Replacement of two classroom fans in Block B, quoted by Hussain Electricals."
+    },
+    {
+      "name": "Payee",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Who the money is paid to.",
+      "example": "Hussain Electricals",
+      "requiredWhen": "The voucher type is Payment voucher"
+    },
+    {
+      "name": "Supporting document",
+      "type": "file",
+      "required": "no",
+      "validation": "The bill, quotation or receipt behind the movement.",
+      "example": "invoice-4471.pdf"
+    },
+    {
+      "name": "Budget line",
+      "type": "lookup",
+      "required": "no",
+      "validation": "The budget line this spends against, where one exists. Its remaining balance is checked (BR-9).",
+      "example": "Repairs and maintenance, Q1",
+      "lookupSource": "Approved budget lines"
+    },
+    {
+      "name": "Budget remaining",
+      "type": "generated",
+      "required": "no",
+      "validation": "What is left on the line, shown before submission so an overspend is a deliberate act.",
+      "example": "PKR 18,000"
+    },
+    {
+      "name": "Approval required",
+      "type": "generated",
+      "required": "no",
+      "validation": "Derived from the amount and the thresholds. Never chosen (BR-3).",
+      "example": "School Admin"
+    },
+    {
+      "name": "Return reason",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 500 characters. Required when returning a voucher unapproved.",
+      "example": "Attach the quotation before this is approved.",
+      "requiredWhen": "The voucher is being returned"
+    },
+    {
+      "name": "Paid on",
+      "type": "generated",
+      "required": "no",
+      "validation": "When the money actually left, recorded separately from approval (BR-8).",
+      "example": "02-10-2026"
+    },
+    {
+      "name": "Status",
+      "type": "generated",
+      "required": "no",
+      "validation": "See the lifecycle below.",
+      "default": "Draft",
+      "example": "Posted"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Voucher",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One per movement, with its accounts, amount and approvals. Never deleted."
+    },
+    {
+      "entity": "Voucher line",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "The debit and credit sides. Entered once, not twice (BR-1)."
+    },
+    {
+      "entity": "Voucher approval",
+      "operations": [
+        "create"
+      ],
+      "notes": "One row per approval or return, with who and when. Append only."
+    },
+    {
+      "entity": "Payable",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "Created on approval, since the school now owes the money. Discharged when the payment is recorded (BR-7, BR-8)."
+    },
+    {
+      "entity": "General ledger voucher",
+      "operations": [
+        "create"
+      ],
+      "notes": "The posting, made only on final approval (BR-5)."
+    },
+    {
+      "entity": "Chart of accounts",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read for the accounts to debit and credit."
+    },
+    {
+      "entity": "Budget line",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Read for the remaining balance; consumed by the approved voucher (BR-9)."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Creation, every approval, the posting and the payment."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Accounts",
+      "actions": [
+        "view",
+        "create"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Creates vouchers and records payments against approved ones. Cannot approve above the lower threshold (BR-10)."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "approve"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Approves vouchers at or above the lower threshold. Cannot set the thresholds (BR-4)."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view",
+        "approve",
+        "edit"
+      ],
+      "rowScope": "All branches.",
+      "notes": "Sets both thresholds and approves vouchers at or above the higher one."
+    },
+    {
+      "actor": "Staff, Coordinator, Teacher, Parent / Guardian, Student",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "A voucher is entered once, not twice. Both sides of the movement are captured in a single entry."
+    },
+    {
+      "id": "BR-2",
+      "rule": "The accounts to debit and credit come from the chart of accounts. No feature in this document creates one, and this use case cannot work without it."
+    },
+    {
+      "id": "BR-3",
+      "rule": "The approval required is derived from the amount and the two thresholds. Below the lower threshold the voucher posts directly, so small purchases do not wait on an approver. At or above the lower threshold the School Admin approves it; at or above the higher threshold the Principal does."
+    },
+    {
+      "id": "BR-4",
+      "rule": "Both thresholds are set by the Principal, not the School Admin. A limit should not be settable by the person it constrains."
+    },
+    {
+      "id": "BR-5",
+      "rule": "The voucher reaches the ledger only on final approval. A draft or a voucher awaiting approval posts nothing."
+    },
+    {
+      "id": "BR-6",
+      "rule": "The debit and credit accounts must differ, and the two sides must total the same. A voucher that does not balance is not posted."
+    },
+    {
+      "id": "BR-7",
+      "rule": "Approval creates a payable, since the school now owes the money. The printed voucher is the authorisation to release it rather than a second record to key back in."
+    },
+    {
+      "id": "BR-8",
+      "rule": "The later payment discharges the payable and posts the cash movement. Approving a payment and making it are separate acts, so an approved but unpaid voucher stays visible as a liability."
+    },
+    {
+      "id": "BR-9",
+      "rule": "Where a budget line exists the remaining balance is checked at entry, and an excess is flagged and pushed to the next approval level up. It is never blocked outright, because blocking routine spending stalls the office."
+    },
+    {
+      "id": "BR-10",
+      "rule": "Accounts cannot approve a voucher above the lower threshold, including one they created. Creating and authorising are separate hands."
+    },
+    {
+      "id": "BR-11",
+      "rule": "A posted voucher is never edited or deleted. A correction is a further voucher, so the ledger reads as a history."
+    },
+    {
+      "id": "BR-12",
+      "rule": "A voucher carries its supporting document where one exists. A payment with no bill behind it is the thing an auditor asks about."
+    },
+    {
+      "id": "BR-13",
+      "rule": "The voucher date is when the movement occurred, and must fall in an open period. A movement cannot be posted into a closed one."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Voucher",
+      "states": [
+        "Draft",
+        "Awaiting School Admin",
+        "Awaiting Principal",
+        "Approved",
+        "Posted",
+        "Paid",
+        "Returned",
+        "Cancelled"
+      ],
+      "initial": "Draft",
+      "terminal": [
+        "Paid",
+        "Cancelled"
+      ],
+      "transitions": [
+        {
+          "from": "Draft",
+          "to": "Posted",
+          "triggeredBy": "Accounts",
+          "condition": "The amount is below the lower threshold, so it posts directly (BR-3)."
+        },
+        {
+          "from": "Draft",
+          "to": "Awaiting School Admin",
+          "triggeredBy": "Accounts",
+          "condition": "The amount is at or above the lower threshold."
+        },
+        {
+          "from": "Draft",
+          "to": "Awaiting Principal",
+          "triggeredBy": "Accounts",
+          "condition": "The amount is at or above the higher threshold, or a budget line is exceeded (BR-9)."
+        },
+        {
+          "from": "Awaiting School Admin",
+          "to": "Approved",
+          "triggeredBy": "School Admin",
+          "condition": "Approved."
+        },
+        {
+          "from": "Awaiting School Admin",
+          "to": "Awaiting Principal",
+          "triggeredBy": "System",
+          "condition": "A budget excess pushes it to the next level up (BR-9)."
+        },
+        {
+          "from": "Awaiting Principal",
+          "to": "Approved",
+          "triggeredBy": "Principal / Director",
+          "condition": "Approved."
+        },
+        {
+          "from": "Awaiting School Admin",
+          "to": "Returned",
+          "triggeredBy": "School Admin",
+          "condition": "Returned with a reason."
+        },
+        {
+          "from": "Awaiting Principal",
+          "to": "Returned",
+          "triggeredBy": "Principal / Director",
+          "condition": "Returned with a reason."
+        },
+        {
+          "from": "Returned",
+          "to": "Draft",
+          "triggeredBy": "Accounts",
+          "condition": "Corrected and resubmitted."
+        },
+        {
+          "from": "Approved",
+          "to": "Posted",
+          "triggeredBy": "System",
+          "condition": "The entry posts and a payable is created (BR-5, BR-7)."
+        },
+        {
+          "from": "Posted",
+          "to": "Paid",
+          "triggeredBy": "Accounts",
+          "condition": "The payment is recorded, discharging the payable (BR-8)."
+        },
+        {
+          "from": "Draft",
+          "to": "Cancelled",
+          "triggeredBy": "Accounts",
+          "condition": "Abandoned before posting."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Accounts",
+      "navigation": "Login → Finance → Vouchers → Create voucher",
+      "userAction": "Selects the voucher type and enters the amount, the accounts to debit and credit, the date and a description.",
+      "function": "createVoucher(type, amount, debitAccount, creditAccount, date, description)",
+      "systemResponse": "Captures both sides in a single entry and checks the two accounts differ.",
+      "rules": [
+        "BR-1",
+        "BR-2",
+        "BR-6",
+        "BR-13"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "System",
+      "navigation": "Create voucher → Budget line",
+      "userAction": "—",
+      "function": "checkBudgetRemaining(budgetLineId, amount)",
+      "systemResponse": "Checks the remaining balance on the budget line where one applies, and shows what is left before submission.",
+      "rules": [
+        "BR-9"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "Accounts",
+      "navigation": "Create voucher → Submit",
+      "userAction": "Submits the voucher.",
+      "function": "submitVoucher(voucherId)",
+      "systemResponse": "Derives the approval required from the amount and the thresholds, and routes it accordingly. Below the lower threshold it posts directly.",
+      "rules": [
+        "BR-3",
+        "BR-10"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "School Admin",
+      "navigation": "Login → Finance → Vouchers → Approve",
+      "userAction": "Approves the voucher at or above the lower threshold.",
+      "function": "approveVoucher(voucherId)",
+      "systemResponse": "Records the approval, or routes it up to the Principal where the amount or a budget excess requires it.",
+      "rules": [
+        "BR-3",
+        "BR-9"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "Principal / Director",
+      "navigation": "Login → Finance → Vouchers → Approve",
+      "userAction": "Approves the voucher at or above the higher threshold.",
+      "function": "approveVoucher(voucherId)",
+      "systemResponse": "Records the final approval.",
+      "rules": [
+        "BR-3",
+        "BR-4"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "postVoucher(voucherId)",
+      "systemResponse": "Posts the entry to the ledger and creates the payable, since the school now owes the money.",
+      "rules": [
+        "BR-5",
+        "BR-7"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "Accounts",
+      "navigation": "Vouchers → Print",
+      "userAction": "Prints the voucher as the authorisation to release the money.",
+      "function": "printVoucher(voucherId)",
+      "systemResponse": "Produces the authorisation rather than a second record to key back in.",
+      "rules": [
+        "BR-7"
+      ]
+    },
+    {
+      "step": 8,
+      "actor": "Accounts",
+      "navigation": "Finance → Payables → Record payment",
+      "userAction": "Records the payment once the money has actually left.",
+      "function": "recordVoucherPayment(voucherId, paidOn)",
+      "systemResponse": "Discharges the payable and posts the cash movement, on the date the money left.",
+      "rules": [
+        "BR-8"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 3,
+      "condition": "The amount is below the lower threshold",
+      "actor": "Accounts",
+      "navigation": "Create voucher → Submit → Posted",
+      "behaviour": "The voucher posts directly with no approver, so a small purchase does not wait on somebody's inbox (BR-3).",
+      "function": "submitVoucher(voucherId)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 2,
+      "condition": "The voucher would exceed its budget line",
+      "actor": "System",
+      "navigation": "Create voucher → Budget line → Awaiting Principal",
+      "behaviour": "The excess is flagged and the voucher is pushed to the next approval level up. It is never blocked outright, because blocking routine spending stalls the office (BR-9).",
+      "function": "escalateForBudgetExcess(voucherId)",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 4,
+      "condition": "The approver does not accept the voucher",
+      "actor": "School Admin or Principal / Director",
+      "navigation": "Vouchers → Return with a reason",
+      "behaviour": "It returns to Accounts with a written reason. Nothing has posted and the money has not moved.",
+      "function": "returnVoucher(voucherId, reason)",
+      "resumesAtStep": 1
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 8,
+      "condition": "The voucher is approved but not yet paid",
+      "actor": "Accounts",
+      "navigation": "Login → Finance → Payables",
+      "behaviour": "It stays visible as a liability with its age, so the school's commitments are not hidden until they are paid (BR-8).",
+      "function": "openPayables(filters)",
+      "resumesAtStep": 8
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 1,
+      "condition": "The voucher is a refund of an unused credit",
+      "actor": "Accounts",
+      "navigation": "Login → Fee → Refunds → Approve → Finance → Vouchers",
+      "behaviour": "The refund raises a payment voucher through this route. No separate mechanism exists for money leaving the school.",
+      "function": "createVoucher('Payment voucher', amount, debitAccount, creditAccount, date, description)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 6,
+      "condition": "A posted voucher is found to be wrong",
+      "actor": "Accounts",
+      "navigation": "Finance → Vouchers → Create voucher",
+      "behaviour": "A further voucher corrects it. The posted one is never edited or deleted, so the ledger reads as a history (BR-11).",
+      "function": "createVoucher(type, amount, debitAccount, creditAccount, date, description)",
+      "resumesAtStep": 2
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 1,
+      "condition": "The debit and credit accounts are the same",
+      "systemResponse": "The voucher is not saved (BR-6).",
+      "messageShown": "The debit and credit accounts must differ.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E2",
+      "atStep": 1,
+      "condition": "The two sides do not total the same",
+      "systemResponse": "The voucher is not saved (BR-6).",
+      "messageShown": "The debits and credits must balance.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E3",
+      "atStep": 1,
+      "condition": "The voucher date falls in a closed period",
+      "systemResponse": "The voucher is not saved (BR-13).",
+      "messageShown": "That period is closed. Date the voucher in an open period.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 1,
+      "condition": "No chart of accounts exists",
+      "systemResponse": "No voucher can be created (BR-2).",
+      "messageShown": "No chart of accounts has been set up. Vouchers cannot be entered until it exists.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 4,
+      "condition": "Accounts attempt to approve a voucher above the lower threshold",
+      "systemResponse": "The approval is refused (BR-10).",
+      "messageShown": "This voucher needs School Admin approval.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 5,
+      "condition": "A School Admin attempts to approve above the higher threshold",
+      "systemResponse": "The approval is refused (BR-3).",
+      "messageShown": "This voucher needs the Principal's approval.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 4,
+      "condition": "A School Admin attempts to change a threshold",
+      "systemResponse": "The change is refused (BR-4).",
+      "messageShown": "Only the Principal can set the approval thresholds.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E8",
+      "atStep": 4,
+      "condition": "A voucher is returned with no reason",
+      "systemResponse": "The return is not recorded.",
+      "messageShown": "Give a reason so Accounts know what to correct.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E9",
+      "atStep": 6,
+      "condition": "The ledger posting fails",
+      "systemResponse": "The voucher stays Approved and unposted. No payable is created and nothing is half-done.",
+      "messageShown": "The voucher could not be posted. Nothing has changed.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E10",
+      "atStep": 8,
+      "condition": "A payment is recorded against an unapproved voucher",
+      "systemResponse": "It is refused. Money is not released against something nobody authorised (BR-8).",
+      "messageShown": "This voucher has not been approved.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Voucher awaiting approval",
+      "recipient": "School Admin or Principal / Director",
+      "channels": [
+        "inApp"
+      ],
+      "template": "VOUCHER_AWAITING_APPROVAL",
+      "contents": [
+        "Voucher number",
+        "Type",
+        "Amount",
+        "Description",
+        "Budget line and remaining",
+        "Created by"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Voucher exceeds its budget line",
+      "recipient": "Principal / Director",
+      "channels": [
+        "inApp"
+      ],
+      "template": "VOUCHER_BUDGET_EXCESS",
+      "contents": [
+        "Voucher number",
+        "Amount",
+        "Budget line",
+        "Remaining before",
+        "Excess"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Voucher returned",
+      "recipient": "Accounts",
+      "channels": [
+        "inApp"
+      ],
+      "template": "VOUCHER_RETURNED",
+      "contents": [
+        "Voucher number",
+        "Returned by",
+        "The reason given"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Payables ageing",
+      "recipient": "Accounts and School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "PAYABLES_AGEING",
+      "contents": [
+        "Count outstanding",
+        "Total value",
+        "Oldest approved date"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "The posting appears in the general ledger and the trial balance.",
+      "affects": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    },
+    {
+      "effect": "An approved voucher consumes its budget line before the money leaves.",
+      "affects": {
+        "id": "UC-04-20",
+        "name": "Budgeting",
+        "link": "UC-04-20.json"
+      }
+    },
+    {
+      "effect": "The payment appears in bank reconciliation when it clears.",
+      "affects": {
+        "id": "UC-04-16",
+        "name": "Payment reconciliation",
+        "link": "UC-04-16.json"
+      }
+    },
+    {
+      "effect": "A refund's payment out is raised through this route.",
+      "affects": {
+        "id": "UC-04-11",
+        "name": "Refunding an unused credit on withdrawal",
+        "link": "UC-04-11.json"
+      }
+    },
+    {
+      "effect": "A tax deposit is recorded through this route.",
+      "affects": {
+        "id": "UC-04-17",
+        "name": "Withholding tax on fees",
+        "link": "UC-04-17.json"
+      }
+    },
+    {
+      "effect": "Outstanding payables affect the school's reported cash position.",
+      "affects": {
+        "id": "UC-01-07",
+        "name": "Role-based dashboards, main and module level",
+        "link": "UC-01-07.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Voucher register",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Voucher",
+        "Date",
+        "Type",
+        "Description",
+        "Debit account",
+        "Credit account",
+        "Amount",
+        "Approved by",
+        "Status"
+      ],
+      "grouping": "By type",
+      "totals": "Vouchers and value in the period, by type and by approver"
+    },
+    {
+      "name": "Payment voucher",
+      "formats": [
+        "print",
+        "pdf"
+      ],
+      "columns": [
+        "Voucher number",
+        "Date",
+        "Payee",
+        "Description",
+        "Debit account",
+        "Credit account",
+        "Amount",
+        "Approved by"
+      ],
+      "grouping": "None",
+      "totals": "Amount authorised"
+    },
+    {
+      "name": "Payables outstanding",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Voucher",
+        "Payee",
+        "Amount",
+        "Approved on",
+        "Days outstanding"
+      ],
+      "grouping": "By age",
+      "totals": "Total owed and the oldest outstanding"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "Thresholds of PKR 10,000 and PKR 100,000, and a voucher of PKR 5,000",
+      "when": "it is submitted",
+      "then": "it posts directly with no approver, so a small purchase does not wait"
+    },
+    {
+      "id": "AC-2",
+      "given": "The same thresholds and a voucher of PKR 24,000",
+      "when": "it is submitted",
+      "then": "it waits for School Admin approval and posts nothing until then"
+    },
+    {
+      "id": "AC-3",
+      "given": "The same thresholds and a voucher of PKR 150,000",
+      "when": "it is submitted",
+      "then": "it requires the Principal, and School Admin approval alone does not post it"
+    },
+    {
+      "id": "AC-4",
+      "given": "A voucher of PKR 24,000 against a budget line with PKR 18,000 remaining",
+      "when": "it is submitted",
+      "then": "the excess is flagged and it is pushed to the Principal rather than blocked"
+    },
+    {
+      "id": "AC-5",
+      "given": "A School Admin",
+      "when": "they attempt to change a threshold",
+      "then": "the change is refused, because a limit is not settable by the person it constrains"
+    },
+    {
+      "id": "AC-6",
+      "given": "An approved voucher",
+      "when": "the ledger is inspected",
+      "then": "the entry has posted and a payable exists, since the school now owes the money"
+    },
+    {
+      "id": "AC-7",
+      "given": "An approved voucher not yet paid",
+      "when": "the payables list is opened",
+      "then": "it appears as an outstanding liability with its age"
+    },
+    {
+      "id": "AC-8",
+      "given": "An approved voucher paid a week later",
+      "when": "the payment is recorded",
+      "then": "the payable is discharged and the cash movement posts on the date the money left"
+    },
+    {
+      "id": "AC-9",
+      "given": "A posted voucher found to be wrong",
+      "when": "a user attempts to edit it",
+      "then": "there is no such control, and a further voucher is the only correction"
+    },
+    {
+      "id": "AC-10",
+      "given": "A payment recorded against a voucher nobody approved",
+      "when": "it is attempted",
+      "then": "it is refused"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json",
+        "why": "Receives every posting and supplies the chart of accounts."
+      },
+      {
+        "id": "UC-04-20",
+        "name": "Budgeting",
+        "link": "UC-04-20.json",
+        "why": "Supplies the budget line whose remaining balance is checked.",
+        "optional": true
+      },
+      {
+        "id": "UC-04-11",
+        "name": "Refunding an unused credit on withdrawal",
+        "link": "UC-04-11.json",
+        "why": "Raises a payment voucher through this route.",
+        "optional": true
+      },
+      {
+        "id": "UC-04-17",
+        "name": "Withholding tax on fees",
+        "link": "UC-04-17.json",
+        "why": "Records the tax deposit through this route.",
+        "optional": true
+      },
+      {
+        "id": "UC-04-16",
+        "name": "Payment reconciliation",
+        "link": "UC-04-16.json",
+        "why": "Matches the payment when it clears."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Keeps creation, approval and payment in separate hands."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      }
+    ],
+    "masterData": [
+      "Chart of accounts, which no feature currently creates",
+      "Approval thresholds set by the Principal",
+      "Voucher numbering pattern",
+      "Approved budget lines"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Reading the ledger the vouchers post to",
+      "handledBy": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    },
+    {
+      "item": "Preparing and approving the budget",
+      "handledBy": {
+        "id": "UC-04-20",
+        "name": "Budgeting",
+        "link": "UC-04-20.json"
+      }
+    },
+    {
+      "item": "Recording a fee payment, which has its own route",
+      "handledBy": {
+        "id": "UC-04-05",
+        "name": "Recording a payment and issuing the receipt",
+        "link": "UC-04-05.json"
+      }
+    },
+    {
+      "item": "Approving the refund a payment voucher pays out",
+      "handledBy": {
+        "id": "UC-04-11",
+        "name": "Refunding an unused credit on withdrawal",
+        "link": "UC-04-11.json"
+      }
+    },
+    {
+      "item": "Matching the payment against the bank",
+      "handledBy": {
+        "id": "UC-04-16",
+        "name": "Payment reconciliation",
+        "link": "UC-04-16.json"
+      }
+    },
+    {
+      "item": "Salary payments, which come from payroll",
+      "handledBy": {
+        "id": "UC-12-04",
+        "name": "Payroll processing",
+        "link": "UC-12-04.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Separation of approval and payment",
+        "requirement": "Approving a voucher and recording its payment are distinct acts, and an approved unpaid voucher is visible as a liability throughout."
+      },
+      {
+        "aspect": "Threshold integrity",
+        "requirement": "The approval required is derived from the amount and cannot be chosen, lowered or bypassed by the person submitting."
+      },
+      {
+        "aspect": "Immutability",
+        "requirement": "A posted voucher is never edited or deleted. Corrections are further vouchers."
+      },
+      {
+        "aspect": "Budget warning not block",
+        "requirement": "A budget excess escalates the approval but never prevents the voucher, because routine spending must not stall."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Vouchers, approvals and supporting documents are retained 7 years as financial records."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "What are the two approval thresholds?",
+      "assumption": "Not specified. The Principal sets them, but no starting values are given.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    },
+    {
+      "question": "Who creates and maintains the chart of accounts? No feature in the document does.",
+      "assumption": "Not specified. Nothing financial can be built without it.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should a voucher below the lower threshold still require a supporting document?",
+      "assumption": "Not specified, and a small cash payment with no bill is where leakage starts.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Who may record the payment against an approved voucher — the same person who created it?",
+      "assumption": "Not specified, and it is the last point at which separation of duty matters.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    },
+    {
+      "question": "How long may an approved voucher stay unpaid before it is escalated or cancelled?",
+      "assumption": "Not specified.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "money",
+      "area": "Money",
+      "rule": "All monetary values are stored as fixed-point decimals in the smallest currency unit, never as floating point. Displayed as PKR with a thousands separator and two decimal places. Rounding is half-up at the line."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "attachments",
+      "area": "Attachments",
+      "rule": "Uploaded files are limited to 10 MB and to PDF, JPG, PNG, DOCX and XLSX unless a use case states otherwise. File type is validated by content, not by extension."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

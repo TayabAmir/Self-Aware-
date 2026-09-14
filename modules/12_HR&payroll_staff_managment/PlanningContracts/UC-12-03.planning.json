@@ -1,0 +1,1734 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-12-03",
+    "name": "Calculate each employee's monthly pay from their attendance and leave allowance, and get the run approved",
+    "module": "HR and payroll",
+    "file": "../UseCases/UC-12-03.json",
+    "featureRef": "12.3 Attendance-based payroll calculation"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-12-03-PC-1",
+      "intent": {
+        "name": "payroll.run.start",
+        "summary": "Open a payroll run for a month. One step, and it calculates nothing and shows no figures.",
+        "routesHere": [
+          "start the payroll run for September",
+          {
+            "text": "September ka payroll run shuru karo",
+            "lang": "ur-Latn",
+            "gloss": "start September's payroll run"
+          },
+          {
+            "text": "is mahine ki tankhwah ka run khol do",
+            "lang": "ur-Latn",
+            "gloss": "open this month's salary run"
+          },
+          {
+            "text": "payroll shuru kar do",
+            "lang": "ur-Latn",
+            "gloss": "start the payroll"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tankhwahen banao",
+              "lang": "ur-Latn",
+              "gloss": "generate the salaries"
+            },
+            "goesTo": "payroll.run.generate — UC-12-03-PC-2",
+            "note": "Starting the run opens it. Generating reads attendance and calculates (BR-1)."
+          },
+          {
+            "request": {
+              "text": "figures dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show me the figures"
+            },
+            "goesTo": "Not offered to every role.",
+            "note": "The generated salaries are visible only to the Principal and Accounts. The School Admin starts the run but does not see the figures (BR-9, E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "payroll.run.start",
+            "inputs": {
+              "payroll_month": "$request.payroll_month",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It opens the run for the month and nothing else — no attendance is read and no figure exists yet."
+          }
+        ],
+        "onFailure": "Stop and report. A future month is refused by the API.",
+        "atomicity": "One write: the run and the audit entry together or not at all. Nobody is paid and no figure is calculated. The School Admin who starts it does not see the figures when they arrive (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "payroll.run.start",
+          "method": "POST",
+          "path": "/api/v1/payroll/runs",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "payroll_month + branch_id, since a month carries one run",
+          "purpose": "Open a payroll run for a month.",
+          "parameters": [
+            {
+              "name": "payroll_month",
+              "source": "request",
+              "sourceRef": "$request.payroll_month",
+              "required": true,
+              "type": "monthYear",
+              "notes": "The month being run. Not a future month (E4). Never derived from today's date — running August in September and September in September are different acts."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The run as opened.",
+            "fields": [
+              {
+                "name": "run_id",
+                "type": "string",
+                "description": "The run."
+              },
+              {
+                "name": "payroll_month",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Generated once a scope is set and the figures are calculated."
+              },
+              {
+                "name": "figures_visible",
+                "type": "boolean",
+                "description": "False to the School Admin who started it (BR-9)."
+              },
+              {
+                "name": "existing_run",
+                "type": "string",
+                "description": "An existing run for that month, where one is already open or approved (E5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "FUTURE_MONTH",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "The payroll month is in the future.",
+              "written": "Nothing.",
+              "notWritten": "No run started.",
+              "note": "Attendance for it does not exist yet."
+            },
+            {
+              "code": "RUN_ALREADY_APPROVED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The run has already been approved for that month and scope.",
+              "written": "Nothing.",
+              "notWritten": "No second run.",
+              "note": "No second approval is recorded (E5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never infer the month from today's date. Payroll is usually run for the month just ended, and a planner that assumed the current one has run the wrong month's attendance.",
+          "derivedFrom": [
+            "BR-1",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never repeat a figure back to an actor who cannot see it. Generated salaries are visible only to the Principal and Accounts (BR-9, E9), and the School Admin who starts the run is not one of them.",
+          "derivedFrom": [
+            "BR-9",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe starting a run as generating or paying anything. Nothing is calculated until the scope is set, and a salary generated is not a salary paid (BR-11).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A run is never deleted (BR-13). One opened in error is left unapproved and unreleased, and its record stays."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "September ka payroll run shuru karo",
+            "lang": "ur-Latn",
+            "gloss": "start September's payroll run"
+          },
+          "context": "School Admin, Johar Town branch, in October.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.start",
+              "inputs": {
+                "payroll_month": "2026-09",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "September, because that is the month named — not October (PR-1)."
+            }
+          ],
+          "outcome": "The run is open. Report that no figure has been calculated yet, and that the School Admin does not see the figures when they arrive (PR-2)."
+        },
+        {
+          "request": {
+            "text": "payroll shuru kar do",
+            "lang": "ur-Latn",
+            "gloss": "start the payroll"
+          },
+          "context": "School Admin, Johar Town branch, with no month named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.start",
+              "inputs": {
+                "payroll_month": "$request.payroll_month — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The month is not taken from today's date (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is started. Ask which month — the month just ended and the current month are both plausible, and running the wrong one reads the wrong attendance for everybody."
+        },
+        {
+          "request": {
+            "text": "agle mahine ka payroll abhi shuru kar do",
+            "lang": "ur-Latn",
+            "gloss": "start next month's payroll now"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.start",
+              "inputs": {
+                "payroll_month": "the month named",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns FUTURE_MONTH (E4)."
+            }
+          ],
+          "outcome": "Nothing is started. Report that the month's attendance does not exist yet — pay is calculated from recorded attendance, so a run for a month nobody has worked has nothing to calculate from."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-03-PC-2",
+      "intent": {
+        "name": "payroll.run.generate",
+        "summary": "Generate the month's salaries from attendance, for every working employee or for one. One step, and nothing is typed.",
+        "routesHere": [
+          "generate the salaries for everybody for September",
+          {
+            "text": "sab mulazimeen ki tankhwahen bana do",
+            "lang": "ur-Latn",
+            "gloss": "generate everybody's salaries"
+          },
+          {
+            "text": "sirf ek mulazim ki tankhwah dobara banao",
+            "lang": "ur-Latn",
+            "gloss": "regenerate the salary for one employee only"
+          },
+          {
+            "text": "hazri se tankhwah nikal do",
+            "lang": "ur-Latn",
+            "gloss": "calculate the pay from attendance"
+          },
+          "generate for this employee only — his attendance was corrected"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tankhwah ka figure khud daal do",
+              "lang": "ur-Latn",
+              "gloss": "type the salary figure in"
+            },
+            "goesTo": "Not offered.",
+            "note": "Pay is calculated from recorded attendance. Nobody types a salary figure into a run, because a typed figure is a figure nobody can trace to a day worked (BR-1)."
+          },
+          {
+            "request": {
+              "text": "kisi ki kaat maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "waive somebody's deduction"
+            },
+            "goesTo": "payroll.override.apply — UC-12-03-PC-3",
+            "note": "Only the Principal overrides a figure, and every override is recorded against their name with a reason (BR-10)."
+          },
+          {
+            "request": {
+              "text": "tankhwah ada kar do",
+              "lang": "ur-Latn",
+              "gloss": "pay the salaries"
+            },
+            "goesTo": "payroll.run.release — UC-12-03-PC-6",
+            "note": "Payment is released only after the run is approved (BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "payroll.run.generate",
+            "inputs": {
+              "run_id": "$request.run_phrase",
+              "scope": "$request.scope",
+              "staff_id": "$request.staff_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step across the scope. Attendance is read with the off-day calendar applied (BR-3), leave within the allowance is paid and every day beyond it deducted (BR-4), a day absent with no leave request is unpaid (BR-5), and any advance instalment due is recovered (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. Employees with no salary in force and no leave allowance are excluded and listed rather than paid on a guess; incomplete attendance does not stop the run and the unmarked days are listed.",
+        "atomicity": "One write: a generated salary per employee in scope, each with every line of the calculation, together or not at all. Nothing is paid — a salary generated is not a salary paid (BR-11). The figures are visible only to the Principal and Accounts (BR-9). The calculation works from the salary in force for the month being run, not the latest figure: a rise effective in August does not change what July was paid (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "payroll.run.generate",
+          "method": "POST",
+          "path": "/api/v1/payroll/runs/{run_id}/generate",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "run_id + scope + staff_id, since regenerating replaces rather than stacks",
+          "purpose": "Calculate and store the month's salaries for the scope.",
+          "parameters": [
+            {
+              "name": "run_id",
+              "source": "resolved",
+              "sourceRef": "$request.run_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "payroll_run",
+                "fromPhrase": "$request.run_phrase",
+                "onNoMatch": "Refuse. No payroll run matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the runs with their month, scope and status."
+              },
+              "notes": "The payroll run, resolved from its month and scope."
+            },
+            {
+              "name": "scope",
+              "source": "request",
+              "sourceRef": "$request.scope",
+              "required": true,
+              "type": "enum: Every working employee | One employee",
+              "notes": "Whether the run covers everybody or one individual (BR-2). A correction for one person does not require the whole month to be run again — and running everybody when one was meant regenerates every figure in the month."
+            },
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation."
+              },
+              "notes": "Required where the scope is one employee."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The run and what it produced.",
+            "fields": [
+              {
+                "name": "run_id",
+                "type": "string",
+                "description": "The run."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Generated."
+              },
+              {
+                "name": "employees_generated",
+                "type": "integer",
+                "description": "Salaries produced."
+              },
+              {
+                "name": "employees_excluded",
+                "type": "object[]",
+                "description": "Employees with no salary in force for that month, or no leave allowance on their record. Listed rather than paid on a guess (E1, E2)."
+              },
+              {
+                "name": "unmarked_attendance",
+                "type": "object[]",
+                "description": "Days with no attendance mark, listed rather than counted as present or absent (E3)."
+              },
+              {
+                "name": "advances_recovered",
+                "type": "object[]",
+                "description": "Instalments taken against outstanding advances, and the balance each now stands at (BR-8)."
+              },
+              {
+                "name": "part_month_employees",
+                "type": "object[]",
+                "description": "Employees who joined or left part-way through, paid for the days worked only (BR-6)."
+              },
+              {
+                "name": "figures_visible_to",
+                "type": "string[]",
+                "description": "The Principal and Accounts only (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_SALARY_IN_FORCE",
+              "mapsTo": "E1",
+              "httpStatus": 200,
+              "meaning": "An employee has no salary in force for that month.",
+              "written": "Everybody else is generated.",
+              "notWritten": "No figure for them.",
+              "treatedAsSuccess": true,
+              "note": "Excluded and listed rather than paid on a guess (BR-7)."
+            },
+            {
+              "code": "NO_LEAVE_ALLOWANCE",
+              "mapsTo": "E2",
+              "httpStatus": 200,
+              "meaning": "An employee's record carries no leave allowance.",
+              "written": "Everybody else is generated.",
+              "notWritten": "No figure for them.",
+              "treatedAsSuccess": true,
+              "note": "Paid and unpaid leave cannot be told apart (BR-4). Excluded and listed."
+            },
+            {
+              "code": "ATTENDANCE_INCOMPLETE",
+              "mapsTo": "E3",
+              "httpStatus": 200,
+              "meaning": "Attendance for the month is incomplete.",
+              "written": "The run proceeds.",
+              "notWritten": "Nothing assumed about the unmarked days.",
+              "treatedAsSuccess": true,
+              "note": "The unmarked days are listed rather than counted as present or absent."
+            },
+            {
+              "code": "SCOPE_NEEDS_EMPLOYEE",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The scope is one employee and none was named.",
+              "written": "Nothing.",
+              "notWritten": "Nothing generated."
+            },
+            {
+              "code": "SCHOOL_ADMIN_CANNOT_SEE",
+              "mapsTo": "E9",
+              "httpStatus": 403,
+              "meaning": "The School Admin opened a generated salary.",
+              "written": "Nothing.",
+              "notWritten": "No figures returned.",
+              "note": "Per the visibility rule (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply or adjust a figure. Pay is calculated from recorded attendance (BR-1), and a number in a plan is a payment nobody can trace to a day worked.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never widen the scope to everybody. A correction for one person does not require the whole month to be run again (BR-2), and regenerating everybody replaces every figure Accounts may already have reviewed.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the excluded employees by name. They are not paid at all this month (E1, E2) — an exclusion buried in a total is somebody who discovers it on payday.",
+          "derivedFrom": [
+            "BR-7",
+            "E1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the unmarked attendance days. They are counted as neither present nor absent (E3), and each one is a day somebody may be paid or docked for once it is marked.",
+          "derivedFrom": [
+            "BR-3",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the advance recoveries and the balances they leave. The instalment is taken automatically (BR-8), and it is money out of a salary the employee is expecting.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never repeat a figure to an actor who cannot see it. The generated salaries are visible only to the Principal and Accounts (BR-9, E9).",
+          "derivedFrom": [
+            "BR-9",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never describe generated pay as paid. Payment is released only after the run is approved (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A generated salary is never deleted. A wrong figure is corrected before approval, or adjusted afterwards, and both stay on the record (BR-13)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "September ke liye sab mulazimeen ki tankhwahen bana do",
+            "lang": "ur-Latn",
+            "gloss": "generate every employee's salary for September"
+          },
+          "context": "Accounts, Johar Town branch, on an open run.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.generate",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "scope": "Every working employee",
+                "staff_id": "omitted",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Generated. Report the excluded employees by name (PR-3), the unmarked attendance days (PR-4), and the advance instalments recovered with the balances left (PR-5). Nothing is paid yet (PR-7)."
+        },
+        {
+          "request": {
+            "text": "is mulazim ki hazri theek ho gayi hai, us ki tankhwah dobara bana do",
+            "lang": "ur-Latn",
+            "gloss": "this employee's attendance has been corrected, regenerate their salary"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.generate",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "scope": "One employee",
+                "staff_id": "$request.staff_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One employee, not the whole month (PR-2)."
+            }
+          ],
+          "outcome": "That employee's salary is regenerated. Report the lines that changed — running everybody would have replaced every figure Accounts had already reviewed."
+        },
+        {
+          "request": {
+            "text": "is ustad ki teen din ki kaat na lagao, tankhwah poori kar do",
+            "lang": "ur-Latn",
+            "gloss": "do not deduct this teacher's three days, pay the full salary"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.generate",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "scope": "One employee",
+                "staff_id": "$request.staff_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The calculation runs as it stands. No figure is adjusted (PR-1)."
+            }
+          ],
+          "outcome": "The salary generates with the three days deducted. Report that a deduction is waived only by a Principal's override, recorded against their name with a reason — and that if the three days were wrongly marked, correcting the attendance and regenerating is the honest route, since then the figure still traces to the days worked."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-03-PC-3",
+      "intent": {
+        "name": "payroll.override.apply",
+        "summary": "Override a figure in a generated run, with the reason. Principal or Director only, one step.",
+        "routesHere": [
+          "override this deduction — the absence was authorised verbally",
+          {
+            "text": "is kaat ko wajah ke sath maaf kar do",
+            "lang": "ur-Latn",
+            "gloss": "waive this deduction with a reason"
+          },
+          {
+            "text": "Principal ki taraf se figure badal do",
+            "lang": "ur-Latn",
+            "gloss": "override the figure as the Principal"
+          },
+          {
+            "text": "is mulazim ki tankhwah mein tabdeeli karni hai, wajah likh dein",
+            "lang": "ur-Latn",
+            "gloss": "this employee's pay needs changing, with the reason recorded"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "hazri theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct the attendance"
+            },
+            "goesTo": "payroll.run.return — UC-12-03-PC-4, then correct and regenerate",
+            "note": "Where the attendance is wrong, correcting it and regenerating keeps the figure traceable to days worked (BR-1). An override changes the figure without changing what it was calculated from."
+          },
+          {
+            "request": {
+              "text": "sab ki kaat maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "waive everybody's deductions"
+            },
+            "goesTo": "Not offered as one act.",
+            "note": "An override is one figure for one employee, recorded against the Principal's name with its own reason (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "payroll.override.apply",
+            "inputs": {
+              "run_id": "$request.run_phrase",
+              "staff_id": "$request.staff_phrase",
+              "field": "$request.field",
+              "value": "$request.value",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every override is recorded against the Principal's name with a reason — an override nobody can trace is a payment nobody can defend (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. An override with no reason is refused by the API.",
+        "atomicity": "One write: the override, the previous figure and the reason together or not at all (BR-10). The generated salary changes; what it was calculated from does not. The row is append-only, so the original figure stays visible beside the overridden one."
+      },
+      "operations": [
+        {
+          "name": "payroll.override.apply",
+          "method": "POST",
+          "path": "/api/v1/payroll/runs/{run_id}/overrides",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "run_id + staff_id + field, since a field carries one override per run",
+          "purpose": "Override one figure on one employee's generated salary, with the reason.",
+          "parameters": [
+            {
+              "name": "run_id",
+              "source": "resolved",
+              "sourceRef": "$request.run_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "payroll_run",
+                "fromPhrase": "$request.run_phrase",
+                "onNoMatch": "Refuse. No payroll run matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the runs with their month, scope and status."
+              },
+              "notes": "The payroll run, resolved from its month and scope."
+            },
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation."
+              },
+              "notes": "The employee whose figure is being overridden."
+            },
+            {
+              "name": "field",
+              "source": "request",
+              "sourceRef": "$request.field",
+              "required": true,
+              "type": "string",
+              "notes": "field name, one of: payable days, paid leave taken, unpaid days, gross pay, deductions, statutory contributions, advance recovery, net pay."
+            },
+            {
+              "name": "value",
+              "source": "request",
+              "sourceRef": "$request.value",
+              "required": true,
+              "type": "money",
+              "notes": "The figure the Principal is putting in place of the calculated one. Theirs alone — a number a planner produced is a payment nobody decided."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters. Required (BR-10, E6). Why the calculated figure is being set aside. It is read whenever anybody asks why this employee was paid differently."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The override.",
+            "fields": [
+              {
+                "name": "run_id",
+                "type": "string",
+                "description": "The run."
+              },
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The employee."
+              },
+              {
+                "name": "field",
+                "type": "string",
+                "description": "What was overridden."
+              },
+              {
+                "name": "previous_value",
+                "type": "money",
+                "description": "The calculated figure, kept (BR-10)."
+              },
+              {
+                "name": "value",
+                "type": "money",
+                "description": "What it is now."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "overridden_by",
+                "type": "string",
+                "description": "The Principal or Director."
+              },
+              {
+                "name": "net_pay",
+                "type": "money",
+                "description": "What the employee will now be paid."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "An override was made with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not applied.",
+              "note": "An override nobody can trace is a payment nobody can defend (BR-10)."
+            },
+            {
+              "code": "NOT_PRINCIPAL",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The actor is not the Principal or Director.",
+              "written": "Nothing.",
+              "notWritten": "Not applied.",
+              "note": "The override is theirs (BR-10)."
+            },
+            {
+              "code": "RUN_RELEASED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The run has been released.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "The run stands and an adjustment is required rather than the released figure being changed (E10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the figure. It is money into or out of somebody's pay, decided by the Principal (BR-10) — and unlike every other number in this run, it does not come from attendance.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the reason. It is what defends the payment when anybody asks why this employee was paid differently from the calculation (BR-10).",
+          "derivedFrom": [
+            "BR-10",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Prefer correcting the attendance where the attendance is wrong. Regenerating keeps the figure traceable to days worked (BR-1); an override leaves a right number sitting on a wrong calculation.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never override across several employees in one plan. Each is one figure, one employee, one reason, recorded against the Principal's name (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never override a released run. The run stands and an adjustment is required instead (E10) — the money has gone.",
+          "derivedFrom": [
+            "BR-11",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An override is not undone. A further change is another override row, each with its previous figure and reason (BR-10, BR-13)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is ustad ke do din ki kaat maaf kar do — ghair haaziri zubani manzoor thi",
+            "lang": "ur-Latn",
+            "gloss": "waive this teacher's two-day deduction — the absence was authorised verbally"
+          },
+          "context": "Principal, Johar Town branch, on a generated run.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.override.apply",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "staff_id": "$request.staff_phrase",
+                "field": "deductions",
+                "value": "the figure the Principal gave",
+                "reason": "The two days were authorised verbally before the leave request was raised.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Both the figure and the reason are the Principal's (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Applied, with the calculated figure kept beside it. Report the new net pay. Worth adding that a leave request recorded for those days, and a regenerate, would leave the figure traceable to the calculation instead (PR-3)."
+        },
+        {
+          "request": {
+            "text": "is ki tankhwah theek kar do, kaat ghalat lagi hai",
+            "lang": "ur-Latn",
+            "gloss": "fix this employee's pay, the deduction is wrong"
+          },
+          "context": "Principal, Johar Town branch, where the attendance itself was marked wrongly.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.override.apply",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "staff_id": "$request.staff_phrase",
+                "field": "$request.field",
+                "value": "$request.value",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted yet. Where the attendance is wrong, correcting it is the route (PR-3)."
+            }
+          ],
+          "outcome": "Report that the run can be returned for an attendance correction and regenerated — then the pay is right *and* traces to the days worked. An override would put the right number on a calculation that still says the teacher was absent."
+        },
+        {
+          "request": {
+            "text": "jitne bhi ustadon ki kaat lagi hai sab maaf kar do",
+            "lang": "ur-Latn",
+            "gloss": "waive the deductions for every teacher who has one"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.override.apply",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "staff_id": "$request.staff_phrase — one at a time",
+                "field": "deductions",
+                "value": "$request.value",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No single plan covers the group. Each override is one employee, one figure, one reason (PR-4)."
+            }
+          ],
+          "outcome": "Nothing is applied. List the employees carrying a deduction with the days behind each, and ask which are being waived and why — a blanket waiver would put the Principal's name against a dozen payments with one reason covering all of them."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-03-PC-4",
+      "intent": {
+        "name": "payroll.run.return",
+        "summary": "Send a run back for an attendance correction before it can be approved. One step.",
+        "routesHere": [
+          "return this run — the attendance for the caretakers is wrong",
+          {
+            "text": "payroll run wapas bhej do, hazri theek karwani hai",
+            "lang": "ur-Latn",
+            "gloss": "return the payroll run, the attendance needs correcting"
+          },
+          {
+            "text": "hazri mein ghalti hai, run wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "there is an error in the attendance, send the run back"
+          },
+          {
+            "text": "manzoori se pehle theek karwana hai",
+            "lang": "ur-Latn",
+            "gloss": "it must be corrected before approval"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "figure hi badal do",
+              "lang": "ur-Latn",
+              "gloss": "just change the figure"
+            },
+            "goesTo": "payroll.override.apply — UC-12-03-PC-3",
+            "note": "An override changes the figure; returning fixes what it was calculated from (BR-1, BR-10)."
+          },
+          {
+            "request": {
+              "text": "run manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the run"
+            },
+            "goesTo": "payroll.run.approve — UC-12-03-PC-5"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "payroll.run.return",
+            "inputs": {
+              "run_id": "$request.run_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The attendance is corrected outside this run and the salaries are generated again (A6)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. Nothing is paid and no figure is changed — the run waits for the attendance to be put right and the salaries regenerated, which keeps every figure traceable to a day worked (BR-1)."
+      },
+      "operations": [
+        {
+          "name": "payroll.run.return",
+          "method": "POST",
+          "path": "/api/v1/payroll/runs/{run_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "run_id, since a run sits in one place at a time",
+          "purpose": "Return the run for an attendance correction.",
+          "parameters": [
+            {
+              "name": "run_id",
+              "source": "resolved",
+              "sourceRef": "$request.run_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "payroll_run",
+                "fromPhrase": "$request.run_phrase",
+                "onNoMatch": "Refuse. No payroll run matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the runs with their month, scope and status."
+              },
+              "notes": "The payroll run, resolved from its month and scope."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. What is wrong and has to be corrected before the run can be approved."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "run_id",
+                "type": "string",
+                "description": "The run."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "Accounts."
+              },
+              {
+                "name": "employees_affected",
+                "type": "integer",
+                "description": "Employees whose figures will change once the attendance is corrected."
+              },
+              {
+                "name": "payroll_month",
+                "type": "string",
+                "description": "The month. Nobody in it is paid until the run is approved and released (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            },
+            {
+              "code": "RUN_RELEASED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The run has been released.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "An adjustment is required rather than the released run being changed (E10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. Somebody has to find and correct the attendance from it, and a reason a planner wrote sends them through a month of marks.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never correct the attendance as part of the return. It is marked by the people who were there, and a plan that amended it would rewrite the record the pay is calculated from.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that nobody in the month is paid meanwhile. A returned run is a payroll that has not gone out, and the date matters to everybody in it (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. The attendance is corrected, the salaries are generated again, and the run comes back for approval."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye run wapas bhej do — chowkidaron ki hazri ghalat lagi hai",
+            "lang": "ur-Latn",
+            "gloss": "return this run — the caretakers' attendance is wrong"
+          },
+          "context": "Accounts, Johar Town branch, on a generated run.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.return",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "reason": "The caretakers' attendance for the second week was marked against the wrong shift and has to be corrected.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Accounts actor's own (PR-1)."
+            }
+          ],
+          "outcome": "Returned. Report how many employees' figures will change and that nobody in the month is paid until it is approved and released (PR-3)."
+        },
+        {
+          "request": {
+            "text": "run wapas kar ke hazri bhi theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "return the run and correct the attendance too"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.return",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The return only. The attendance is not amended here (PR-2)."
+            }
+          ],
+          "outcome": "Returned with the reason. Report that the attendance is corrected by the people who marked it — a plan that amended it would be rewriting the record that every figure in this run is calculated from."
+        },
+        {
+          "request": {
+            "text": "run wapas bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the run back"
+          },
+          "context": "Accounts, Johar Town branch, on a released run.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.return",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns RUN_RELEASED (E10)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the money has gone out — the run stands, and a correction found now is an adjustment rather than a change to what was released."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-03-PC-5",
+      "intent": {
+        "name": "payroll.run.approve",
+        "summary": "Approve a payroll run. Accounts, one step, and it pays nobody on its own.",
+        "routesHere": [
+          "approve the September payroll run",
+          {
+            "text": "September ka payroll run manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve September's payroll run"
+          },
+          {
+            "text": "figures dekh liye hain, manzoori de do",
+            "lang": "ur-Latn",
+            "gloss": "the figures have been reviewed, approve it"
+          },
+          {
+            "text": "run manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the run"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tankhwah ada kar do",
+              "lang": "ur-Latn",
+              "gloss": "pay the salaries"
+            },
+            "goesTo": "payroll.run.release — UC-12-03-PC-6",
+            "note": "Payment is released only after the run is approved, and the release posts to the ledger. A salary generated is not a salary paid (BR-11)."
+          },
+          {
+            "request": {
+              "text": "hazri theek karwani hai",
+              "lang": "ur-Latn",
+              "gloss": "the attendance needs correcting"
+            },
+            "goesTo": "payroll.run.return — UC-12-03-PC-4"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "payroll.run.approve",
+            "inputs": {
+              "run_id": "$request.run_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It approves the figures and pays nobody — releasing the payment is the separate act that posts to the ledger (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. A second approval for the same month and scope is refused by the API.",
+        "atomicity": "One write: the approval and the audit entry together or not at all. Nothing has left the school. The figures approved are the ones released, so this is the last review before money moves."
+      },
+      "operations": [
+        {
+          "name": "payroll.run.approve",
+          "method": "POST",
+          "path": "/api/v1/payroll/runs/{run_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "run_id, since a run is approved once",
+          "purpose": "Approve the generated figures for the run.",
+          "parameters": [
+            {
+              "name": "run_id",
+              "source": "resolved",
+              "sourceRef": "$request.run_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "payroll_run",
+                "fromPhrase": "$request.run_phrase",
+                "onNoMatch": "Refuse. No payroll run matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the runs with their month, scope and status."
+              },
+              "notes": "The payroll run, resolved from its month and scope."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval.",
+            "fields": [
+              {
+                "name": "run_id",
+                "type": "string",
+                "description": "The run."
+              },
+              {
+                "name": "payroll_month",
+                "type": "string",
+                "description": "The month."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved. Nothing is paid (BR-11)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "Accounts."
+              },
+              {
+                "name": "employees_included",
+                "type": "integer",
+                "description": "Employees who will be paid."
+              },
+              {
+                "name": "employees_excluded",
+                "type": "object[]",
+                "description": "Employees with no salary in force or no leave allowance, who are in no figure at all (E1, E2)."
+              },
+              {
+                "name": "overrides_applied",
+                "type": "object[]",
+                "description": "Principal overrides on this run, each with its previous figure and reason (BR-10)."
+              },
+              {
+                "name": "total_net_pay",
+                "type": "money",
+                "description": "What the release will pay out."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_APPROVED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The run has already been approved for that month and scope.",
+              "written": "Nothing.",
+              "notWritten": "No second approval recorded."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never chain the release onto the approval. Payment is released only after approval and the release posts to the ledger (BR-11) — collapsing them removes the moment between agreeing the figures and moving the money.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the excluded employees again at approval. They are in no figure at all (E1, E2), and approving a run without noticing them is how somebody goes a month unpaid.",
+          "derivedFrom": [
+            "BR-7",
+            "E1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the overrides on the run. Each is a figure that did not come from attendance (BR-10), and the approver is agreeing to them along with everything else.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never approve on behalf of a role that cannot see the figures. The School Admin starts the run but does not see them (BR-9), and approving what you cannot see is not a review.",
+          "derivedFrom": [
+            "BR-9",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. A wrong figure found afterwards is adjusted and the adjustment stays on the record (BR-13, E10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "September ka run manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve September's run"
+          },
+          "context": "Accounts, Johar Town branch, on a reviewed run.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.approve",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only. The release is not chained (PR-1)."
+            }
+          ],
+          "outcome": "Approved. Report the excluded employees by name (PR-2), the Principal's overrides with their reasons (PR-3), and the total the release will pay out — nothing has left the school yet."
+        },
+        {
+          "request": {
+            "text": "run manzoor kar ke tankhwahen bhej do",
+            "lang": "ur-Latn",
+            "gloss": "approve the run and send the salaries out"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.approve",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only (PR-1)."
+            }
+          ],
+          "outcome": "Approved. Report the total and that releasing is the next act, which posts to the ledger — worth taking deliberately, since a released run cannot be changed and a correction after it is an adjustment."
+        },
+        {
+          "request": {
+            "text": "run manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the run"
+          },
+          "context": "School Admin, Johar Town branch, who cannot see the figures.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.approve",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The School Admin does not see the generated salaries (PR-4)."
+            }
+          ],
+          "outcome": "Nothing is approved. Report that the figures are visible only to the Principal and Accounts, and that Accounts approve the run — approving a set of figures nobody in the room can see would not be a review of anything."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-03-PC-6",
+      "intent": {
+        "name": "payroll.run.release",
+        "summary": "Release payment for an approved run, which posts to the ledger. Accounts, one step, and the money goes.",
+        "routesHere": [
+          "release the September payroll",
+          {
+            "text": "September ki tankhwahen jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "release September's salaries"
+          },
+          {
+            "text": "payroll ada kar do",
+            "lang": "ur-Latn",
+            "gloss": "pay out the payroll"
+          },
+          {
+            "text": "tankhwahen bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the salaries out"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "pehle manzoori le lo",
+              "lang": "ur-Latn",
+              "gloss": "get the approval first"
+            },
+            "goesTo": "payroll.run.approve — UC-12-03-PC-5",
+            "note": "Payment is released only after the run is approved (BR-11, E7)."
+          },
+          {
+            "request": {
+              "text": "jari karne ke baad figure theek karna hai",
+              "lang": "ur-Latn",
+              "gloss": "correct a figure after releasing"
+            },
+            "goesTo": "Not offered.",
+            "note": "The run stands and an adjustment is required rather than the released figure being changed (E10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "payroll.run.release",
+            "inputs": {
+              "run_id": "$request.run_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it is the one that moves money. The release posts to the ledger (BR-11) and reduces every outstanding advance by the instalment recovered in the run (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. A release before approval is refused; a failed ledger posting releases nothing and leaves the run approved and unpaid.",
+        "atomicity": "One write, atomic in itself: the release, the ledger posting and the advance balances together or not at all. Where the posting fails nothing is released and the run stays approved and unpaid (E8) — there is no half-paid state. After this the figures cannot be changed: an attendance correction approved later requires an adjustment rather than a change to what was paid (E10)."
+      },
+      "operations": [
+        {
+          "name": "payroll.run.release",
+          "method": "POST",
+          "path": "/api/v1/payroll/runs/{run_id}/release",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "run_id, since a run is released once and a repeat must not pay twice",
+          "purpose": "Release payment for the approved run and post to the ledger.",
+          "parameters": [
+            {
+              "name": "run_id",
+              "source": "resolved",
+              "sourceRef": "$request.run_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "payroll_run",
+                "fromPhrase": "$request.run_phrase",
+                "onNoMatch": "Refuse. No payroll run matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the runs with their month, scope and status."
+              },
+              "notes": "The payroll run, resolved from its month and scope."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The release.",
+            "fields": [
+              {
+                "name": "run_id",
+                "type": "string",
+                "description": "The run."
+              },
+              {
+                "name": "payroll_month",
+                "type": "string",
+                "description": "The month."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Released. Terminal (BR-11)."
+              },
+              {
+                "name": "released_by",
+                "type": "string",
+                "description": "Accounts."
+              },
+              {
+                "name": "employees_paid",
+                "type": "integer",
+                "description": "How many."
+              },
+              {
+                "name": "total_net_pay",
+                "type": "money",
+                "description": "What was paid out."
+              },
+              {
+                "name": "voucher_id",
+                "type": "string",
+                "description": "The ledger posting (BR-11)."
+              },
+              {
+                "name": "advances_reduced",
+                "type": "object[]",
+                "description": "Outstanding advances reduced by the instalment recovered, with the balance each now stands at (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_APPROVED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "Payment was released before the run was approved.",
+              "written": "Nothing.",
+              "notWritten": "Nothing released.",
+              "note": "A salary generated is not a salary paid (BR-11)."
+            },
+            {
+              "code": "LEDGER_POSTING_FAILED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The ledger posting failed.",
+              "written": "Nothing.",
+              "notWritten": "Nothing released; the run stays approved and unpaid.",
+              "note": "There is no half-paid state. Report it and let Accounts retry deliberately."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never release an unapproved run. E7 is BR-11 working, and approving it to get past the refusal would move money on figures nobody reviewed.",
+          "derivedFrom": [
+            "BR-11",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never retry a release automatically after a ledger failure. Nothing was released and the run stays approved and unpaid (E8) — a retry that a person did not ask for is a second attempt to pay everybody.",
+          "derivedFrom": [
+            "BR-11",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the total and the number paid. This is the act that moves money out of the school, and the figure should be said plainly before and after.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the advances reduced. The instalment comes out of a salary the employee is expecting, and the balance left is what they still owe (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that the figures are now fixed. An attendance correction approved after the release requires an adjustment rather than a change to what was paid (E10).",
+          "derivedFrom": [
+            "BR-13",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A release is not reversed. The run stands and an adjustment is required (E10, BR-13). The controller must not attempt a compensating call — the money has left."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "September ka payroll jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "release September's payroll"
+          },
+          "context": "Accounts, Johar Town branch, on an approved run.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.release",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Released and posted to the ledger. Report how many were paid and the total (PR-3), the advances reduced with their balances (PR-4), and that the figures are now fixed (PR-5)."
+        },
+        {
+          "request": {
+            "text": "tankhwahen bhej do, manzoori baad mein le lenge",
+            "lang": "ur-Latn",
+            "gloss": "send the salaries out, we will approve it afterwards"
+          },
+          "context": "Accounts, Johar Town branch, on a run that is generated but not approved.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.release",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged, with no approval chained (PR-1). The API returns NOT_APPROVED (E7)."
+            }
+          ],
+          "outcome": "Nothing is released. Report that the run is approved first — the approval is the last review before money moves, and approving it afterwards would review a payment that had already gone."
+        },
+        {
+          "request": {
+            "text": "phir se koshish karo, pichli baar nahi hua tha",
+            "lang": "ur-Latn",
+            "gloss": "try again, it did not go through last time"
+          },
+          "context": "Accounts, Johar Town branch, after a ledger posting failure.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "payroll.run.release",
+              "inputs": {
+                "run_id": "$request.run_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted because Accounts asked for it deliberately (PR-2). Nothing was released the first time and the run is still approved and unpaid."
+            }
+          ],
+          "outcome": "Released if the posting succeeds this time. Report the total again before it goes — the previous attempt left nothing paid, so this is the first payment rather than a second."
+        }
+      ]
+    }
+  ]
+}

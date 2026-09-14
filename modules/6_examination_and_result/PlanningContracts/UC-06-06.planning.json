@@ -1,0 +1,951 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-06-06",
+    "name": "Sit a formal exam through the system, with the attempt tracked well enough to survive a dropped connection",
+    "module": "Examination",
+    "file": "../UseCases/UC-06-06.json",
+    "featureRef": "6.6 Online / computer-based exams"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-06-06-PC-1",
+      "intent": {
+        "name": "onlineexam.schedule",
+        "summary": "Set the window, the duration and the sitting conditions for a paper sat through the system. One step, and it releases nothing.",
+        "routesHere": [
+          "schedule the online physics paper — window 9 to 12, 90 minutes, on premises",
+          {
+            "text": "online exam ka waqt set kar do — 9 se 12, 90 minute",
+            "lang": "ur-Latn",
+            "gloss": "set the online exam's timing — 9 to 12, 90 minutes"
+          },
+          {
+            "text": "ye paper ghar se diya ja sakta hai",
+            "lang": "ur-Latn",
+            "gloss": "this paper may be sat from home"
+          },
+          {
+            "text": "online paper ka window aur duration rakh do",
+            "lang": "ur-Latn",
+            "gloss": "set the online paper's window and duration"
+          },
+          "schedule this as an online exam under invigilation"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "paper students ko dikha do",
+              "lang": "ur-Latn",
+              "gloss": "make the paper visible to students"
+            },
+            "goesTo": "onlineexam.release — UC-06-06-PC-2",
+            "note": "Until the School Admin releases it, the paper appears in no student's account (BR-2)."
+          },
+          {
+            "request": {
+              "text": "quiz banao",
+              "lang": "ur-Latn",
+              "gloss": "create a quiz"
+            },
+            "goesTo": "quiz.create — UC-06-08",
+            "note": "An online exam is a formal assessment that counts towards the result and follows the same approval and release path as a paper exam. It is not a quiz (BR-1)."
+          },
+          {
+            "request": {
+              "text": "bank se paper banao",
+              "lang": "ur-Latn",
+              "gloss": "build the paper from the bank"
+            },
+            "goesTo": "paper.create — UC-06-07",
+            "note": "Both an online exam and a quiz draw on the same single question bank (BR-13). Building the paper happens there."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "onlineexam.schedule",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "subject_id": "$request.subject_phrase",
+              "window_opens": "$request.window_opens",
+              "window_closes": "$request.window_closes",
+              "duration_minutes": "$request.duration",
+              "sitting_conditions": "$request.sitting_conditions",
+              "device_restriction": "$request.device_restriction",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The duration is the time one student is allowed and may be shorter than the window (BR-4) — a three-hour window with a ninety-minute paper lets students start at different times."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the window, the duration and the sitting conditions together with the audit entry, or not at all. Nothing is released — the paper appears in no student's account until the School Admin releases it, so a scheduled paper is not readable before the school intends it (BR-2)."
+      },
+      "operations": [
+        {
+          "name": "onlineexam.schedule",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/subjects/{subject_id}/online-schedule",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + subject_id, since a subject carries one online schedule",
+          "purpose": "Schedule a paper to be sat online, with its window, duration and sitting conditions.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not in this exam.",
+                "onAmbiguous": "Ask, naming the subjects in the exam and their classes."
+              },
+              "notes": "The subject whose paper is sat online."
+            },
+            {
+              "name": "window_opens",
+              "source": "request",
+              "sourceRef": "$request.window_opens",
+              "required": true,
+              "type": "datetime",
+              "notes": "When students may begin, 24-hour."
+            },
+            {
+              "name": "window_closes",
+              "source": "request",
+              "sourceRef": "$request.window_closes",
+              "required": true,
+              "type": "datetime",
+              "notes": "After the opening. Any attempt still running is submitted then and marked closed by the window (BR-8)."
+            },
+            {
+              "name": "duration_minutes",
+              "source": "request",
+              "sourceRef": "$request.duration",
+              "required": true,
+              "type": "integer",
+              "notes": "The time one student is allowed, which may be shorter than the window (BR-4). The Coordinator's figure — never derived from the window."
+            },
+            {
+              "name": "sitting_conditions",
+              "source": "request",
+              "sourceRef": "$request.sitting_conditions",
+              "required": true,
+              "type": "enum: On school premises under an invigilator | May be sat from home",
+              "notes": "Stated for every online exam (BR-11). It decides whether the paper is invigilated, so it is never assumed."
+            },
+            {
+              "name": "device_restriction",
+              "source": "request",
+              "sourceRef": "$request.device_restriction",
+              "required": false,
+              "type": "string",
+              "notes": "Any restriction on the browser or device, stated with the schedule (BR-11). How it is enforced, if at all, is an open question in this use case."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The schedule as set.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "subject_id",
+                "type": "string",
+                "description": "The subject."
+              },
+              {
+                "name": "window_opens",
+                "type": "datetime",
+                "description": "As set."
+              },
+              {
+                "name": "window_closes",
+                "type": "datetime",
+                "description": "As set. Attempts still running then are submitted automatically (BR-8)."
+              },
+              {
+                "name": "duration_minutes",
+                "type": "integer",
+                "description": "Per student (BR-4)."
+              },
+              {
+                "name": "sitting_conditions",
+                "type": "string",
+                "description": "As stated (BR-11)."
+              },
+              {
+                "name": "released",
+                "type": "boolean",
+                "description": "False. The paper is in no student's account yet (BR-2)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WINDOW_TOO_SHORT",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The window is shorter than the duration allowed each student.",
+              "written": "Nothing.",
+              "notWritten": "No schedule saved.",
+              "note": "No student could finish. Report both figures."
+            },
+            {
+              "code": "WINDOW_ORDER",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The closing time is not after the opening.",
+              "written": "Nothing.",
+              "notWritten": "No schedule saved."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never derive the duration from the window. They are different things — the window is when students may start, the duration is how long each gets (BR-4) — and a planner that set them equal removed the staggered start the window exists for.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never assume the sitting conditions. Whether a paper is sat under an invigilator or from home is stated for every online exam (BR-11), and a planner that assumed the safer option still decided how an exam is supervised.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe the schedule as making the paper available. It appears in no student's account until the School Admin releases it (BR-2).",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say plainly what happens at the window's close. An attempt still running is submitted automatically with the answers saved to that point and marked closed by the window (BR-8), which a Coordinator setting a tight window should know.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report a device restriction as stated rather than enforced. Nothing modelled here enforces it, and that is an open question in this use case (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A schedule is set again while the exam is unreleased. Once released, students can see the paper and a change to the window is a change to an exam people are sitting."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "physics ka online paper — window 9 se 12, har bache ko 90 minute, school mein invigilator ke saath",
+            "lang": "ur-Latn",
+            "gloss": "the online physics paper — window 9 to 12, 90 minutes each, in school under an invigilator"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "onlineexam.schedule",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase → \"physics\"",
+                "window_opens": "2026-11-16 09:00",
+                "window_closes": "2026-11-16 12:00",
+                "duration_minutes": "90",
+                "sitting_conditions": "On school premises under an invigilator",
+                "device_restriction": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The duration is the Coordinator's 90, not the window's 180 (PR-1)."
+            }
+          ],
+          "outcome": "Scheduled. Report that it is not released and appears in no student's account yet (PR-3), and that an attempt still running at noon is submitted automatically and marked closed by the window (PR-4)."
+        },
+        {
+          "request": {
+            "text": "online paper 9 se 11 rakh do",
+            "lang": "ur-Latn",
+            "gloss": "set the online paper from 9 to 11"
+          },
+          "context": "Coordinator, Johar Town branch, with no duration and no sitting conditions given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "onlineexam.schedule",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase",
+                "window_opens": "2026-11-16 09:00",
+                "window_closes": "2026-11-16 11:00",
+                "duration_minutes": "$request.duration — absent",
+                "sitting_conditions": "$request.sitting_conditions — absent",
+                "device_restriction": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Neither the duration nor the sitting conditions has anything to take it from (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask how long each student gets, and whether the paper is sat in school under an invigilator or may be sat from home — two hours is the window, not necessarily the paper."
+        },
+        {
+          "request": {
+            "text": "ye online paper ghar se diya ja sakta hai, sirf Chrome par",
+            "lang": "ur-Latn",
+            "gloss": "this online paper may be sat from home, on Chrome only"
+          },
+          "context": "Coordinator, Johar Town branch, duration given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "onlineexam.schedule",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase",
+                "window_opens": "$request.window_opens",
+                "window_closes": "$request.window_closes",
+                "duration_minutes": "$request.duration",
+                "sitting_conditions": "May be sat from home",
+                "device_restriction": "Chrome only",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The restriction is recorded as stated (PR-5)."
+            }
+          ],
+          "outcome": "Scheduled. Report that the browser restriction is recorded with the schedule but that nothing modelled here enforces it (PR-5) — for a paper sat from home that is worth knowing before the release."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-06-PC-2",
+      "intent": {
+        "name": "onlineexam.release",
+        "summary": "Release an online exam so it appears in the accounts of the students sitting it. School Admin only, one step.",
+        "routesHere": [
+          "release the online physics paper",
+          {
+            "text": "online paper jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "release the online paper"
+          },
+          {
+            "text": "bachon ke account mein paper dikha do",
+            "lang": "ur-Latn",
+            "gloss": "make the paper appear in the students' accounts"
+          },
+          {
+            "text": "ab paper khol do",
+            "lang": "ur-Latn",
+            "gloss": "open the paper now"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "paper ka waqt badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the paper's timing"
+            },
+            "goesTo": "onlineexam.schedule — UC-06-06-PC-1",
+            "note": "Whether a window may be changed once the exam has started is an open question in this use case."
+          },
+          {
+            "request": {
+              "text": "natija jari kar do",
+              "lang": "ur-Latn",
+              "gloss": "release the result"
+            },
+            "goesTo": "exam.results.approve — UC-06-03",
+            "note": "Releasing the paper lets students sit it. The marks follow the ordinary path and an online exam produces no separate result (BR-12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "onlineexam.release",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "subject_id": "$request.subject_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Only after this does the paper appear in the accounts of the students it applies to (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. A release attempted by the Coordinator is refused by the API.",
+        "atomicity": "One write: the release and the audit entry together or not at all. From this moment the paper is readable by every student it applies to when the window opens. There is no route back that unsees it, which is why the release is the School Admin's alone."
+      },
+      "operations": [
+        {
+          "name": "onlineexam.release",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/subjects/{subject_id}/online-release",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + subject_id, since an exam is released once",
+          "purpose": "Release the online exam to the students sitting it.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not in this exam.",
+                "onAmbiguous": "Ask, naming the subjects in the exam and their classes."
+              },
+              "notes": "The subject whose paper is sat online."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The release.",
+            "fields": [
+              {
+                "name": "exam_id",
+                "type": "string",
+                "description": "The exam."
+              },
+              {
+                "name": "subject_id",
+                "type": "string",
+                "description": "The subject."
+              },
+              {
+                "name": "released",
+                "type": "boolean",
+                "description": "True."
+              },
+              {
+                "name": "released_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "students_in_scope",
+                "type": "integer",
+                "description": "Students in whose accounts the paper now appears."
+              },
+              {
+                "name": "window_opens",
+                "type": "datetime",
+                "description": "When they may begin."
+              },
+              {
+                "name": "sitting_conditions",
+                "type": "string",
+                "description": "As scheduled (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_SCHOOL_ADMIN",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "The Coordinator attempted the release.",
+              "written": "Nothing.",
+              "notWritten": "Nothing released.",
+              "note": "The School Admin releases the exam (BR-2)."
+            },
+            {
+              "code": "NOT_SCHEDULED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The paper has no online schedule.",
+              "written": "Nothing.",
+              "notWritten": "Nothing released.",
+              "note": "There is no window to release it into."
+            },
+            {
+              "code": "ALREADY_RELEASED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The exam is already released.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never release on the School Admin's behalf. E7 is BR-2 working — a paper readable before the school intends it is the failure this whole rule exists for, and there is no way to make it unread.",
+          "derivedFrom": [
+            "BR-2",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain the release onto scheduling. Setting the window and deciding the paper may be seen are different decisions by different people (BR-2).",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report when the window opens and under what conditions the paper is sat. The release is the last moment before students can reach it, and an invigilated paper released for a from-home sitting is not recoverable.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A release is not withdrawn. Students it applies to can already see that the paper exists, and unreleasing it would not unsee it."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "physics ka online paper jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "release the online physics paper"
+          },
+          "context": "School Admin, Johar Town branch, on a scheduled paper.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "onlineexam.release",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase → \"physics\"",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Released. Report how many students now have it, when the window opens and that it is sat under an invigilator (PR-3)."
+        },
+        {
+          "request": {
+            "text": "paper ka waqt set kar ke jari bhi kar do",
+            "lang": "ur-Latn",
+            "gloss": "set the paper's timing and release it too"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "onlineexam.release",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The paper has no window yet, and scheduling it is the Coordinator's act — the release is the School Admin's and does not follow it in one breath (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Nothing is released. Report that the Coordinator sets the window, the duration and the sitting conditions first, and that the School Admin then releases it — once released the paper is readable, which is why the two are separate acts."
+        },
+        {
+          "request": {
+            "text": "online paper jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "release the online paper"
+          },
+          "context": "School Admin, Johar Town branch, on a paper with no online schedule.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "onlineexam.release",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "subject_id": "$request.subject_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_SCHEDULED (E1)."
+            }
+          ],
+          "outcome": "Nothing is released. Report that the paper has no window, duration or sitting conditions yet — the Coordinator sets those first."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-06-PC-3",
+      "intent": {
+        "name": "onlineexam.written.mark",
+        "summary": "Award marks to a student's written answers in an online paper. One step, and the objective part is already scored.",
+        "routesHere": [
+          "give this student 7 out of 10 for question 3",
+          {
+            "text": "is bache ke tehreeri jawab ke number laga do",
+            "lang": "ur-Latn",
+            "gloss": "record the marks for this student's written answers"
+          },
+          {
+            "text": "sawal 3 ke 7 number de do",
+            "lang": "ur-Latn",
+            "gloss": "give 7 marks for question 3"
+          },
+          {
+            "text": "tehreeri hissa check kar ke number chadha do",
+            "lang": "ur-Latn",
+            "gloss": "mark the written part and enter the marks"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "MCQ ke number khud laga do",
+              "lang": "ur-Latn",
+              "gloss": "enter the marks for the multiple-choice questions"
+            },
+            "goesTo": "Not offered.",
+            "note": "Objective answers are scored automatically from the answer key (BR-10). Entering them by hand would overwrite a score nobody disputed."
+          },
+          {
+            "request": {
+              "text": "poore paper ke number laga do",
+              "lang": "ur-Latn",
+              "gloss": "record the mark for the whole paper"
+            },
+            "goesTo": "exam.mark.set — UC-06-02",
+            "note": "For an online paper the mark is assembled from the automatic score and the written marks. The ordinary marks record receives the total (BR-10, BR-12)."
+          },
+          {
+            "request": {
+              "text": "attempt dobara khol do",
+              "lang": "ur-Latn",
+              "gloss": "reopen the attempt"
+            },
+            "goesTo": "Not offered.",
+            "note": "One attempt exists per student per paper and it is not reopened for marking (BR-3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "onlineexam.written.mark",
+            "inputs": {
+              "attempt_id": "$request.attempt_phrase",
+              "answer_marks": "$request.answer_marks",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Written answers go to the subject teacher for marking; the objective part was scored from the answer key when the attempt was submitted (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. A mark above what a question is worth arrives as an error naming the question and its maximum.",
+        "atomicity": "One write: the written marks and the audit entry together or not at all. The objective score plus the written marks enter the ordinary marks record (BR-10, BR-12), which then follows the ordinary path — grade calculation, coordinator approval and publication. An online exam produces no separate result."
+      },
+      "operations": [
+        {
+          "name": "onlineexam.written.mark",
+          "method": "POST",
+          "path": "/api/v1/online-attempts/{attempt_id}/written-marks",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "attempt_id + question_id, since an answer carries one mark",
+          "purpose": "Award marks to the written answers in one student's attempt.",
+          "parameters": [
+            {
+              "name": "attempt_id",
+              "source": "resolved",
+              "sourceRef": "$request.attempt_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "online_attempt",
+                "fromPhrase": "$request.attempt_phrase",
+                "onNoMatch": "Refuse. No attempt matches for that student and paper.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the paper and the attempt state."
+              },
+              "notes": "The student's attempt at this paper. One exists per student per paper (BR-3)."
+            },
+            {
+              "name": "answer_marks",
+              "source": "request",
+              "sourceRef": "$request.answer_marks",
+              "required": true,
+              "type": "object[]",
+              "notes": "Per written answer: the question and the marks awarded, each within what that question is worth (E8). Every figure is the teacher's — a planner that awarded a mark has marked a script it never read."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The marks as awarded.",
+            "fields": [
+              {
+                "name": "attempt_id",
+                "type": "string",
+                "description": "The attempt."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student."
+              },
+              {
+                "name": "attempt_state",
+                "type": "string",
+                "description": "In progress, Submitted, Closed by the window or Never attempted. Each means something different to the marker (BR-7)."
+              },
+              {
+                "name": "objective_score",
+                "type": "number",
+                "description": "Scored automatically from the answer key (BR-10). Not changed here."
+              },
+              {
+                "name": "written_marks_awarded",
+                "type": "number",
+                "description": "The sum of what was awarded now."
+              },
+              {
+                "name": "answers_unmarked",
+                "type": "integer",
+                "description": "Written answers still carrying no mark."
+              },
+              {
+                "name": "total_marks",
+                "type": "number",
+                "description": "Objective plus written, as it will enter the ordinary marks record (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ABOVE_QUESTION_TOTAL",
+              "mapsTo": "E8",
+              "httpStatus": 400,
+              "meaning": "A written answer was awarded more than the marks available.",
+              "written": "Nothing.",
+              "notWritten": "No marks recorded.",
+              "note": "The message names the question and its maximum."
+            },
+            {
+              "code": "NOT_SUBMITTED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The attempt is still in progress.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "An attempt the system could not submit at window close stays in progress and is flagged rather than being lost or scored as blank (E9). It is not marked while it is open."
+            },
+            {
+              "code": "NEVER_ATTEMPTED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The student never opened the paper.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "There is nothing to mark. They are recorded absent and the absence is classified like any other (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never award a mark the teacher did not state. It is a child's script, and a planner that judged a written answer has marked a paper it never read.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never touch the objective score. It is scored automatically from the answer key (BR-10), and a plan that rewrote it would replace a settled score with a typed one.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the attempt state alongside the marks. Submitted, closed by the window and never attempted each mean something different to the marker (BR-7) — a paper cut short at the window is not a paper somebody finished.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never mark an attempt that is still in progress. Where the system could not submit at window close the attempt is flagged rather than lost (E9), and marking it would freeze work a student may still be owed.",
+          "derivedFrom": [
+            "BR-8",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the written answers still unmarked. The total that enters the marks record is incomplete until every one carries a mark.",
+          "derivedFrom": [
+            "BR-10",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never plan a mark for a student who never attempted. They are recorded absent and the absence is classified like any other (BR-9) — a zero typed here would settle that question without anybody deciding it.",
+          "derivedFrom": [
+            "BR-9",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A written mark is awarded again before the sheet is submitted. After submission the ordinary rules apply — only the Coordinator changes a mark, with a reason (UC-06-02 BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is bache ke sawal 3 ke 7 aur sawal 4 ke 5 number de do",
+            "lang": "ur-Latn",
+            "gloss": "give this student 7 for question 3 and 5 for question 4"
+          },
+          "context": "Teacher, Johar Town branch, on a submitted attempt.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "onlineexam.written.mark",
+              "inputs": {
+                "attempt_id": "$request.attempt_phrase",
+                "answer_marks": "question 3 → 7, question 4 → 5",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Both figures are the teacher's (PR-1)."
+            }
+          ],
+          "outcome": "Recorded. Report the objective score unchanged, the written total, and how many written answers are still unmarked (PR-5)."
+        },
+        {
+          "request": {
+            "text": "jis bache ka paper window band hone par khud jama hua tha, us ke number laga do",
+            "lang": "ur-Latn",
+            "gloss": "record the marks for the student whose paper was submitted automatically at the window's close"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "onlineexam.written.mark",
+              "inputs": {
+                "attempt_id": "$request.attempt_phrase",
+                "answer_marks": "$request.answer_marks",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Marked. Report that the attempt state is closed by the window (PR-3) — the answers are those saved up to the moment it closed, which is not the same as a paper the student finished, and the marker should see that on the record."
+        },
+        {
+          "request": {
+            "text": "jin bachon ne paper khola hi nahi un ke sifar laga do",
+            "lang": "ur-Latn",
+            "gloss": "put zeros for the students who never opened the paper"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "onlineexam.written.mark",
+              "inputs": {
+                "attempt_id": "$request.attempt_phrase",
+                "answer_marks": "zeros",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. There is nothing to mark (PR-6)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that a student who never opened the paper is recorded absent, and the absence is then classified like any other — excused leaves the subject out of the percentage, unexcused counts it as zero. A typed zero would decide that without anybody choosing it."
+        }
+      ]
+    }
+  ]
+}

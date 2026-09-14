@@ -1,0 +1,651 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-06-17",
+    "name": "Handle a student who misses a quiz without recording a false zero",
+    "module": "Examination",
+    "file": "../UseCases/UC-06-17.json",
+    "featureRef": "6.17 Missed quiz and makeup quiz"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-06-17-PC-1",
+      "intent": {
+        "name": "quiz.makeup.offer",
+        "summary": "Decide to give a student who missed a quiz a second go, and say how. One step, and no approval stands in the way.",
+        "routesHere": [
+          "offer this student a makeup — reopen the online quiz",
+          {
+            "text": "is bache ko makeup ka moqa do",
+            "lang": "ur-Latn",
+            "gloss": "offer this student a makeup"
+          },
+          {
+            "text": "chhapa hua quiz de kar hath se check kar lenge",
+            "lang": "ur-Latn",
+            "gloss": "we will give them the printed quiz and mark it by hand"
+          },
+          {
+            "text": "online quiz is bache ke liye dobara khol do",
+            "lang": "ur-Latn",
+            "gloss": "reopen the online quiz for this student"
+          },
+          {
+            "text": "makeup nahi dena, aise hi rehne do",
+            "lang": "ur-Latn",
+            "gloss": "no makeup, leave it as it is"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "bache ko ghair haazir laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark the student absent"
+            },
+            "goesTo": "quiz.student.absent — UC-06-08-PC-5",
+            "note": "A makeup is offered against an absence that is already recorded (E5)."
+          },
+          {
+            "request": {
+              "text": "online quiz ka window kholo",
+              "lang": "ur-Latn",
+              "gloss": "open the online quiz's window"
+            },
+            "goesTo": "quiz.student.reopen — UC-06-08-PC-6",
+            "note": "Offering records the decision and the route. Reopening the window for that student is the act itself (BR-5)."
+          },
+          {
+            "request": {
+              "text": "Coordinator se manzoori lo",
+              "lang": "ur-Latn",
+              "gloss": "get the Coordinator's approval"
+            },
+            "goesTo": "Not offered.",
+            "note": "The teacher decides whether to offer a makeup. Because a quiz is informal this needs neither coordinator approval nor admin release, and requiring one would mean quizzes are never put right (BR-4)."
+          },
+          {
+            "request": {
+              "text": "sifar laga do",
+              "lang": "ur-Latn",
+              "gloss": "record a zero"
+            },
+            "goesTo": "Not offered.",
+            "note": "Where no makeup is offered the quiz stays out of the average and the absence stands. Nothing is counted as zero by default (BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "quiz.makeup.offer",
+            "inputs": {
+              "quiz_id": "$request.quiz_phrase",
+              "student_id": "$request.student_phrase",
+              "makeup_offered": "$request.makeup_offered",
+              "makeup_route": "$request.makeup_route",
+              "note": "$request.note",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The teacher decides, and no approval or release stands between the decision and the record (BR-4, BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. A student not marked absent arrives as an error — there is no absence for a makeup to answer.",
+        "atomicity": "One write: the decision, its route and the audit entry together or not at all. Where a makeup is offered the quiz stays out of the average until the score is recorded; where none is offered the absence stands and the quiz stays out of the average for good (BR-7). Nothing is counted as zero either way (BR-2)."
+      },
+      "operations": [
+        {
+          "name": "quiz.makeup.offer",
+          "method": "POST",
+          "path": "/api/v1/quizzes/{quiz_id}/students/{student_id}/makeup",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "quiz_id + student_id, since a student carries one makeup decision per quiz",
+          "purpose": "Record whether a makeup is offered for a missed quiz, and by which route.",
+          "parameters": [
+            {
+              "name": "quiz_id",
+              "source": "resolved",
+              "sourceRef": "$request.quiz_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "quiz",
+                "fromPhrase": "$request.quiz_phrase",
+                "onNoMatch": "Refuse. No quiz matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their class, subject, mode and state."
+              },
+              "notes": "A quiz of the acting teacher's subject (E4)."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student in that class matches.",
+                "onAmbiguous": "Ask, naming the candidates with their roll number."
+              },
+              "notes": "The student marked absent from it."
+            },
+            {
+              "name": "makeup_offered",
+              "source": "request",
+              "sourceRef": "$request.makeup_offered",
+              "required": true,
+              "type": "boolean",
+              "notes": "The teacher's own decision (BR-4). Where none is offered the absence stands and the quiz stays out of the average (BR-7)."
+            },
+            {
+              "name": "makeup_route",
+              "source": "request",
+              "sourceRef": "$request.makeup_route",
+              "required": false,
+              "type": "enum: Reopen the online quiz | Printed quiz marked by hand",
+              "notes": "Required where a makeup is offered (BR-5). Reopening applies only to an online quiz; a paper quiz is given printed and marked by hand."
+            },
+            {
+              "name": "note",
+              "source": "request",
+              "sourceRef": "$request.note",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 250 characters."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision.",
+            "fields": [
+              {
+                "name": "quiz_id",
+                "type": "string",
+                "description": "The quiz."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Makeup offered, or No makeup (BR-7)."
+              },
+              {
+                "name": "makeup_route",
+                "type": "string",
+                "description": "How it is given (BR-5)."
+              },
+              {
+                "name": "subject_average",
+                "type": "number",
+                "description": "Their quiz average, calculated over the quizzes they took. This one is out of it either way until a score is recorded (BR-2)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "The family was told the quiz was missed; they are told the result where a makeup is taken (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_ABSENT",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The student is not marked absent from this quiz.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "There is no Absent flag for a makeup score to replace (BR-6)."
+            },
+            {
+              "code": "ROUTE_REQUIRED",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A makeup was offered with no route.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            },
+            {
+              "code": "REOPEN_ON_PAPER_QUIZ",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "Reopening was chosen for a quiz held on paper.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "A paper quiz carries no window (UC-06-08 BR-6). It is given printed and marked by hand."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never decide whether a makeup is offered. It is the teacher's own decision (BR-4), and the reason it needs no approval is the same reason a planner must not make it for them.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never choose the route. Reopening the online quiz and handing over a printed one are different arrangements with the student (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never record a zero where no makeup is offered. The quiz stays out of the average and the absence stands — nothing is counted as zero by default (BR-7, BR-2).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never route this through an approval. A quiz absence needs no classification, no approval and no release (BR-11), and inserting one is how quizzes stop being put right at all.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never plan the reopening in the same step. Offering records the decision; reopening the window for that student is the separate act that lets them sit it (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A decision is recorded again rather than withdrawn. Where a makeup was offered and is not taken, the student is absent again and the quiz stays out of the average (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is bache ko makeup do — online quiz dobara khol denge",
+            "lang": "ur-Latn",
+            "gloss": "give this student a makeup — we will reopen the online quiz"
+          },
+          "context": "Teacher, Johar Town branch, on an online quiz the student was marked absent from.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "quiz.makeup.offer",
+              "inputs": {
+                "quiz_id": "$request.quiz_phrase",
+                "student_id": "$request.student_phrase",
+                "makeup_offered": "true",
+                "makeup_route": "Reopen the online quiz",
+                "note": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Both the decision and the route are the teacher's own words (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Recorded. Report that reopening the window for that student is the next act (PR-5), and that the quiz stays out of their average until a score is recorded."
+        },
+        {
+          "request": {
+            "text": "is ka makeup nahi dena",
+            "lang": "ur-Latn",
+            "gloss": "no makeup for this one"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "quiz.makeup.offer",
+              "inputs": {
+                "quiz_id": "$request.quiz_phrase",
+                "student_id": "$request.student_phrase",
+                "makeup_offered": "false",
+                "makeup_route": "omitted",
+                "note": "$request.note",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Recorded as no makeup. Report that the quiz stays out of the student's average and the absence stands on the record (PR-3) — nothing is counted as zero, so their average is unaffected."
+        },
+        {
+          "request": {
+            "text": "kaghaz wale quiz ke liye online window kholo",
+            "lang": "ur-Latn",
+            "gloss": "open the online window for the paper quiz"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "quiz.makeup.offer",
+              "inputs": {
+                "quiz_id": "$request.quiz_phrase",
+                "student_id": "$request.student_phrase",
+                "makeup_offered": "true",
+                "makeup_route": "Reopen the online quiz",
+                "note": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns REOPEN_ON_PAPER_QUIZ (E3)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the quiz was held on paper and carries no window — the makeup route for it is the printed quiz, given to the student and marked by hand."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-17-PC-2",
+      "intent": {
+        "name": "quiz.makeup.score.record",
+        "summary": "Record the score a student earned in a quiz makeup, tagged as a makeup, replacing the absence. One step.",
+        "routesHere": [
+          "record 15 out of 20 for this student's quiz makeup",
+          {
+            "text": "makeup quiz ke number chadha do",
+            "lang": "ur-Latn",
+            "gloss": "record the makeup quiz marks"
+          },
+          {
+            "text": "hath se check kar liya, 15 number hain",
+            "lang": "ur-Latn",
+            "gloss": "marked it by hand, it is 15"
+          },
+          {
+            "text": "dobara diye gaye quiz ka score darj karo",
+            "lang": "ur-Latn",
+            "gloss": "record the score for the quiz they took again"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "bacha makeup mein bhi nahi aaya",
+              "lang": "ur-Latn",
+              "gloss": "the student missed the makeup too"
+            },
+            "goesTo": "quiz.student.absent — UC-06-08-PC-5",
+            "note": "A student absent from the makeup too is recorded absent again, and the quiz stays out of the average (BR-10)."
+          },
+          {
+            "request": {
+              "text": "ye number imtihan ke natije mein daal do",
+              "lang": "ur-Latn",
+              "gloss": "put this mark into the exam result"
+            },
+            "goesTo": "Not offered.",
+            "note": "None of this touches the formal examination flow (BR-11), and a quiz result does not enter the formal examination result (UC-06-08 BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "quiz.makeup.score.record",
+            "inputs": {
+              "quiz_id": "$request.quiz_phrase",
+              "student_id": "$request.student_phrase",
+              "score": "$request.score",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The makeup score replaces the Absent flag and is tagged as a makeup, so a mark earned in a second sitting is distinguishable (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. A score above the quiz total, and a score for a student who was not marked absent, arrive as errors.",
+        "atomicity": "One write: the score, the makeup tag, the cleared Absent flag and the recalculated average together or not at all. The quiz re-enters the student's average from that moment, and the family is told the result (BR-9). Where the quiz had already been closed and averaged, the average recalculates when the score is recorded (E6)."
+      },
+      "operations": [
+        {
+          "name": "quiz.makeup.score.record",
+          "method": "POST",
+          "path": "/api/v1/quizzes/{quiz_id}/students/{student_id}/makeup-score",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "quiz_id + student_id, since a student carries one makeup score per quiz",
+          "purpose": "Record the makeup score, replacing the absence.",
+          "parameters": [
+            {
+              "name": "quiz_id",
+              "source": "resolved",
+              "sourceRef": "$request.quiz_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "quiz",
+                "fromPhrase": "$request.quiz_phrase",
+                "onNoMatch": "Refuse. No quiz matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their class, subject, mode and state."
+              },
+              "notes": "A quiz of the acting teacher's subject (E4)."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student in that class matches.",
+                "onAmbiguous": "Ask, naming the candidates with their roll number."
+              },
+              "notes": "The student marked absent from it."
+            },
+            {
+              "name": "score",
+              "source": "request",
+              "sourceRef": "$request.score",
+              "required": true,
+              "type": "number",
+              "notes": "Between nought and the quiz total (E2). The teacher's figure, whether marked by hand or scored from a reopened online attempt."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The score as recorded.",
+            "fields": [
+              {
+                "name": "quiz_id",
+                "type": "string",
+                "description": "The quiz."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student."
+              },
+              {
+                "name": "score",
+                "type": "number",
+                "description": "As recorded."
+              },
+              {
+                "name": "makeup_tagged",
+                "type": "boolean",
+                "description": "True. A mark earned in a second sitting is distinguishable (BR-6)."
+              },
+              {
+                "name": "absent_flag_cleared",
+                "type": "boolean",
+                "description": "True. The score replaces it (BR-6)."
+              },
+              {
+                "name": "subject_average",
+                "type": "number",
+                "description": "Recalculated, now including this quiz (E6)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "The family is told the result where a makeup is taken (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ABOVE_TOTAL",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "A score above the quiz total was entered.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            },
+            {
+              "code": "NOT_ABSENT",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The student was not marked absent.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "There is no Absent flag to replace (BR-6). An ordinary mark is uploaded instead."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the score. It goes to the family as their child's result (BR-9), and a figure a planner produced is a mark nobody awarded.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the quiz re-enters the average. It was out of it while the absence stood (BR-2); recording the score changes the student's average, which is what the family sees next.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never present the mark as a formal exam mark. None of this touches the formal examination flow (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never record a makeup score where no absence stands. There is nothing to replace, and an ordinary mark upload is the right route (E5).",
+          "derivedFrom": [
+            "BR-6",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A score is corrected by recording it again while the quiz is open to correction. The absence it replaced stays on the record as what happened first."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is bache ke makeup quiz ke 15 number hain",
+            "lang": "ur-Latn",
+            "gloss": "this student scored 15 in the makeup quiz"
+          },
+          "context": "Teacher, Johar Town branch, quiz out of 20, the student marked absent from the original.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "quiz.makeup.score.record",
+              "inputs": {
+                "quiz_id": "$request.quiz_phrase",
+                "student_id": "$request.student_phrase",
+                "score": "15",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The figure is the teacher's (PR-1)."
+            }
+          ],
+          "outcome": "Recorded and tagged as a makeup. The absence is cleared and the quiz re-enters the student's average (PR-2). The family is told the result."
+        },
+        {
+          "request": {
+            "text": "makeup quiz ke number chadha do",
+            "lang": "ur-Latn",
+            "gloss": "record the makeup quiz marks"
+          },
+          "context": "Teacher, Johar Town branch, on a student who was never marked absent.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "quiz.makeup.score.record",
+              "inputs": {
+                "quiz_id": "$request.quiz_phrase",
+                "student_id": "$request.student_phrase",
+                "score": "$request.score",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_ABSENT (E5)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the student carries no absence for this quiz, so there is nothing for a makeup score to replace — an ordinary mark upload is the route if the score is simply being corrected."
+        },
+        {
+          "request": {
+            "text": "makeup ke number chadha do aur natije mein bhi shamil karo",
+            "lang": "ur-Latn",
+            "gloss": "record the makeup marks and include them in the result"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "quiz.makeup.score.record",
+              "inputs": {
+                "quiz_id": "$request.quiz_phrase",
+                "student_id": "$request.student_phrase",
+                "score": "$request.score",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The quiz score only (PR-3)."
+            }
+          ],
+          "outcome": "Recorded. Report that a quiz result does not enter the formal examination result — it is an informal assessment, reported as one, and it moves the student's quiz average rather than their exam percentage."
+        }
+      ]
+    }
+  ]
+}

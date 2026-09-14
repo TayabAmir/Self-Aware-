@@ -1,0 +1,1047 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-29-01",
+    "name": "Record every visitor arriving on campus, check them against the blocklist, and issue a numbered pass",
+    "module": "Gate & Entry Protection",
+    "file": "../UseCases/UC-29-01.json",
+    "featureRef": "29.1 Logging a visitor in"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-29-01-PC-1",
+      "intent": {
+        "name": "visit.log.in",
+        "summary": "Log a visitor in at the desk — who they are, who they have come to see and why — checked against the pre-registrations and the blocklist, with a numbered pass issued.",
+        "routesHere": [
+          "log in a visitor — Imran Qureshi, here to see Ms Saima about the Grade 5 trip, pass V-014",
+          {
+            "text": "ek sahab aaye hain Mr Tariq se milne, visitor entry kar do, pass V-014 de diya",
+            "lang": "ur-Latn",
+            "gloss": "a gentleman has come to meet Mr Tariq, make the visitor entry, I've given him pass V-014"
+          },
+          {
+            "text": "Ahmed Raza ki visitor entry banao, maintenance ke liye aaye hain, pass V-021",
+            "lang": "ur-Latn",
+            "gloss": "make Ahmed Raza's visitor entry, he has come for maintenance, pass V-021"
+          },
+          {
+            "text": "jo mehman expected tha wo aa gaya, usko andar le lo",
+            "lang": "ur-Latn",
+            "gloss": "the guest who was expected has arrived, log him in"
+          },
+          "sign in the expected visitor for the Principal"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "main visitor hoon, khud entry kar leta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I am a visitor, I'll make my own entry"
+            },
+            "goesTo": "No route.",
+            "note": "The visitor is not an actor. They present themselves and the desk uses the system (BR-1, E10)."
+          },
+          {
+            "request": {
+              "text": "check karo ye banda blocklist mein to nahi",
+              "lang": "ur-Latn",
+              "gloss": "check whether this person is on the blocklist"
+            },
+            "goesTo": "Not offered on its own.",
+            "note": "The blocklist is checked by the system when a visitor is logged in, against that visit (BR-3). A standalone lookup of who the school has barred — a non-custodial parent, a dismissed employee — is not described anywhere."
+          },
+          {
+            "request": {
+              "text": "is aadmi ko blocklist mein daal do",
+              "lang": "ur-Latn",
+              "gloss": "put this man on the blocklist"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nothing in the specification creates or changes the blocklist, or says who may bar a person and for how long (OQ-1, OQ-3)."
+          },
+          {
+            "request": {
+              "text": "kal ke liye ek visitor pre-register kar do",
+              "lang": "ur-Latn",
+              "gloss": "pre-register a visitor for tomorrow"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is a screen for it, but nothing describes creating a pre-registration or who may (OQ-2)."
+          },
+          {
+            "request": {
+              "text": "admission ke liye ek family aayi hai, inquiry darj karo",
+              "lang": "ur-Latn",
+              "gloss": "a family has come about admission, record an inquiry"
+            },
+            "goesTo": "Admissions — UC-02-01, as well as a visit here.",
+            "note": "A prospective family is a visitor at the gate and an inquiry in admissions, recorded separately (BR-10, A5). UC-02-01 has no planning contract."
+          },
+          {
+            "request": {
+              "text": "visit ka record mita do",
+              "lang": "ur-Latn",
+              "gloss": "delete the visit record"
+            },
+            "goesTo": "No route.",
+            "note": "A visit is never deleted. A refused one stays on the record with its reason (BR-8, E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "visit.log.in",
+            "inputs": {
+              "visitor_name": "$request.visitor_name",
+              "contact_number": "$request.contact_number",
+              "host_id": "$request.host_phrase",
+              "purpose": "$request.purpose",
+              "pass_id": "$request.pass_phrase",
+              "pre_registration_id": "$request.pre_registration_phrase",
+              "possible_match_cleared": "$request.possible_match_cleared",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The pre-registration and the blocklist are checked **by the system, inside the call** — a barred person is stopped by it, not by whoever happens to be on duty (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. A blocklist match is refused and the refusal is written; a possible match stops for the desk to judge; a pass not free, a missing purpose or number, or a host not at this branch logs nothing. Where the host cannot be told, the visit still stands.",
+        "atomicity": "One write: the visit with the time in, the branch and the pass, and the host told (BR-4, BR-5, BR-6). A refusal on a blocklist match is its own write — a refused visit, with the School Admin and the Principal told (BR-7). Nothing is ever deleted (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "visit.log.in",
+          "method": "POST",
+          "path": "/api/v1/visits",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "visitor_name + contact_number + pass_id + minute, so a double press does not log one arrival twice",
+          "purpose": "Log a visitor in, checking the pre-registration and the blocklist, and issue the pass against the visit.",
+          "parameters": [
+            {
+              "name": "visitor_name",
+              "source": "request",
+              "sourceRef": "$request.visitor_name",
+              "required": true,
+              "type": "string",
+              "notes": "2 to 100 characters, as the visitor gives it. Taken as offered — no identification is checked against it, which is why a blocklist match can only ever be possible rather than certain (OQ-5)."
+            },
+            {
+              "name": "contact_number",
+              "source": "request",
+              "sourceRef": "$request.contact_number",
+              "required": true,
+              "type": "string",
+              "notes": "The visitor's own number (E2)."
+            },
+            {
+              "name": "host_id",
+              "source": "resolved",
+              "sourceRef": "$request.host_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.host_phrase",
+                "onNoMatch": "Refuse. Nobody at this branch matches — the person being visited must be at this branch (E3).",
+                "onAmbiguous": "Ask, naming the matching people at this branch with their role."
+              },
+              "notes": "The person the visitor has come to see. Only people at this branch are offered (E3). They are told the visitor has arrived (BR-6)."
+            },
+            {
+              "name": "purpose",
+              "source": "request",
+              "sourceRef": "$request.purpose",
+              "required": true,
+              "type": "string",
+              "notes": "5 to 500 characters. Why they have come, as the visitor said it (E1)."
+            },
+            {
+              "name": "pass_id",
+              "source": "resolved",
+              "sourceRef": "$request.pass_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "visitor_pass",
+                "fromPhrase": "$request.pass_phrase",
+                "onNoMatch": "Refuse. No pass at this branch carries that number.",
+                "onAmbiguous": "Ask, naming the matching pass numbers."
+              },
+              "notes": "The numbered pass physically handed over, named by its number (V-014). A pass in circulation is not free (BR-5, BR-9)."
+            },
+            {
+              "name": "pre_registration_id",
+              "source": "resolved",
+              "sourceRef": "$request.pre_registration_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "pre_registration",
+                "fromPhrase": "$request.pre_registration_phrase",
+                "onNoMatch": "Refuse, and say that no pre-registration matches. Logging them in as unexpected is the desk's call (E6).",
+                "onAmbiguous": "Ask, naming today's expected visitors that match with who registered each."
+              },
+              "notes": "Where the visit was pre-registered, the pre-registration it is logged in from — the details are already there and the desk confirms them (BR-2, A1)."
+            },
+            {
+              "name": "possible_match_cleared",
+              "source": "request",
+              "sourceRef": "$request.possible_match_cleared",
+              "required": false,
+              "type": "boolean",
+              "notes": "True only where the desk has already been shown a possible blocklist match on this visit and says, in their own words, that they have asked and it is somebody else (BR-11, A3). **Never set by a planner, and never on a first attempt.**"
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The desk staff member acting. Never from the request — the visitor is not an actor (BR-1)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The visit, what the checks found, and the pass against it.",
+            "fields": [
+              {
+                "name": "visit_id",
+                "type": "string",
+                "description": "The visit."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Open, until the visitor is logged out (UC-29-02)."
+              },
+              {
+                "name": "pre_registered",
+                "type": "boolean",
+                "description": "Whether the person being visited registered it in advance (BR-2)."
+              },
+              {
+                "name": "blocklist_result",
+                "type": "string",
+                "description": "No match, or a possible match the desk cleared. A barred person never reaches this — they are refused (BR-3, BR-11)."
+              },
+              {
+                "name": "blocklist_checked",
+                "type": "boolean",
+                "description": "False where no blocklist is configured. The visitor has then **not been checked** and must not be reported as cleared (E5)."
+              },
+              {
+                "name": "pass_number",
+                "type": "string",
+                "description": "The pass issued against the visit, accounted for on the way out (BR-5)."
+              },
+              {
+                "name": "time_in",
+                "type": "datetime",
+                "description": "When the visit was recorded (BR-4)."
+              },
+              {
+                "name": "branch",
+                "type": "string",
+                "description": "The branch it was made at (BR-4)."
+              },
+              {
+                "name": "host_notified",
+                "type": "boolean",
+                "description": "Whether the person being visited was told (BR-6, E8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PURPOSE",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "No purpose was given.",
+              "written": "Nothing.",
+              "notWritten": "The visit is not logged."
+            },
+            {
+              "code": "NO_CONTACT",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No contact number was given.",
+              "written": "Nothing.",
+              "notWritten": "The visit is not logged."
+            },
+            {
+              "code": "HOST_NOT_AT_BRANCH",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The person being visited is not at this branch.",
+              "written": "Nothing.",
+              "notWritten": "The visit is not logged."
+            },
+            {
+              "code": "BARRED",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The name is on the blocklist. Entry is refused.",
+              "written": "The refusal and its reason, as a refused visit. The School Admin and the Principal are told a barred person attempted entry (BR-7, AC-5).",
+              "notWritten": "No visit is opened and no pass is issued.",
+              "note": "A refusal stays on the record and is never deleted (BR-8)."
+            },
+            {
+              "code": "POSSIBLE_BLOCKLIST_MATCH",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The name is a possible match against the blocklist, not a certain one.",
+              "written": "Nothing.",
+              "notWritten": "The visit is not logged.",
+              "note": "On the screen the possible match is shown and the desk carries on (BR-11, A3), and the use case writes no exception for it. A plan cannot pause while the desk asks the visitor, so it stops here: the desk either logs them in again with possible_match_cleared, or refuses them with visit.refuse."
+            },
+            {
+              "code": "NO_BLOCKLIST",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "No blocklist is configured, so the visitor has not been checked.",
+              "written": "The visit, marked not checked.",
+              "treatedAsSuccess": true,
+              "note": "Reported, never passed over — a visitor logged in unchecked must not read as a visitor cleared (AC-10)."
+            },
+            {
+              "code": "PASS_NOT_FREE",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The pass is with another visitor and has not been returned, or is outstanding or retired.",
+              "written": "Nothing.",
+              "notWritten": "The visit is not logged.",
+              "note": "A pass in circulation is not free (BR-9). Where none is free, the outstanding ones are chased first (A6)."
+            },
+            {
+              "code": "HOST_NOT_NOTIFIED",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "The person being visited could not be told.",
+              "written": "The visit stands.",
+              "notWritten": "Only the notice failed.",
+              "treatedAsSuccess": true,
+              "note": "Reported so the desk can telephone them."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Only the desk logs a visitor in. A request from somebody saying they are the visitor, or asking to log themselves in, has no route — the visitor is not an actor (BR-1, E10).",
+          "derivedFrom": [
+            "BR-1",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never clear a possible match. It is shown to the desk rather than resolved, because a name is not an identity and only the desk can ask (BR-11). Set possible_match_cleared only from the desk's own statement after the match has been put to them — never on a first attempt, and never because the visitor insists.",
+          "derivedFrom": [
+            "BR-11",
+            "A3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never retry a barred visitor — not with another spelling, another number, or the cleared flag. The system stopping them is the whole point of the blocklist: the person on duty should not be the only thing between a barred person and the school (BR-3, E4).",
+          "derivedFrom": [
+            "BR-3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report an unchecked visitor as unchecked. Where no blocklist is configured the check returns nothing, and a visitor logged in on those terms must never be described as cleared (E5, AC-10).",
+          "derivedFrom": [
+            "E5",
+            "AC-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never choose the pass. It is the one physically handed over, and the log-out accounts for that pass and no other (BR-5, BR-9).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Log in from the pre-registration where there is one. An expected visitor and an unexpected one are not handled identically — the desk confirms details already there rather than taking them again (BR-2, A1).",
+          "derivedFrom": [
+            "BR-2",
+            "A1"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "A prospective family enquiring is still a visitor here. Log the visit; the inquiry is recorded separately, in admissions (BR-10, A5).",
+          "derivedFrom": [
+            "BR-10",
+            "A5"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "staff_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "No capability undoes a visit. It is closed when the visitor leaves — visit.log.out, UC-29-02 — which records a departure, not a mistake. A visit is never deleted (BR-8, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Imran Qureshi aaye hain Ms Saima se milne, Grade 5 trip ke baare mein, number 0300-1234567, pass V-014 diya hai",
+            "lang": "ur-Latn",
+            "gloss": "Imran Qureshi has come to see Ms Saima about the Grade 5 trip, number 0300-1234567, I have given him pass V-014"
+          },
+          "context": "Front desk, Johar Town branch. Not pre-registered; no blocklist match.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "visit.log.in",
+              "inputs": {
+                "visitor_name": "$request.visitor_name → Imran Qureshi",
+                "contact_number": "$request.contact_number → 0300-1234567",
+                "host_id": "$request.host_phrase → Ms Saima",
+                "purpose": "$request.purpose → the Grade 5 trip",
+                "pass_id": "$request.pass_phrase → V-014",
+                "pre_registration_id": "omitted",
+                "possible_match_cleared": "omitted",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-5)."
+            }
+          ],
+          "outcome": "Logged in with the time in and the branch, pass V-014 recorded against the visit, and Ms Saima told her visitor has arrived."
+        },
+        {
+          "request": {
+            "text": "Asif Mehmood aaye hain, Principal se milna hai, pass V-003",
+            "lang": "ur-Latn",
+            "gloss": "Asif Mehmood is here, wants to meet the Principal, pass V-003"
+          },
+          "context": "Front desk. The name is on the blocklist.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "visit.log.in",
+              "inputs": {
+                "visitor_name": "$request.visitor_name → Asif Mehmood",
+                "contact_number": "asked",
+                "host_id": "$request.host_phrase → the Principal",
+                "purpose": "asked",
+                "pass_id": "$request.pass_phrase → V-003",
+                "pre_registration_id": "omitted",
+                "possible_match_cleared": "omitted",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused by the system (PR-3)."
+            }
+          ],
+          "outcome": "Entry refused. The refusal and its reason are on the record, and the School Admin and the Principal have been told. Nothing is retried under another spelling — the desk does not have to argue the point."
+        },
+        {
+          "request": {
+            "text": "Nadeem Akhtar aaye hain accounts wale Mr Kamran se milne, pass V-007",
+            "lang": "ur-Latn",
+            "gloss": "Nadeem Akhtar has come to see Mr Kamran in accounts, pass V-007"
+          },
+          "context": "Front desk. The name is a possible blocklist match.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "visit.log.in",
+              "inputs": {
+                "visitor_name": "$request.visitor_name → Nadeem Akhtar",
+                "contact_number": "asked",
+                "host_id": "$request.host_phrase → Mr Kamran",
+                "purpose": "asked",
+                "pass_id": "$request.pass_phrase → V-007",
+                "pre_registration_id": "omitted",
+                "possible_match_cleared": "omitted — a first attempt",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Stops on the possible match (PR-2)."
+            }
+          ],
+          "outcome": "Stops, and the match is put to the desk as possible, not certain. If they ask and it is somebody else, they say so and it is logged in again with the match cleared; if they are not sure, the visitor is refused with visit.refuse."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-29-01-PC-2",
+      "intent": {
+        "name": "visit.refuse",
+        "summary": "Refuse a visitor entry at the desk and record why. A refusal is recorded as well as an admission.",
+        "routesHere": [
+          "refuse entry to this visitor — he will not say who he has come to see",
+          {
+            "text": "isko andar nahi aane dena, refusal record kar do",
+            "lang": "ur-Latn",
+            "gloss": "don't let him in, record the refusal"
+          },
+          {
+            "text": "possible match tha, pakka nahi pata, entry mana kar do",
+            "lang": "ur-Latn",
+            "gloss": "it was a possible match, I'm not sure, refuse the entry"
+          },
+          "turn the visitor away and log it"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "visit ka record mita do",
+              "lang": "ur-Latn",
+              "gloss": "delete the visit record"
+            },
+            "goesTo": "No route.",
+            "note": "A visit is never deleted. A refused one stays on the record with its reason (BR-8, E9)."
+          },
+          {
+            "request": {
+              "text": "blocklist wale ko wapas bhej diya, uska refusal bhi daal do",
+              "lang": "ur-Latn",
+              "gloss": "the blocklisted man was sent back, record his refusal too"
+            },
+            "goesTo": "Already recorded.",
+            "note": "Where the system refused him on a blocklist match, the refusal was written then (E4). Recording it again makes two refusals of one attempt."
+          },
+          {
+            "request": {
+              "text": "main visitor hoon, khud entry kar leta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I am a visitor, I'll make my own entry"
+            },
+            "goesTo": "No route.",
+            "note": "The visitor is not an actor. They present themselves and the desk uses the system (BR-1, E10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "visit.refuse",
+            "inputs": {
+              "visitor_name": "$request.visitor_name",
+              "contact_number": "$request.contact_number",
+              "host_id": "$request.host_phrase",
+              "purpose": "$request.purpose",
+              "refusal_reason": "$request.refusal_reason",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The refused visit and the desk's reason (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: a refused visit with its reason, the time and the branch. It is never deleted (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "visit.refuse",
+          "method": "POST",
+          "path": "/api/v1/visits/refusals",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "visitor_name + contact_number + minute, so a double press records one refusal",
+          "purpose": "Record that the desk refused a visitor entry, and why.",
+          "parameters": [
+            {
+              "name": "visitor_name",
+              "source": "request",
+              "sourceRef": "$request.visitor_name",
+              "required": true,
+              "type": "string",
+              "notes": "As the visitor gave it."
+            },
+            {
+              "name": "contact_number",
+              "source": "request",
+              "sourceRef": "$request.contact_number",
+              "required": false,
+              "type": "string",
+              "notes": "Where the visitor gave one."
+            },
+            {
+              "name": "host_id",
+              "source": "resolved",
+              "sourceRef": "$request.host_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.host_phrase",
+                "onNoMatch": "Omit, and record the refusal without a host (E3 applies only to logging in).",
+                "onAmbiguous": "Ask, naming the matching people at this branch."
+              },
+              "notes": "Who they said they had come to see, where they said."
+            },
+            {
+              "name": "purpose",
+              "source": "request",
+              "sourceRef": "$request.purpose",
+              "required": false,
+              "type": "string",
+              "notes": "What they said they had come for, where they said."
+            },
+            {
+              "name": "refusal_reason",
+              "source": "request",
+              "sourceRef": "$request.refusal_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Why entry was refused, in the desk's own words. Recorded whether or not the person was barred (BR-7). The use case lists the field as generated and gives it no length."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The desk staff member acting. Never from the request — the visitor is not an actor (BR-1)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The refused visit.",
+            "fields": [
+              {
+                "name": "visit_id",
+                "type": "string",
+                "description": "The refused visit."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Refused. Terminal, and never deleted (BR-8)."
+              },
+              {
+                "name": "recorded_at",
+                "type": "datetime",
+                "description": "When the refusal was recorded (BR-4)."
+              }
+            ]
+          },
+          "errors": []
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Record the refusal whenever the desk turns somebody away. A barred person turned away is exactly the event the school is asked about afterwards, and one never written down did not happen (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never write the reason. It is the desk's account, and it stays on the record for good (BR-7, BR-8).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Do not record a second refusal where the system already refused on a blocklist match — that one was written when it happened (E4).",
+          "derivedFrom": [
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "staff_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A refusal is never undone or deleted — it stays on the record with its reason (BR-8, E9). A visitor admitted later is a new visit, logged with visit.log.in."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "possible match tha, main confirm nahi kar saka, Nadeem Akhtar ko entry mana kar do",
+            "lang": "ur-Latn",
+            "gloss": "it was a possible match, I couldn't confirm, refuse Nadeem Akhtar entry"
+          },
+          "context": "Front desk. visit.log.in stopped on a possible match a minute ago.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "visit.refuse",
+              "inputs": {
+                "visitor_name": "$request.visitor_name → Nadeem Akhtar",
+                "contact_number": "omitted",
+                "host_id": "$request.host_phrase → Mr Kamran",
+                "purpose": "omitted",
+                "refusal_reason": "$request.refusal_reason → possible blocklist match the desk could not rule out",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Refused and recorded in the desk's words. It stays on the record."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-29-01-PC-3",
+      "intent": {
+        "name": "visitors.expected.read",
+        "summary": "The visitors expected — the pre-registrations the desk checks arrivals against.",
+        "routesHere": [
+          "who is expected today?",
+          {
+            "text": "aaj kaun kaun aane wala hai?",
+            "lang": "ur-Latn",
+            "gloss": "who all is coming today?"
+          },
+          {
+            "text": "Principal sahab ka koi mehman expected hai?",
+            "lang": "ur-Latn",
+            "gloss": "is any guest of the Principal expected?"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "kal ke liye ek mehman pre-register kar do",
+              "lang": "ur-Latn",
+              "gloss": "pre-register a guest for tomorrow"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nothing describes creating a pre-registration or who may (OQ-2)."
+          },
+          {
+            "request": {
+              "text": "abhi school mein kaun se visitors hain?",
+              "lang": "ur-Latn",
+              "gloss": "which visitors are in the school now?"
+            },
+            "goesTo": "visits.open.read — UC-29-03.",
+            "note": "Those are visits already logged in, not expected ones."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "visitors.expected.read",
+            "inputs": {
+              "date": "$request.date",
+              "host_id": "$request.host_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written."
+      },
+      "operations": [
+        {
+          "name": "visitors.expected.read",
+          "method": "GET",
+          "path": "/api/v1/visits/expected",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List the pre-registrations for a day, and whether each has arrived.",
+          "parameters": [
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": false,
+              "type": "date",
+              "notes": "The day. Today where the request names none."
+            },
+            {
+              "name": "host_id",
+              "source": "resolved",
+              "sourceRef": "$request.host_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.host_phrase",
+                "onNoMatch": "Refuse. Nobody at this branch matches.",
+                "onAmbiguous": "Ask, naming the matching people at this branch."
+              },
+              "notes": "Only those expected by this person."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who is expected and by whom.",
+            "fields": [
+              {
+                "name": "expected",
+                "type": "object[]",
+                "description": "Visitor, who registered them, the day, and whether they have arrived (BR-2)."
+              },
+              {
+                "name": "pre_registrations_exist",
+                "type": "boolean",
+                "description": "False where none exist at all — every visitor is then treated as unexpected (E6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NONE_RECORDED",
+              "mapsTo": "E6",
+              "httpStatus": 200,
+              "meaning": "No pre-registration exists to check against.",
+              "written": "Nothing.",
+              "treatedAsSuccess": true,
+              "note": "Every visitor is treated as unexpected."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say what an empty list may mean. Nothing in the specification creates a pre-registration, so an empty list may mean nobody is expected — or that nobody can register anybody (E6, OQ-2).",
+          "derivedFrom": [
+            "E6",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "aaj kaun kaun aane wala hai?",
+            "lang": "ur-Latn",
+            "gloss": "who is coming today?"
+          },
+          "context": "Front desk, Johar Town. No pre-registrations exist.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "visitors.expected.read",
+              "inputs": {
+                "date": "omitted — today",
+                "host_id": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-1)."
+            }
+          ],
+          "outcome": "Nobody is recorded as expected. Say that no pre-registration exists at all, so every visitor today will be treated as unexpected — and that nothing yet describes how one is created."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-29-01-PC-4",
+      "intent": {
+        "name": "visits.mine.read",
+        "summary": "Visits to you — who has come to see you, and whether they are still waiting.",
+        "routesHere": [
+          "has anyone come to see me?",
+          {
+            "text": "mujh se milne koi aaya hai?",
+            "lang": "ur-Latn",
+            "gloss": "has anyone come to meet me?"
+          },
+          {
+            "text": "mera visitor aa gaya?",
+            "lang": "ur-Latn",
+            "gloss": "has my visitor arrived?"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "visitor ki entry kar do, main teacher hoon",
+              "lang": "ur-Latn",
+              "gloss": "log the visitor in, I am a teacher"
+            },
+            "goesTo": "Not offered.",
+            "note": "Teachers, coordinators and accounts staff see visits to them and cannot log anybody in. The desk does that — visit.log.in, this use case."
+          },
+          {
+            "request": {
+              "text": "aaj ke saare visitors dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show all of today's visitors"
+            },
+            "goesTo": "gate.log.read — UC-29-03.",
+            "note": "The whole log is a permission the Super Admin grants and nobody holds by default."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "visits.mine.read",
+            "inputs": {
+              "date": "$request.date",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read of visits to this person."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written."
+      },
+      "operations": [
+        {
+          "name": "visits.mine.read",
+          "method": "GET",
+          "path": "/api/v1/visits/mine",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List the visits made to the person asking.",
+          "parameters": [
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": false,
+              "type": "date",
+              "notes": "The day. Today where the request names none."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The person being visited. Never from the request."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who has come to see them.",
+            "fields": [
+              {
+                "name": "visits",
+                "type": "object[]",
+                "description": "Visitor, purpose, pass number, time in, and whether the visit is still open (BR-6)."
+              },
+              {
+                "name": "still_waiting",
+                "type": "object[]",
+                "description": "Visitors logged in and not yet logged out."
+              }
+            ]
+          },
+          "errors": []
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Show only visits to this person. They see who has come to see them, and nobody else's visitors.",
+          "derivedFrom": [
+            "role-based-access"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "staff_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mujh se milne koi aaya hai?",
+            "lang": "ur-Latn",
+            "gloss": "has anyone come to meet me?"
+          },
+          "context": "Class teacher, Grade 5. One visitor logged in to see her ten minutes ago.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "visits.mine.read",
+              "inputs": {
+                "date": "omitted — today",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-1)."
+            }
+          ],
+          "outcome": "One visitor, logged in ten minutes ago with the purpose they gave and their pass number, still at the desk."
+        }
+      ]
+    }
+  ]
+}

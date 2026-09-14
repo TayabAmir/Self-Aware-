@@ -1,0 +1,723 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-05-01",
+    "name": "Mark daily attendance for a class, and correct a mark when the day turns out differently",
+    "module": "Attendance",
+    "file": "../UseCases/UC-05-01.json",
+    "featureRef": "5.1 Manual / session-based attendance marking"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-05-01-PC-1",
+      "intent": {
+        "name": "attendance.daily.mark",
+        "summary": "Save the day's attendance for a class and section, one mark per student. One step, and it is the record a parent is told from.",
+        "routesHere": [
+          "mark attendance for Grade 4 section B — everyone present except Bilal",
+          {
+            "text": "4-B ki hazri laga do — Bilal ke ilawa sab present",
+            "lang": "ur-Latn",
+            "gloss": "mark 4-B's attendance — everyone present except Bilal"
+          },
+          {
+            "text": "aaj ki attendance mark kar do, teen bachay ghair hazir hain",
+            "lang": "ur-Latn",
+            "gloss": "mark today's attendance, three children are absent"
+          },
+          {
+            "text": "Ayesha late aayi hai, baaqi sab hazir",
+            "lang": "ur-Latn",
+            "gloss": "Ayesha came late, everyone else is present"
+          },
+          "record today's register for 6-A"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mark theek kar do, bacha aa gaya hai",
+              "lang": "ur-Latn",
+              "gloss": "correct the mark, the child has arrived"
+            },
+            "goesTo": "attendance.daily.correct — UC-05-01-PC-2",
+            "note": "A mark already saved is corrected with a reason, not marked again (BR-7)."
+          },
+          {
+            "request": {
+              "text": "lecture ki hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark the lecture attendance"
+            },
+            "goesTo": "attendance.lecture.mark — UC-05-02-PC-1",
+            "note": "Period marking and daily marking are separate records and neither overwrites the other (UC-05-02 BR-9)."
+          },
+          {
+            "request": {
+              "text": "walidain ko bata do ke bacha nahi aaya",
+              "lang": "ur-Latn",
+              "gloss": "tell the parents their child was absent"
+            },
+            "goesTo": "attendance.alert.send — UC-05-09",
+            "note": "Marking does not send. The alert is sent by a person once attendance is done (UC-05-09 BR-1)."
+          },
+          {
+            "request": {
+              "text": "is bache ki chhutti manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve this child's leave"
+            },
+            "goesTo": "leave.request.approve — UC-05-11",
+            "note": "Approved leave is applied to the roster before marking begins, so a child on sanctioned leave is never marked absent by mistake (BR-6)."
+          },
+          {
+            "request": {
+              "text": "aaj chhutti hai, hazri nahi lagegi",
+              "lang": "ur-Latn",
+              "gloss": "today is a holiday, no attendance"
+            },
+            "goesTo": "calendar.day.add — UC-05-04",
+            "note": "No attendance is marked on a closed day (BR-3, E2). Which days are closed is the calendar's business."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "attendance.daily.mark",
+            "inputs": {
+              "section_id": "$request.section_phrase",
+              "date": "$request.date",
+              "marks": "$request.marks",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Approved leave is already applied to the roster before the teacher begins (BR-6), so a child on sanctioned leave arrives pre-marked and is not overwritten."
+          }
+        ],
+        "onFailure": "Stop and report. A closed day, a future date, an unmarked student, a section outside the actor's scope and a register already saved are all enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: every student's mark, the marked-by and marked-at stamps and the audit entry together or not at all (E9). The correction window runs from marked_at (BR-5). Absences feed the alert route but nothing is sent by this — a person decides when a family is told (BR-9, UC-05-09 BR-1). A student placed in the section part way through the term carries no mark for the days before their placement (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "attendance.daily.mark",
+          "method": "POST",
+          "path": "/api/v1/attendance/daily",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "section_id + date, since a section carries one daily register per date and a repeat returns ALREADY_MARKED rather than a second one",
+          "purpose": "Save one mark per student for a class, section and date.",
+          "parameters": [
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No section matches, or none assigned to the acting user.",
+                "onAmbiguous": "Ask, naming the candidates with class, section and roster size."
+              },
+              "notes": "The section being marked. A Teacher may mark only their own assigned sections (E6)."
+            },
+            {
+              "name": "date",
+              "source": "request",
+              "sourceRef": "$request.date",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the future (E3) and not an off-day or holiday (E2). Defaults to today on the screen; in a plan it comes from the request, because backdating beyond the configured window is the Coordinator's act rather than the teacher's (BR-4)."
+            },
+            {
+              "name": "marks",
+              "source": "request",
+              "sourceRef": "$request.marks",
+              "required": true,
+              "type": "object[]",
+              "notes": "One entry per student on the roster, each with a mark. Every student carries one — a student left unmarked is not the same as a student marked present, and the difference matters when somebody asks where a child was (BR-2, E1). The marks come from what the actor stated; see PR-1."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The register as saved.",
+            "fields": [
+              {
+                "name": "attendance_id",
+                "type": "string",
+                "description": "The day's record for that section."
+              },
+              {
+                "name": "marked_at",
+                "type": "datetime",
+                "description": "When it was saved. The correction window runs from here (BR-5)."
+              },
+              {
+                "name": "marked_by",
+                "type": "string",
+                "description": "Who saved it."
+              },
+              {
+                "name": "counts",
+                "type": "object",
+                "description": "present, absent, late, on_leave — read back so the actor can check what they asserted."
+              },
+              {
+                "name": "roster_size",
+                "type": "integer",
+                "description": "How many students the section holds."
+              },
+              {
+                "name": "pre_marked_on_leave",
+                "type": "object[]",
+                "description": "Students the roster already carried as on approved leave (BR-6). Not overwritten."
+              },
+              {
+                "name": "not_yet_placed",
+                "type": "object[]",
+                "description": "Students placed after this date, carrying no mark (BR-12, E8)."
+              },
+              {
+                "name": "absences_for_alerting",
+                "type": "integer",
+                "description": "How many absences the alert route could cover. Nothing is sent (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "STUDENT_UNMARKED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A student on the roster carries no mark.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved.",
+              "note": "The message names the count. A student left unmarked is not a student marked present (BR-2)."
+            },
+            {
+              "code": "CLOSED_DAY",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The date is an off-day or a holiday.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved.",
+              "note": "A day the school was closed is not a day anybody was absent (BR-3). The calendar decides which days those are."
+            },
+            {
+              "code": "FUTURE_DATE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The date is in the future.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved."
+            },
+            {
+              "code": "NOT_ASSIGNED",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "A Teacher opened a section not assigned to them.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved."
+            },
+            {
+              "code": "ALREADY_MARKED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "Attendance has already been saved for this class and date.",
+              "written": "Nothing.",
+              "notWritten": "No second register.",
+              "note": "The message names the time it was marked. Changing it is a correction, not a second save (BR-7)."
+            },
+            {
+              "code": "SAVE_FAILED",
+              "mapsTo": "E9",
+              "httpStatus": 500,
+              "meaning": "The save failed.",
+              "written": "Nothing.",
+              "notWritten": "No marks recorded.",
+              "note": "Message: \"Attendance could not be saved. Your marks are still on screen.\""
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report the roster and the resulting counts before the plan is emitted. \"Everyone present except Bilal\" asserts twenty-nine present marks the actor never said aloud, and each of those is evidence a parent may be shown (BR-2).",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never default a student to present because the request did not mention them. Unmarked and present are different facts, and the difference matters when somebody asks where a child was (BR-2) — where the request does not account for everyone, ask rather than filling the gaps.",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never mark a closed day. A day the school was shut is not a day anybody was absent (BR-3), and E2 refusing it is the calendar doing its job — never move the date to the nearest open day.",
+          "derivedFrom": [
+            "BR-3",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never overwrite a pre-applied leave mark. Approved leave is applied to the roster before marking begins (BR-6) precisely so a child on sanctioned leave is not marked absent, and replacing it undoes a decision somebody made.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never re-emit after ALREADY_MARKED. A register already saved is corrected with a reason, and the original mark stays visible (BR-7) — saving again would be a second register for one day.",
+          "derivedFrom": [
+            "BR-7",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never chain an alert onto marking. Absences feed the alert route but a person decides when a family is told (BR-9), and a parent messaged automatically is one the school did not choose to message.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "date comes from the request, never defaulted to today in a plan. Backdating within the window is permitted; beyond it the Coordinator marks, because a record entered a fortnight later is a different kind of claim (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A saved register is not deleted or re-saved. A wrong mark is corrected through attendance.daily.correct, with a reason, and the original stays visible alongside it — attendance is evidence, and evidence that can be quietly changed is not evidence (BR-7). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "4-B ki aaj ki hazri laga do — Bilal ghair hazir hai, baaqi sab present",
+            "lang": "ur-Latn",
+            "gloss": "mark 4-B's attendance for today — Bilal is absent, everyone else present"
+          },
+          "context": "Teacher assigned to 4-B, Johar Town branch. Today is 08-09-2026, a working day. The roster holds 30, one already on approved leave.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.daily.mark",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"Grade 4 section B\"",
+                "date": "2026-09-08",
+                "marks": "$request.marks → Bilal Absent; the remaining 28 Present; Ayesha left as On leave",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The roster of 30 and the resulting counts are reported before the plan is emitted (PR-1). Ayesha's pre-applied leave mark is not overwritten (PR-4)."
+            }
+          ],
+          "outcome": "The register is saved: 28 present, 1 absent, 1 on leave. Report the counts back. One absence is available to the alert route, but nothing has been sent — that is a person's decision (PR-6)."
+        },
+        {
+          "request": {
+            "text": "aaj ki hazri laga do",
+            "lang": "ur-Latn",
+            "gloss": "mark today's attendance"
+          },
+          "context": "Teacher assigned to 6-A, Johar Town branch, with no marks stated in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.daily.mark",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"6-A\"",
+                "date": "2026-09-08",
+                "marks": "$request.marks — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: there are no marks to save, and defaulting the roster to present would assert thirty facts nobody stated (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is written. Report the roster and ask who was absent, late or on leave — everyone else is then present, and the actor confirms that."
+        },
+        {
+          "request": {
+            "text": "28 tareekh ki hazri laga do",
+            "lang": "ur-Latn",
+            "gloss": "mark attendance for the 28th"
+          },
+          "context": "Teacher, Johar Town branch, where 28-09-2026 is a public holiday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.daily.mark",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "date": "2026-09-28",
+                "marks": "$request.marks",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted with the date as given. The API returns CLOSED_DAY (E2)."
+            }
+          ],
+          "outcome": "Nothing is saved. Report that the school was closed on 28 September — and do not move the date to the 29th (PR-3). A day the school was shut is not a day anybody was absent."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-05-01-PC-2",
+      "intent": {
+        "name": "attendance.daily.correct",
+        "summary": "Change a mark already saved, with the reason it changed. One step, and the original stays visible.",
+        "routesHere": [
+          "change Bilal to present, he arrived at nine",
+          {
+            "text": "Bilal ko present kar do, wo nau baje aa gaya tha",
+            "lang": "ur-Latn",
+            "gloss": "change Bilal to present, he arrived at nine"
+          },
+          {
+            "text": "mark galat laga tha, theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "the mark was wrong, correct it"
+          },
+          {
+            "text": "ye bacha absent nahi tha, late tha",
+            "lang": "ur-Latn",
+            "gloss": "this child was not absent, he was late"
+          },
+          "correct yesterday's mark for Ayesha — she was on leave"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "hazri laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark the attendance"
+            },
+            "goesTo": "attendance.daily.mark — UC-05-01-PC-1",
+            "note": "Where the register has not been saved yet."
+          },
+          {
+            "request": {
+              "text": "chhutti manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the leave"
+            },
+            "goesTo": "leave.request.approve — UC-05-11",
+            "note": "Leave applied after the fact updates the mark itself (UC-05-11 BR-9) — approving it is the Coordinator's act, not a correction here."
+          },
+          {
+            "request": {
+              "text": "walidain ko bata do ke ghalti thi",
+              "lang": "ur-Latn",
+              "gloss": "tell the parents it was a mistake"
+            },
+            "goesTo": "Not offered.",
+            "note": "Where an alert has already gone, no retraction is sent — a parent told their child was absent is not told twice (BR-10, UC-05-09 BR-12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "attendance.daily.correct",
+            "inputs": {
+              "attendance_id": "$request.attendance_phrase",
+              "student_id": "$request.student_phrase",
+              "new_mark": "$request.new_mark",
+              "correction_reason": "$request.correction_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Within the hour of saving the teacher may correct their own marks; after it, the Coordinator does — the teacher can ask, but cannot change it themselves (BR-5, BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. A closed correction window, a missing reason and a section outside the actor's scope are all enforced by the API and arrive as errors.",
+        "atomicity": "One write: the new mark, what it was changed from, who changed it and why, together with the audit entry or not at all. Nothing is overwritten — the original mark stays visible, because attendance is evidence and evidence that can be quietly changed is not evidence (BR-7). A correction from absent to present or late suppresses an alert not yet sent, and does not send a second message where one has already gone (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "attendance.daily.correct",
+          "method": "POST",
+          "path": "/api/v1/attendance/daily/{attendance_id}/corrections",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "attendance_id + student_id + new_mark, so a repeat does not record a second correction to the same value",
+          "purpose": "Change one student's mark on a saved register, keeping the original visible.",
+          "parameters": [
+            {
+              "name": "attendance_id",
+              "source": "resolved",
+              "sourceRef": "$request.attendance_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "attendance_record",
+                "fromPhrase": "$request.attendance_phrase",
+                "onNoMatch": "Refuse. No saved register matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with class, section, date and when they were marked."
+              },
+              "notes": "The saved register, resolved from the section and date the actor named."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student on that register matches.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The student whose mark changes."
+            },
+            {
+              "name": "new_mark",
+              "source": "request",
+              "sourceRef": "$request.new_mark",
+              "required": true,
+              "type": "enum: Present | Absent | Late | On leave",
+              "notes": "What the mark becomes. Read from what the actor stated — absent, late and on leave are three different facts about a morning."
+            },
+            {
+              "name": "correction_reason",
+              "source": "request",
+              "sourceRef": "$request.correction_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters. Required for every correction, whoever makes it (BR-7, E5). The actor's own words — attendance is evidence."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The correction, and what it replaced.",
+            "fields": [
+              {
+                "name": "correction_id",
+                "type": "string",
+                "description": "The correction."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "Whose mark changed."
+              },
+              {
+                "name": "changed_from",
+                "type": "string",
+                "description": "The previous mark, kept alongside the new one (BR-7)."
+              },
+              {
+                "name": "new_mark",
+                "type": "string",
+                "description": "What it is now."
+              },
+              {
+                "name": "corrected_by",
+                "type": "string",
+                "description": "Who changed it."
+              },
+              {
+                "name": "within_teacher_window",
+                "type": "boolean",
+                "description": "True where the teacher's hour had not passed (BR-5)."
+              },
+              {
+                "name": "alert_suppressed",
+                "type": "boolean",
+                "description": "True where an alert had not yet gone and has now been stopped (BR-10)."
+              },
+              {
+                "name": "alert_already_sent",
+                "type": "boolean",
+                "description": "True where the parent has already been told. No retraction is sent (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WINDOW_PASSED",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The teacher's correction window has passed.",
+              "written": "Nothing.",
+              "notWritten": "Not corrected.",
+              "note": "Message: \"The hour for changing this has passed. Ask your Coordinator.\" The teacher can ask, but cannot change it themselves (BR-8)."
+            },
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "A correction was made with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not corrected.",
+              "note": "Message: \"Give a reason for changing this mark.\" Ask; never compose one."
+            },
+            {
+              "code": "NOT_ASSIGNED",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The section is not assigned to the acting user.",
+              "written": "Nothing.",
+              "notWritten": "Not corrected."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the correction reason. Attendance is evidence, and a mark changed with an explanation nobody gave is a change nobody can defend (BR-7, E5).",
+          "derivedFrom": [
+            "BR-7",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never treat WINDOW_PASSED as something to route around. After the hour the Coordinator corrects it (BR-8) — the teacher can ask, and asking is not something a plan does on their behalf.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-8",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Read the new mark from what the actor said, never from what would tidy the register. Absent, Late and On leave are three different facts about a morning, and On leave in particular asserts that leave was approved.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report whether the alert had already gone. A correction from absent suppresses an unsent alert but sends no retraction where one has gone (BR-10) — the parent has been told something that is now wrong, and somebody may want to phone them.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never correct a mark to On leave in place of approving leave. Leave applied after the fact updates the mark through its own route (UC-05-11 BR-9), with the Coordinator's decision behind it.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A correction is not undone. Correcting it again is another recorded change, and every version stays visible with what it was changed from (BR-7). Where an alert has gone, no retraction follows (BR-10). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Bilal ko present kar do, wo nau baje aa gaya tha",
+            "lang": "ur-Latn",
+            "gloss": "change Bilal to present, he arrived at nine"
+          },
+          "context": "Teacher, Johar Town branch, twenty minutes after saving the register.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.daily.correct",
+              "inputs": {
+                "attendance_id": "$request.attendance_phrase → \"4-B, 08-09-2026\"",
+                "student_id": "$request.student_phrase → \"Bilal\"",
+                "new_mark": "Present",
+                "correction_reason": "Arrived at 09:00, after registration.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Within the teacher's hour, so they may correct it themselves (BR-5)."
+            }
+          ],
+          "outcome": "The mark becomes Present with Absent kept alongside it (BR-7). The alert had not yet gone and is now suppressed — report that, because the parent will not be told anything (PR-4)."
+        },
+        {
+          "request": {
+            "text": "kal ka mark theek karna hai, bacha late tha absent nahi",
+            "lang": "ur-Latn",
+            "gloss": "yesterday's mark needs correcting, the child was late not absent"
+          },
+          "context": "Teacher, Johar Town branch, on a register saved yesterday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.daily.correct",
+              "inputs": {
+                "attendance_id": "$request.attendance_phrase",
+                "student_id": "$request.student_phrase",
+                "new_mark": "Late",
+                "correction_reason": "$request.correction_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns WINDOW_PASSED (E4) — the hour ran out yesterday."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the Coordinator makes corrections after the hour, and that the teacher can ask them — do not offer to do it on their behalf (PR-2)."
+        },
+        {
+          "request": {
+            "text": "is bache ko present kar do",
+            "lang": "ur-Latn",
+            "gloss": "change this child to present"
+          },
+          "context": "Coordinator, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "attendance.daily.correct",
+              "inputs": {
+                "attendance_id": "$request.attendance_phrase",
+                "student_id": "$request.student_phrase",
+                "new_mark": "Present",
+                "correction_reason": "$request.correction_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: correction_reason is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why the mark is changing — attendance is evidence, and the reason is what makes the change defensible."
+        }
+      ]
+    }
+  ]
+}

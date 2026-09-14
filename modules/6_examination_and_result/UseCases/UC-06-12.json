@@ -1,0 +1,1190 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-06-12",
+  "featureRef": "6.12 Merit list generation",
+  "name": "Rank students into an ordered merit list and control how much of it families are shown",
+  "module": "Examination",
+  "alsoAffectsModules": [
+    "Messaging (SMS, WhatsApp, Email)"
+  ],
+  "priority": "MVP",
+  "priorityReason": "Positions are produced here and nowhere else, and publishing a ranking wrongly cannot be undone.",
+  "goal": {
+    "actor": "a Coordinator",
+    "capability": "to rank students by performance and choose how much of that ranking parents see",
+    "outcome": "the school has a defensible order, and families learn only what the school decided to tell them"
+  },
+  "primaryActor": "Coordinator",
+  "secondaryActors": [
+    {
+      "actor": "Principal / School Admin",
+      "involvement": "Reviews the ranking and approves it for publication."
+    },
+    {
+      "actor": "Student / Parent",
+      "involvement": "Sees whatever the Coordinator chooses to publish."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "A mark is corrected after publication, which requires the list to be recalculated and reissued.",
+        "source": "UC-06-02"
+      },
+      {
+        "type": "event",
+        "description": "A makeup is marked, which returns a student to the list.",
+        "source": "UC-06-16"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "Every subject result for the exam has been approved by the Coordinator. Until then the option is not available (BR-1).",
+      "establishedBy": {
+        "id": "UC-06-03",
+        "name": "Gradebook and automatic grade calculation",
+        "link": "UC-06-03.json"
+      }
+    },
+    {
+      "condition": "Every absence in the exam has been classified.",
+      "establishedBy": {
+        "id": "UC-06-15",
+        "name": "Recording a student absent from an exam",
+        "link": "UC-06-15.json"
+      }
+    },
+    {
+      "condition": "An authenticated session exists. Generating requires the Coordinator; approving requires the Principal or School Admin.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "The scope selected contains students who sat the same set of subjects (BR-8)."
+    }
+  ],
+  "postConditions": [
+    "An ordered list exists ranking the students in scope, and it is the only place in the system a position is produced.",
+    "Students on equal marks share a position and the next position is skipped, so two students placed second are followed by a fourth.",
+    "Any student with an unresolved absence was left out until their makeup is marked or the absence is finalised as unexcused.",
+    "The Principal or School Admin approved the list before anything reached a family.",
+    "Families were shown only what the Coordinator chose — their own child's position, or the top three announced to all with each family also seeing its own child.",
+    "A published list can be withdrawn, and where a mark changed it was recalculated, reissued, and every family whose position changed was told.",
+    "The ranking criterion used is recorded with the list, so a published order stays explainable.",
+    "No result was altered. The list reads approved results and writes only its own order."
+  ],
+  "screens": [
+    {
+      "name": "Merit list",
+      "route": "/exams/{examId}/merit",
+      "sidebar": "Examination",
+      "columns": [
+        "Position",
+        "Roll number",
+        "Student",
+        "Class",
+        "Section",
+        "Total marks",
+        "Percentage",
+        "Shared position"
+      ],
+      "defaultSort": "Position ascending",
+      "filters": [
+        "Scope",
+        "Class",
+        "Section",
+        "Subject set"
+      ],
+      "actions": [
+        "Generate",
+        "Review",
+        "Submit for approval",
+        "Approve",
+        "Choose publication",
+        "Publish",
+        "Withdraw",
+        "Recalculate"
+      ],
+      "visibleTo": [
+        "Coordinator",
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Choose publication",
+      "route": "/exams/{examId}/merit/publish",
+      "sidebar": "Examination",
+      "actions": [
+        "Own position only",
+        "Top three to all plus own position",
+        "Preview",
+        "Publish"
+      ],
+      "visibleTo": [
+        "Coordinator"
+      ]
+    },
+    {
+      "name": "Excluded students",
+      "route": "/exams/{examId}/merit/excluded",
+      "sidebar": "Examination",
+      "columns": [
+        "Student",
+        "Class",
+        "Subject",
+        "Absence classification",
+        "Makeup status",
+        "Reason excluded"
+      ],
+      "defaultSort": "Class, then student",
+      "actions": [
+        "Open absence",
+        "Open makeup"
+      ],
+      "visibleTo": [
+        "Coordinator",
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "My position",
+      "route": "/portal/results/merit",
+      "sidebar": "Portal",
+      "columns": [
+        "Exam",
+        "Position",
+        "Out of",
+        "Total marks"
+      ],
+      "visibleTo": [
+        "Student",
+        "Parent / Guardian"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Exam",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "An exam whose every subject result has been approved (BR-1).",
+      "example": "First Term Examination",
+      "lookupSource": "Exams with every subject result approved"
+    },
+    {
+      "name": "Scope",
+      "type": "enum",
+      "required": "yes",
+      "validation": "What the list covers.",
+      "default": "Class",
+      "example": "Class",
+      "enumValues": [
+        "Section",
+        "Class",
+        "Session year"
+      ]
+    },
+    {
+      "name": "Class",
+      "type": "lookup",
+      "required": "conditional",
+      "example": "Grade 9",
+      "requiredWhen": "Scope is Class or Section",
+      "lookupSource": "Classes in the Coordinator's remit"
+    },
+    {
+      "name": "Section",
+      "type": "lookup",
+      "required": "conditional",
+      "example": "Section A",
+      "requiredWhen": "Scope is Section",
+      "lookupSource": "Sections of the chosen class"
+    },
+    {
+      "name": "Subject set",
+      "type": "generated",
+      "required": "no",
+      "validation": "The set of subjects the ranked students all took. A list is produced per identical subject set (BR-8).",
+      "example": "Physics, Chemistry, Maths, English, Urdu"
+    },
+    {
+      "name": "Ranking criterion",
+      "type": "enum",
+      "required": "yes",
+      "validation": "How students are ordered. Recorded with the list so a published order stays explainable (BR-9).",
+      "default": "Total marks",
+      "example": "Total marks",
+      "enumValues": [
+        "Total marks",
+        "Percentage",
+        "Weighted score"
+      ]
+    },
+    {
+      "name": "Position",
+      "type": "generated",
+      "required": "no",
+      "validation": "The student's rank. Equal marks share a position and the next is skipped (BR-3).",
+      "example": 2
+    },
+    {
+      "name": "Shared position",
+      "type": "generated",
+      "required": "no",
+      "validation": "Set where more than one student holds that position.",
+      "default": false,
+      "example": true
+    },
+    {
+      "name": "Publication choice",
+      "type": "enum",
+      "required": "conditional",
+      "validation": "What families are shown. Chosen deliberately, not defaulted (BR-5).",
+      "example": "Own position only",
+      "enumValues": [
+        "Own position only",
+        "Top three to all, plus own position"
+      ],
+      "requiredWhen": "The list is being published"
+    },
+    {
+      "name": "Withdrawal reason",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 500 characters. Required to withdraw a published list (BR-7).",
+      "example": "Chemistry marks are being re-totalled after a re-check request.",
+      "requiredWhen": "A published list is being withdrawn"
+    },
+    {
+      "name": "Excluded students",
+      "type": "generated",
+      "required": "no",
+      "validation": "Students left out because an absence is unresolved, listed with the reason (BR-2).",
+      "example": "3 students awaiting a makeup"
+    },
+    {
+      "name": "Status",
+      "type": "generated",
+      "required": "no",
+      "validation": "See the lifecycle below.",
+      "default": "Generated",
+      "example": "Published"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Merit list",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One per exam per scope per version, with its criterion and its order. Never deleted."
+    },
+    {
+      "entity": "Merit position",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "One per ranked student, with their position and whether it is shared."
+    },
+    {
+      "entity": "Merit exclusion",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "One per student left out, with the reason (BR-2)."
+    },
+    {
+      "entity": "Result",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read as the input. Never changed here (BR-11)."
+    },
+    {
+      "entity": "Exam absence",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read to determine whether a student's absences are resolved."
+    },
+    {
+      "entity": "Merit approval",
+      "operations": [
+        "create"
+      ],
+      "notes": "One row per approval or withdrawal, with who and when. Append only."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Every generation, approval, publication, withdrawal and recalculation."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Coordinator",
+      "actions": [
+        "view",
+        "create",
+        "edit"
+      ],
+      "rowScope": "Classes in their remit.",
+      "notes": "Generates the list, chooses how it is published, and reissues it after a correction. Cannot approve it (BR-4)."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view",
+        "approve"
+      ],
+      "rowScope": "All branches.",
+      "notes": "Reviews and approves the list for publication."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "approve"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Approves alongside the Principal."
+    },
+    {
+      "actor": "Teacher",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Their own classes.",
+      "notes": "Sees the list once approved. Does not generate or publish it."
+    },
+    {
+      "actor": "Student",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own position, and the top three where the school publishes them.",
+      "notes": "Sees only what the Coordinator chose to publish (BR-5)."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own children only, on the same terms."
+    },
+    {
+      "actor": "Staff, Accounts",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "A merit list can be generated only once every subject result for the exam has been approved. Until then the option is not available, because a ranking built on part of the marks is not a ranking."
+    },
+    {
+      "id": "BR-2",
+      "rule": "A student with an unresolved absence in any subject is left out of the list until the makeup is marked or the absence is finalised as unexcused. Ranking a student whose paper is still outstanding places everybody below them wrongly."
+    },
+    {
+      "id": "BR-3",
+      "rule": "Students on equal marks share the same position and the next position is skipped. Two students placed second are followed by a fourth, not a third."
+    },
+    {
+      "id": "BR-4",
+      "rule": "The Coordinator generates; the Principal or School Admin approves before publication. A ranking published wrongly cannot be unseen by the families who saw it."
+    },
+    {
+      "id": "BR-5",
+      "rule": "The Coordinator chooses what parents are shown: either every family is sent their own child's position, or the first, second and third positions are announced to all parents and each family additionally sees its own child's result. The choice is made deliberately for each list."
+    },
+    {
+      "id": "BR-6",
+      "rule": "A family never sees another child's position beyond the top three where the school chose to announce them."
+    },
+    {
+      "id": "BR-7",
+      "rule": "A published list can be withdrawn, with a reason. Where a mark is corrected after publication the list is recalculated, the corrected version is reissued, and every family whose position changed is notified."
+    },
+    {
+      "id": "BR-8",
+      "rule": "Ranking by total marks compares only students who sat the same set of subjects. In a Subject Wise class students take different subjects and different subject counts, so one list across such a class is not meaningful. The list is produced per identical subject set, or per subject."
+    },
+    {
+      "id": "BR-9",
+      "rule": "The ranking criterion used is recorded with the list. An order produced on total marks is not the same as one produced on percentage, and a published position must stay explainable."
+    },
+    {
+      "id": "BR-10",
+      "rule": "Positions are produced here and nowhere else. No other use case in the module calculates a rank."
+    },
+    {
+      "id": "BR-11",
+      "rule": "The list reads approved results and never changes them. Correcting a position means correcting a mark and regenerating."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Merit list",
+      "states": [
+        "Generated",
+        "Awaiting approval",
+        "Approved",
+        "Published",
+        "Withdrawn",
+        "Recalculated"
+      ],
+      "initial": "Generated",
+      "terminal": [],
+      "transitions": [
+        {
+          "from": "Generated",
+          "to": "Awaiting approval",
+          "triggeredBy": "Coordinator",
+          "condition": "Submitted for approval (BR-4)."
+        },
+        {
+          "from": "Awaiting approval",
+          "to": "Approved",
+          "triggeredBy": "Principal / Director or School Admin",
+          "condition": "Approved for publication."
+        },
+        {
+          "from": "Awaiting approval",
+          "to": "Generated",
+          "triggeredBy": "Principal / Director",
+          "condition": "Returned to the Coordinator with a reason. Nothing has been published."
+        },
+        {
+          "from": "Approved",
+          "to": "Published",
+          "triggeredBy": "Coordinator",
+          "condition": "A publication choice is made and the list is released (BR-5)."
+        },
+        {
+          "from": "Published",
+          "to": "Withdrawn",
+          "triggeredBy": "Coordinator",
+          "condition": "Withdrawn with a reason (BR-7)."
+        },
+        {
+          "from": "Withdrawn",
+          "to": "Recalculated",
+          "triggeredBy": "Coordinator",
+          "condition": "A mark changed and the list is regenerated."
+        },
+        {
+          "from": "Published",
+          "to": "Recalculated",
+          "triggeredBy": "Coordinator",
+          "condition": "A mark changed after publication (BR-7)."
+        },
+        {
+          "from": "Recalculated",
+          "to": "Published",
+          "triggeredBy": "Coordinator",
+          "condition": "Reissued, and every family whose position changed is notified (BR-7)."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Coordinator",
+      "navigation": "Login → Examination → Merit list",
+      "userAction": "Selects the exam and the scope — a section, a class, or the whole session year.",
+      "function": "openMeritList(examId, scope, classId, sectionId)",
+      "systemResponse": "Offers the option only where every subject result for the exam has been approved.",
+      "rules": [
+        "BR-1"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "excludeUnresolvedAbsences(examId, scope)",
+      "systemResponse": "Leaves out any student with an unresolved absence in any subject, and lists them with the reason.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "System",
+      "navigation": "Merit list",
+      "userAction": "—",
+      "function": "rankStudents(examId, scope, criterion)",
+      "systemResponse": "Ranks the students in scope by the chosen criterion, giving equal marks the same position and skipping the next.",
+      "rules": [
+        "BR-3",
+        "BR-8",
+        "BR-9",
+        "BR-10"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "Coordinator",
+      "navigation": "Merit list → Submit for approval",
+      "userAction": "Reviews the ranking and submits it.",
+      "function": "submitMeritListForApproval(meritListId)",
+      "systemResponse": "Holds it for approval. Nothing has reached a family.",
+      "rules": [
+        "BR-4"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "Principal / Director or School Admin",
+      "navigation": "Login → Examination → Merit list → Approve",
+      "userAction": "Reviews the ranking and approves it for publication.",
+      "function": "approveMeritList(meritListId)",
+      "systemResponse": "Records the approval, which permits publication.",
+      "rules": [
+        "BR-4"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "Coordinator",
+      "navigation": "Merit list → Choose publication → Publish",
+      "userAction": "Chooses what parents are shown and releases the list.",
+      "function": "publishMeritList(meritListId, publicationChoice)",
+      "systemResponse": "Sends each family their own child's position, and where chosen, announces the top three to all.",
+      "rules": [
+        "BR-5",
+        "BR-6"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "Coordinator",
+      "navigation": "Merit list → Withdraw, then Recalculate",
+      "userAction": "Withdraws and regenerates the list where a mark is corrected after publication.",
+      "function": "withdrawMeritList(meritListId, reason); recalculateMeritList(meritListId)",
+      "systemResponse": "Reissues the corrected version and notifies every family whose position changed.",
+      "rules": [
+        "BR-7",
+        "BR-11"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 1,
+      "condition": "A subject result has not been approved",
+      "actor": "Coordinator",
+      "navigation": "Login → Examination → Merit list",
+      "behaviour": "The option is not available at all, since a ranking built on part of the marks is not a ranking (BR-1).",
+      "function": "openMeritList(examId, scope, classId, sectionId)"
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 2,
+      "condition": "A student has an unresolved absence",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "They are left out and listed with the reason, until the makeup is marked or the absence is finalised as unexcused (BR-2).",
+      "function": "excludeUnresolvedAbsences(examId, scope)",
+      "resumesAtStep": 3
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 3,
+      "condition": "Two students hold the same total",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "They share the position and the next is skipped, so two students placed second are followed by a fourth (BR-3).",
+      "function": "rankStudents(examId, scope, criterion)",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 3,
+      "condition": "The class is Subject Wise",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "A separate list is produced per identical subject set, or per subject. One list across students who took different subjects would compare figures that are not comparable (BR-8).",
+      "function": "rankStudents(examId, scope, criterion)",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 6,
+      "condition": "The school announces the top three",
+      "actor": "Coordinator",
+      "navigation": "Choose publication → Top three to all plus own position",
+      "behaviour": "The first, second and third positions are announced to every parent, and each family additionally sees its own child's result (BR-5).",
+      "function": "publishMeritList(meritListId, 'Top three to all, plus own position')",
+      "resumesAtStep": 7
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 7,
+      "condition": "A mark is corrected after publication",
+      "actor": "Coordinator",
+      "navigation": "Merit list → Withdraw → Recalculate → Publish",
+      "behaviour": "The list is withdrawn, recalculated and reissued, and every family whose position changed is told. A family that saw one position and later another is owed that (BR-7).",
+      "function": "recalculateMeritList(meritListId)",
+      "resumesAtStep": 6
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 1,
+      "condition": "A subject result is not yet approved",
+      "systemResponse": "The option is not offered (BR-1).",
+      "messageShown": "Chemistry results have not been released. The merit list cannot be generated yet.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E2",
+      "atStep": 2,
+      "condition": "Every student in scope has an unresolved absence",
+      "systemResponse": "No list is produced.",
+      "messageShown": "No student in this scope has a complete set of marks.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E3",
+      "atStep": 3,
+      "condition": "The scope contains students who took different subject sets",
+      "systemResponse": "Separate lists are produced rather than one (BR-8).",
+      "messageShown": "Grade 9 has three subject sets. A separate list is produced for each.",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E4",
+      "atStep": 5,
+      "condition": "The Coordinator attempts to approve their own list",
+      "systemResponse": "It is refused (BR-4).",
+      "messageShown": "Only the Principal or School Admin can approve a merit list.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 6,
+      "condition": "Publication is attempted before approval",
+      "systemResponse": "It is refused (BR-4).",
+      "messageShown": "This list has not been approved.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 6,
+      "condition": "No publication choice is made",
+      "systemResponse": "The list is not published (BR-5).",
+      "messageShown": "Choose what parents will be shown before publishing.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E7",
+      "atStep": 7,
+      "condition": "A published list is withdrawn with no reason",
+      "systemResponse": "It is not withdrawn (BR-7).",
+      "messageShown": "Give a reason for withdrawing a published list.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E8",
+      "atStep": 7,
+      "condition": "A mark changes and the list is not recalculated",
+      "systemResponse": "The published list is flagged as out of date rather than left reading as current.",
+      "messageShown": "A mark has changed since this list was published. Recalculate and reissue it.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E9",
+      "atStep": 3,
+      "condition": "A user looks for a position anywhere else in the module",
+      "systemResponse": "There is none. Positions are produced here alone (BR-10).",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Own position published",
+      "recipient": "Student and Parent / Guardian",
+      "channels": [
+        "whatsapp",
+        "inApp"
+      ],
+      "template": "MERIT_POSITION_OWN",
+      "contents": [
+        "Child name",
+        "Exam",
+        "Position",
+        "Out of how many",
+        "Total marks"
+      ],
+      "retry": "Per the Messaging module policy.",
+      "blocking": false
+    },
+    {
+      "event": "Top three announced",
+      "recipient": "All parents in scope",
+      "channels": [
+        "whatsapp",
+        "inApp"
+      ],
+      "template": "MERIT_TOP_THREE",
+      "contents": [
+        "Exam",
+        "Class or section",
+        "The first, second and third positions"
+      ],
+      "retry": "Per the Messaging module policy.",
+      "blocking": false
+    },
+    {
+      "event": "Position changed after a correction",
+      "recipient": "Families whose position changed",
+      "channels": [
+        "whatsapp",
+        "inApp"
+      ],
+      "template": "MERIT_POSITION_CHANGED",
+      "contents": [
+        "Child name",
+        "Previous position",
+        "Corrected position",
+        "That a mark was corrected"
+      ],
+      "retry": "Per the Messaging module policy.",
+      "blocking": false
+    },
+    {
+      "event": "List awaiting approval",
+      "recipient": "Principal / Director and School Admin",
+      "channels": [
+        "inApp"
+      ],
+      "template": "MERIT_AWAITING_APPROVAL",
+      "contents": [
+        "Exam",
+        "Scope",
+        "Students ranked",
+        "Students excluded"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "Published positions appear in the student and parent portal.",
+      "affects": {
+        "id": "UC-15-01",
+        "name": "Parent and student portal",
+        "link": "UC-15-01.json"
+      }
+    },
+    {
+      "effect": "A student returns to the list once their makeup is marked.",
+      "affects": {
+        "id": "UC-06-16",
+        "name": "Makeup exam for an absent student",
+        "link": "UC-06-16.json"
+      }
+    },
+    {
+      "effect": "The position may be carried onto the report card.",
+      "affects": {
+        "id": "UC-24-01",
+        "name": "Custom report builder",
+        "link": "UC-24-01.json"
+      }
+    },
+    {
+      "effect": "A corrected mark makes the published list out of date until it is reissued.",
+      "affects": {
+        "id": "UC-06-02",
+        "name": "Marks entry",
+        "link": "UC-06-02.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Merit list",
+      "formats": [
+        "screen",
+        "print",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Position",
+        "Roll number",
+        "Student",
+        "Class",
+        "Section",
+        "Total marks",
+        "Percentage",
+        "Shared"
+      ],
+      "grouping": "By subject set",
+      "totals": "Students ranked, and students excluded"
+    },
+    {
+      "name": "Students excluded from the merit list",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Student",
+        "Class",
+        "Subject",
+        "Classification",
+        "Makeup status",
+        "Reason excluded"
+      ],
+      "grouping": "By class",
+      "totals": "Students awaiting resolution"
+    },
+    {
+      "name": "Merit list versions",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Version",
+        "Generated at",
+        "Criterion",
+        "Published",
+        "Withdrawn",
+        "Reason",
+        "Positions changed"
+      ],
+      "grouping": "By exam",
+      "totals": "Versions issued"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "An exam where Chemistry results have not been approved",
+      "when": "the Coordinator opens the merit list",
+      "then": "the option is not available"
+    },
+    {
+      "id": "AC-2",
+      "given": "An exam with every subject approved and 3 students awaiting a makeup",
+      "when": "the list is generated",
+      "then": "those 3 are left out and listed with the reason"
+    },
+    {
+      "id": "AC-3",
+      "given": "Two students on 482 marks and one on 478",
+      "when": "the list is generated",
+      "then": "both share second place and the next student is fourth"
+    },
+    {
+      "id": "AC-4",
+      "given": "A generated list",
+      "when": "the Coordinator attempts to publish it without approval",
+      "then": "publication is refused"
+    },
+    {
+      "id": "AC-5",
+      "given": "An approved list published as own position only",
+      "when": "a guardian opens the portal",
+      "then": "they see their own child's position and no other student's"
+    },
+    {
+      "id": "AC-6",
+      "given": "An approved list published with the top three announced",
+      "when": "a guardian opens the portal",
+      "then": "they see the first, second and third positions and their own child's result"
+    },
+    {
+      "id": "AC-7",
+      "given": "A Subject Wise class where students took different subject sets",
+      "when": "the list is generated",
+      "then": "a separate list is produced per identical subject set rather than one across the class"
+    },
+    {
+      "id": "AC-8",
+      "given": "A published list where a mark is then corrected",
+      "when": "the list is recalculated and reissued",
+      "then": "every family whose position changed is notified"
+    },
+    {
+      "id": "AC-9",
+      "given": "A published list where a mark changed and the list was not reissued",
+      "when": "it is opened",
+      "then": "it is flagged as out of date rather than reading as current"
+    },
+    {
+      "id": "AC-10",
+      "given": "A student whose makeup is marked",
+      "when": "the list is regenerated",
+      "then": "they now appear in it"
+    },
+    {
+      "id": "AC-11",
+      "given": "Any published list",
+      "when": "the ranking criterion is inspected",
+      "then": "it is recorded with the list, so the order stays explainable"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-06-03",
+        "name": "Gradebook and automatic grade calculation",
+        "link": "UC-06-03.json",
+        "why": "Supplies the approved results and gates the option."
+      },
+      {
+        "id": "UC-06-15",
+        "name": "Recording a student absent from an exam",
+        "link": "UC-06-15.json",
+        "why": "Supplies the absences that exclude a student."
+      },
+      {
+        "id": "UC-06-16",
+        "name": "Makeup exam for an absent student",
+        "link": "UC-06-16.json",
+        "why": "Resolves an absence and returns a student to the list."
+      },
+      {
+        "id": "UC-06-02",
+        "name": "Marks entry",
+        "link": "UC-06-02.json",
+        "why": "A corrected mark makes a published list out of date."
+      },
+      {
+        "id": "UC-27-01",
+        "name": "Class creation",
+        "link": "UC-27-01.json",
+        "why": "Supplies whether a class is Fixed or Subject Wise, which decides how the list is produced."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Keeps generation and approval in separate hands."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      }
+    ],
+    "masterData": [
+      "Approved exam results",
+      "Ranking criterion",
+      "Publication choices"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Calculating grades and results",
+      "handledBy": {
+        "id": "UC-06-03",
+        "name": "Gradebook and automatic grade calculation",
+        "link": "UC-06-03.json"
+      }
+    },
+    {
+      "item": "Combining exams into a cumulative figure, which produces no position",
+      "handledBy": {
+        "id": "UC-06-05",
+        "name": "Cumulative results across terms",
+        "link": "UC-06-05.json"
+      }
+    },
+    {
+      "item": "Resolving an absence so a student can be ranked",
+      "handledBy": {
+        "id": "UC-06-16",
+        "name": "Makeup exam for an absent student",
+        "link": "UC-06-16.json"
+      }
+    },
+    {
+      "item": "Producing the report card the position may appear on",
+      "handledBy": {
+        "id": "UC-24-01",
+        "name": "Custom report builder",
+        "link": "UC-24-01.json"
+      }
+    },
+    {
+      "item": "Awarding prizes or certificates from the list",
+      "handledBy": {
+        "id": "UC-13-01",
+        "name": "Student ID card generation",
+        "link": "UC-13-01.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Single source of ranking",
+        "requirement": "No other use case in the module produces a position, an order by merit, or anything a reader could take for a rank."
+      },
+      {
+        "aspect": "Publication control",
+        "requirement": "An unapproved list is not sent to the portal at all. A ranking seen before the school agreed it cannot be unseen."
+      },
+      {
+        "aspect": "Criterion retention",
+        "requirement": "The ranking criterion is stored with each list, so a published order stays explainable after the criterion changes."
+      },
+      {
+        "aspect": "Staleness visibility",
+        "requirement": "A published list whose underlying marks have changed is flagged as out of date rather than left reading as current."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Merit lists and their versions are retained 7 years, matching the results behind them."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "Is the ranking criterion total marks, percentage or a weighted score? The document flags this as needing confirmation before build.",
+      "assumption": "Total marks as modelled, and configurable.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    },
+    {
+      "question": "For a Subject Wise class, should the list be per identical subject set or per subject?",
+      "assumption": "Both are permitted by the feature. Which the school wants is not specified.",
+      "confirmWith": "Coordinator",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should a merit list be produced across the session year, combining terms, and if so on what basis?",
+      "assumption": "The scope allows it, but which results it reads is not specified.",
+      "confirmWith": "Coordinator",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should the top three be announced by name to all parents, or by position only?",
+      "assumption": "By name as modelled. Confirm the school is content to name children to other families.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    },
+    {
+      "question": "How far down the list should a family's own position be shown — a position out of how many?",
+      "assumption": "Out of the ranked total. Not confirmed.",
+      "confirmWith": "Coordinator",
+      "blocksBuild": false
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

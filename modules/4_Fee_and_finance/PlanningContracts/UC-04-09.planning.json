@@ -1,0 +1,1117 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-09",
+    "name": "Write off a debt the school will never collect, on the Principal's authority",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-09.json",
+    "featureRef": "4.9 Writing off an uncollectable debt"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-09-PC-1",
+      "intent": {
+        "name": "fee.writeoff.propose",
+        "summary": "Propose writing off a correctly raised debt the school will never collect, with what was actually done to recover it. One step, and it writes off nothing.",
+        "routesHere": [
+          "propose writing off this debt, the family is untraceable",
+          {
+            "text": "ye baqaya wasool nahi hoga, write off ki tajweez do",
+            "lang": "ur-Latn",
+            "gloss": "this outstanding will not be recovered, propose a write-off"
+          },
+          {
+            "text": "bacha bina fees diye chala gaya, ab kuch nahi hoga",
+            "lang": "ur-Latn",
+            "gloss": "the child left without paying, nothing will come of it now"
+          },
+          {
+            "text": "do saal purana baqaya hai, maaf karne ki tajweez bhejo",
+            "lang": "ur-Latn",
+            "gloss": "it is a two-year-old debt, send a proposal to write it off"
+          },
+          "write off the remaining 4,200 — the family paid what they could"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye charge hi galat tha",
+              "lang": "ur-Latn",
+              "gloss": "the charge itself was wrong"
+            },
+            "goesTo": "fee.cancellation.raise — UC-04-08, or fee.credit.raise — UC-04-10",
+            "note": "A write-off recognises a loss on a charge that was correct. Using it for a billing error hides the error and misstates the loss (BR-2, E1)."
+          },
+          {
+            "request": {
+              "text": "family ne baad mein paisa de diya",
+              "lang": "ur-Latn",
+              "gloss": "the family paid later after all"
+            },
+            "goesTo": "fee.writeoff.reverse — UC-04-09-PC-3",
+            "note": "A written-off debt may still be recovered. The write-off is reversed and the payment recorded normally (BR-10)."
+          },
+          {
+            "request": {
+              "text": "family ko bata do ke maaf kar diya",
+              "lang": "ur-Latn",
+              "gloss": "tell the family it has been written off"
+            },
+            "goesTo": "Not offered.",
+            "note": "The family is not told. It remains legally owed, and telling them removes any prospect of later recovery (BR-9)."
+          },
+          {
+            "request": {
+              "text": "in ko installment pe kar do",
+              "lang": "ur-Latn",
+              "gloss": "put them on an installment plan"
+            },
+            "goesTo": "fee.plan.request — UC-04-14",
+            "note": "A family who can pay in parts has not produced a loss."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.writeoff.propose",
+            "inputs": {
+              "invoice_id": "$request.invoice_phrase",
+              "amount": "$request.amount",
+              "reason": "$request.reason",
+              "recovery_attempted": "$request.recovery_attempted",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, producing a proposal at Awaiting approval. The reminder history is attached automatically as evidence rather than described from memory (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. An amount above the balance, a missing recovery account and a debt already cancelled, credited or written off are all enforced by the API and arrive as errors.",
+        "atomicity": "One write: the proposal with its reason, its recovery account and the attached reminder history, together with the audit entry or not at all. Nothing is written off, nothing posts, the debt is still owed and still on the overdue list, and the family is told nothing — now or ever (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "fee.writeoff.propose",
+          "method": "POST",
+          "path": "/api/v1/fee-writeoffs",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "invoice_id, since a debt carries one open write-off proposal at a time",
+          "purpose": "Raise a write-off proposal against a correctly raised outstanding debt, attaching the reminder history as evidence.",
+          "parameters": [
+            {
+              "name": "invoice_id",
+              "source": "resolved",
+              "sourceRef": "$request.invoice_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "invoice",
+                "fromPhrase": "$request.invoice_phrase",
+                "onNoMatch": "Refuse. No outstanding invoice matches.",
+                "onAmbiguous": "Ask, naming the candidates with student, period, balance and age."
+              },
+              "notes": "An issued invoice with an outstanding balance, correctly raised."
+            },
+            {
+              "name": "amount",
+              "source": "request",
+              "sourceRef": "$request.amount",
+              "required": true,
+              "type": "money",
+              "notes": "The outstanding balance, or part of it where the family has paid something and the remainder is abandoned (BR-6). Not more than what is outstanding (E5). Exactly the figure the actor states."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "enum: Family untraceable | Student left without settling | Family unable to pay | Cost of recovery exceeds the debt | Legal or humanitarian decision | Other",
+              "notes": "Why the debt is uncollectable, from a fixed list so a loss can be reviewed for a pattern (BR-4)."
+            },
+            {
+              "name": "recovery_attempted",
+              "source": "request",
+              "sourceRef": "$request.recovery_attempted",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 1000 characters. What was actually done to recover it (BR-5, E2). The actor's own account — the approver reads it before giving up on the money."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The proposal as raised, with its evidence.",
+            "fields": [
+              {
+                "name": "writeoff_id",
+                "type": "string",
+                "description": "The proposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. Only the Principal or Director may decide (BR-3)."
+              },
+              {
+                "name": "amount",
+                "type": "string",
+                "description": "What would be written off."
+              },
+              {
+                "name": "outstanding_balance",
+                "type": "string",
+                "description": "What is owed, for comparison where the write-off is partial (BR-6)."
+              },
+              {
+                "name": "reminder_history",
+                "type": "object[]",
+                "description": "Attached automatically as evidence rather than described from memory (BR-5)."
+              },
+              {
+                "name": "days_overdue",
+                "type": "integer",
+                "description": "The age of the debt."
+              },
+              {
+                "name": "proposed_by",
+                "type": "string",
+                "description": "The acting user, who may not approve it (BR-3, E4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "LOOKS_LIKE_BILLING_ERROR",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The charge appears to have been raised in error rather than being uncollectable.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "Message points at cancellation instead. A write-off does not say the charge was wrong (BR-1, BR-2)."
+            },
+            {
+              "code": "RECOVERY_NOT_DESCRIBED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No recovery was described.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "Message: \"Describe what was done to recover this debt.\" Ask; never compose one."
+            },
+            {
+              "code": "AMOUNT_EXCEEDS_BALANCE",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The amount is more than the outstanding balance.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "Never reduce it to fit — the figure came from the actor and the difference is worth checking."
+            },
+            {
+              "code": "ALREADY_SETTLED",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The debt has already been cancelled, credited or written off.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "The message names which and when (BR-12)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the recovery account. The approver reads it before giving up on the school's money, and BR-5 requires the reminder history as evidence precisely so it is not described from memory.",
+          "derivedFrom": [
+            "BR-5",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never propose a write-off for a billing error. A write-off recognises a loss on a correct charge (BR-1, BR-2); using it for a wrong bill records a loss the school never suffered and hides the fault that caused it.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never supply or round the amount. It may be the whole balance or part of it (BR-6), and which is the actor's decision about what the school is abandoning.",
+          "derivedFrom": [
+            "BR-6",
+            "E5",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain the approval. Only the Principal or Director may approve, and School Admin approval is not sufficient — this is the point at which the school gives up on money (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "E3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never tell the family, and never offer to. The debt remains legally owed, and telling them removes any prospect of later recovery (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A proposal is approved or returned by the Principal; nothing here withdraws one. Nothing has been written off and no entry has posted."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "do saal purana baqaya hai — family ka pata nahi chal raha, char reminder bhej chuke hain, 4200 maaf karne ki tajweez do",
+            "lang": "ur-Latn",
+            "gloss": "it is a two-year-old debt — the family is untraceable, we have sent four reminders, propose writing off 4200"
+          },
+          "context": "Accounts, Johar Town branch, on an invoice with PKR 4,200 outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.propose",
+              "inputs": {
+                "invoice_id": "$request.invoice_phrase",
+                "amount": 4200,
+                "reason": "Family untraceable",
+                "recovery_attempted": "Four reminders sent over two years; the contact number is no longer in service and the family has left the address on file.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The recovery account is the actor's own. The four reminders are attached automatically from the log as evidence (BR-5)."
+            }
+          ],
+          "outcome": "A proposal at Awaiting approval with the reminder history attached. The debt is still owed, still on the overdue list and the family is told nothing. Only the Principal may approve it."
+        },
+        {
+          "request": {
+            "text": "family ne 3000 de diye, baaqi 1200 maaf kar do",
+            "lang": "ur-Latn",
+            "gloss": "the family has paid 3000, write off the remaining 1200"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.propose",
+              "inputs": {
+                "invoice_id": "$request.invoice_phrase",
+                "amount": 1200,
+                "reason": "Family unable to pay",
+                "recovery_attempted": "The family paid PKR 3,000 of PKR 4,200 and has stated they cannot pay the remainder.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A partial write-off, which BR-6 permits. The amount is the actor's figure, not the balance defaulted (PR-3)."
+            }
+          ],
+          "outcome": "A proposal for PKR 1,200 against an invoice showing PKR 3,000 received. The payment stays exactly as it is."
+        },
+        {
+          "request": {
+            "text": "ye bill to galat hi bana tha, maaf kar do",
+            "lang": "ur-Latn",
+            "gloss": "this bill was wrong in the first place, write it off"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.propose",
+              "inputs": {
+                "invoice_id": "$request.invoice_phrase",
+                "amount": "$request.amount",
+                "reason": "$request.reason",
+                "recovery_attempted": "$request.recovery_attempted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns LOOKS_LIKE_BILLING_ERROR (E1)."
+            }
+          ],
+          "outcome": "Nothing is raised. Report that a wrong charge is cancelled if unpaid or credited if paid — writing it off would record a loss the school never suffered and leave the billing fault uncorrected (PR-2)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-09-PC-2",
+      "intent": {
+        "name": "fee.writeoff.approve",
+        "summary": "Approve a write-off, taking the loss on the books. Principal or Director only, one step.",
+        "routesHere": [
+          "approve the write-off on this debt",
+          {
+            "text": "write off approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the write-off"
+          },
+          {
+            "text": "ye baqaya maaf kar do, tajweez aa chuki hai",
+            "lang": "ur-Latn",
+            "gloss": "write off this outstanding, the proposal has come through"
+          },
+          "authorise the write-off Accounts proposed"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tajweez wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the proposal back"
+            },
+            "goesTo": "fee.writeoff.return — UC-04-09-PC-4"
+          },
+          {
+            "request": {
+              "text": "write off raise karo",
+              "lang": "ur-Latn",
+              "gloss": "raise a write-off"
+            },
+            "goesTo": "fee.writeoff.propose — UC-04-09-PC-1"
+          },
+          {
+            "request": {
+              "text": "family ko bata do",
+              "lang": "ur-Latn",
+              "gloss": "tell the family"
+            },
+            "goesTo": "Not offered.",
+            "note": "The family is not told (BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.writeoff.approve",
+            "inputs": {
+              "writeoff_id": "$request.writeoff_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it is the point at which the school gives up on the money. Only the Principal or Director may take it (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. The acting role and the ledger posting are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the approval, the entry to the bad debt account, the invoice's status and the audit entry together or not at all (E7). The original charge stays in place — nothing is deleted, so the books show both what was owed and what was given up (BR-7). The debt leaves overdue tracking and stops accruing late fee (BR-11), and it is added to the write-off report reviewed by somebody other than the person who raised it (BR-8). Nothing is sent to the family, now or later (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "fee.writeoff.approve",
+          "method": "POST",
+          "path": "/api/v1/fee-writeoffs/{writeoff_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "writeoff_id, since a proposal carries one approval",
+          "purpose": "Approve a write-off, post the entry to the bad debt account and mark the invoice written off.",
+          "parameters": [
+            {
+              "name": "writeoff_id",
+              "source": "resolved",
+              "sourceRef": "$request.writeoff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "writeoff",
+                "fromPhrase": "$request.writeoff_phrase",
+                "onNoMatch": "Refuse. No write-off proposal matches awaiting a decision.",
+                "onAmbiguous": "Ask, naming the candidates with student, invoice, amount and who raised it."
+              },
+              "notes": "The write-off proposal, resolved from how the actor named it — the reference, or the student and invoice. "
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The loss as recognised.",
+            "fields": [
+              {
+                "name": "writeoff_id",
+                "type": "string",
+                "description": "The approved write-off."
+              },
+              {
+                "name": "amount",
+                "type": "string",
+                "description": "Written off."
+              },
+              {
+                "name": "invoice_status",
+                "type": "string",
+                "description": "Written off. The original charge stays in place (BR-7)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The Principal or Director. Nobody else (BR-3)."
+              },
+              {
+                "name": "bad_debt_account",
+                "type": "string",
+                "description": "Where the entry posted."
+              },
+              {
+                "name": "added_to_report",
+                "type": "boolean",
+                "description": "Reviewed by somebody other than the person who raised it (BR-8)."
+              },
+              {
+                "name": "removed_from_overdue",
+                "type": "boolean",
+                "description": "The debt stops being pursued and stops accruing late fee (BR-11)."
+              },
+              {
+                "name": "family_notified",
+                "type": "boolean",
+                "description": "Always false. The family is not told (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SCHOOL_ADMIN_CANNOT_APPROVE",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "A School Admin attempted to approve.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "School Admin approval is not sufficient — this is where the school gives up on money (BR-3)."
+            },
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to approve their own proposal.",
+              "written": "Nothing.",
+              "notWritten": "Not approved."
+            },
+            {
+              "code": "POSTING_FAILED",
+              "mapsTo": "E7",
+              "httpStatus": 500,
+              "meaning": "The ledger posting failed.",
+              "written": "Nothing. The debt is unchanged.",
+              "notWritten": "All of it.",
+              "note": "Message: \"The write-off could not be posted. Nothing has changed.\""
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a write-off in any session but a Principal's or Director's. E3 exists because School Admin approval is not sufficient here — writing off a debt is where the school gives up on money (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "E3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never tell the family, and never offer to. The debt remains legally owed and telling them removes any prospect of later recovery (BR-9). Report that the family has not been told.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the original charge stays in place. Nothing is deleted, so the books show both what was owed and what was given up (BR-7) — a write-off is a recognised loss, not an erased bill.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain anything onto an approval. The debt leaves overdue tracking on its own (BR-11) and the report entry is written on its own (BR-8).",
+          "derivedFrom": [
+            "BR-8",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "fee.writeoff.reverse",
+        "statement": "fee.writeoff.reverse, where the family later pays. A written-off debt may still be recovered, and the write-off is reversed and the payment recorded normally rather than the payment being treated as a windfall (BR-10). It needs its own reason and is a decision somebody takes — never a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Accounts wali write off tajweez approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the write-off proposal Accounts sent"
+          },
+          "context": "Principal, Johar Town branch, on a PKR 4,200 proposal with four reminders attached.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.approve",
+              "inputs": {
+                "writeoff_id": "$request.writeoff_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "PKR 4,200 posts to the bad debt account, the invoice reads Written off and the original charge stays in the books (BR-7). The debt leaves overdue tracking. The family is not told — report that explicitly (PR-2)."
+        },
+        {
+          "request": {
+            "text": "write off approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the write-off"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.approve",
+              "inputs": {
+                "writeoff_id": "$request.writeoff_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "In practice approve is absent from a School Admin allow-list here. Where attempted the API returns SCHOOL_ADMIN_CANNOT_APPROVE (E3)."
+            }
+          ],
+          "outcome": "Nothing is approved. Report that only the Principal or Director may authorise a write-off — School Admin approval is not enough, deliberately (PR-1)."
+        },
+        {
+          "request": "approve the partial write-off of 1,200 on this invoice",
+          "context": "Principal, Johar Town branch, on an invoice showing PKR 3,000 received of PKR 4,200.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.approve",
+              "inputs": {
+                "writeoff_id": "$request.writeoff_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "PKR 1,200 posts to bad debt. The PKR 3,000 payment is untouched and the invoice shows both — what was paid and what was given up."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-09-PC-3",
+      "intent": {
+        "name": "fee.writeoff.reverse",
+        "summary": "Reverse a write-off because the family has come back and paid, so the payment is recorded normally. One step.",
+        "routesHere": [
+          "reverse the write-off, the family has come back to pay",
+          {
+            "text": "family wapas aa gayi hai aur paisa de rahi hai, write off reverse karo",
+            "lang": "ur-Latn",
+            "gloss": "the family has come back and is paying, reverse the write-off"
+          },
+          {
+            "text": "jo maaf kiya tha wo wapas lo, unhone paisa de diya",
+            "lang": "ur-Latn",
+            "gloss": "take back what we wrote off, they have paid"
+          },
+          "un-write-off this debt so I can record the payment"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "paisa record kar do",
+              "lang": "ur-Latn",
+              "gloss": "record the payment"
+            },
+            "goesTo": "fee.payment.record — UC-04-05, after this",
+            "note": "The write-off is reversed first, then the payment is recorded normally — rather than the payment being treated as a windfall (BR-10)."
+          },
+          {
+            "request": {
+              "text": "write off approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the write-off"
+            },
+            "goesTo": "fee.writeoff.approve — UC-04-09-PC-2"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.writeoff.reverse",
+            "inputs": {
+              "writeoff_id": "$request.writeoff_phrase",
+              "reversal_reason": "$request.reversal_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it restores the debt. Recording the payment is a separate act afterwards, through the ordinary payment path (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. The reversal reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the reversing entry, the invoice's restored status and the audit entry together or not at all. The bad debt entry is not deleted — the reversal posts against it, so the books show the loss recognised and then recovered. The debt returns to outstanding and becomes payable again. No payment is recorded by this act."
+      },
+      "operations": [
+        {
+          "name": "fee.writeoff.reverse",
+          "method": "POST",
+          "path": "/api/v1/fee-writeoffs/{writeoff_id}/reverse",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "writeoff_id, since a write-off carries one reversal",
+          "purpose": "Reverse an approved write-off so the debt is outstanding again and the payment can be recorded normally.",
+          "parameters": [
+            {
+              "name": "writeoff_id",
+              "source": "resolved",
+              "sourceRef": "$request.writeoff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "writeoff",
+                "fromPhrase": "$request.writeoff_phrase",
+                "onNoMatch": "Refuse. No approved write-off matches awaiting a decision.",
+                "onAmbiguous": "Ask, naming the candidates with student, invoice, amount and who raised it."
+              },
+              "notes": "The approved write-off, resolved from how the actor named it — the reference, or the student and invoice. "
+            },
+            {
+              "name": "reversal_reason",
+              "source": "request",
+              "sourceRef": "$request.reversal_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (E8). The actor's own words — a loss recognised and then recovered is read back by whoever reviews the write-off report."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The debt as restored.",
+            "fields": [
+              {
+                "name": "writeoff_id",
+                "type": "string",
+                "description": "The reversed write-off."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Reversed."
+              },
+              {
+                "name": "amount_restored",
+                "type": "string",
+                "description": "Back to outstanding."
+              },
+              {
+                "name": "invoice_status",
+                "type": "string",
+                "description": "Issued or Partially paid — payable again."
+              },
+              {
+                "name": "reversing_entry",
+                "type": "string",
+                "description": "Posted against the bad debt account, which is not deleted."
+              },
+              {
+                "name": "payment_recorded",
+                "type": "boolean",
+                "description": "Always false. Recording the payment is a separate act (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REVERSAL_REASON_REQUIRED",
+              "mapsTo": "E8",
+              "httpStatus": 400,
+              "meaning": "A reversal was attempted with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not reversed.",
+              "note": "Message: \"Give a reason for reversing this write-off.\" Ask; never compose one."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reversal reason. A loss recognised and then recovered is read back by whoever reviews the write-off report (BR-8), and the reason is what explains the round trip.",
+          "derivedFrom": [
+            "BR-10",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain the payment onto the reversal. The write-off is reversed and the payment recorded normally through UC-04-05 (BR-10) — two acts, because the money arriving and the school changing its mind about the debt are different facts.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never reverse a write-off in anticipation of a payment. It restores a debt the school had stopped pursuing, and a family who says they will pay has not paid.",
+          "derivedFrom": [
+            "BR-10",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A reversal is not itself reversed. Where the family fails to pay after all, a fresh write-off is proposed and approved on its own evidence — the history then shows the loss, the recovery attempt and the loss again, which is what happened."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "wo family wapas aa gayi hai aur 4200 de rahi hai — write off reverse karo",
+            "lang": "ur-Latn",
+            "gloss": "that family has come back and is paying 4200 — reverse the write-off"
+          },
+          "context": "Accounts, Johar Town branch, on an approved write-off of PKR 4,200.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.reverse",
+              "inputs": {
+                "writeoff_id": "$request.writeoff_phrase",
+                "reversal_reason": "The family has returned and is settling the debt in full.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The payment is not recorded here (PR-2)."
+            }
+          ],
+          "outcome": "The debt is outstanding again and payable. Recording the PKR 4,200 is the next act, through fee.payment.record — which issues a numbered receipt exactly as any other payment does."
+        },
+        {
+          "request": {
+            "text": "write off reverse kar do",
+            "lang": "ur-Latn",
+            "gloss": "reverse the write-off"
+          },
+          "context": "Accounts, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.reverse",
+              "inputs": {
+                "writeoff_id": "$request.writeoff_phrase",
+                "reversal_reason": "$request.reversal_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: reversal_reason is required and has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why it is being reversed."
+        },
+        {
+          "request": {
+            "text": "family keh rahi hai agle hafte de dein ge, write off wapas lo",
+            "lang": "ur-Latn",
+            "gloss": "the family says they will pay next week, take the write-off back"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.reverse",
+              "inputs": {
+                "writeoff_id": "$request.writeoff_phrase",
+                "reversal_reason": "$request.reversal_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan would be valid, but PR-3 says not to emit it: a promise is not a payment."
+            }
+          ],
+          "outcome": "Nothing is written. Report that the write-off should be reversed when the money arrives, not before — reversing it now puts the debt back on the overdue list and starts the school chasing a family it had stopped pursuing."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-09-PC-4",
+      "intent": {
+        "name": "fee.writeoff.return",
+        "summary": "Send a write-off proposal back to Accounts with why it was not accepted. Principal or Director only, one step.",
+        "routesHere": [
+          "return this write-off proposal, we haven't tried hard enough to recover it",
+          {
+            "text": "write off ki tajweez wapas bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the write-off proposal back"
+          },
+          {
+            "text": "abhi maaf nahi karna, aur koshish karo",
+            "lang": "ur-Latn",
+            "gloss": "do not write it off yet, try harder"
+          },
+          "send it back — this looks like a billing error, not a bad debt"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "write off approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the write-off"
+            },
+            "goesTo": "fee.writeoff.approve — UC-04-09-PC-2"
+          },
+          {
+            "request": {
+              "text": "in ko installment plan de do",
+              "lang": "ur-Latn",
+              "gloss": "give them an installment plan"
+            },
+            "goesTo": "fee.plan.request — UC-04-14",
+            "note": "Returning says the debt should still be pursued; how is Accounts' next act."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.writeoff.return",
+            "inputs": {
+              "writeoff_id": "$request.writeoff_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing is written off and nothing posts; the debt stays outstanding and on the overdue list."
+          }
+        ],
+        "onFailure": "Stop and report. The reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the status change, the reason and the audit entry together or not at all. The debt is untouched, still owed, still being pursued and still accruing late fee. The family is told nothing."
+      },
+      "operations": [
+        {
+          "name": "fee.writeoff.return",
+          "method": "POST",
+          "path": "/api/v1/fee-writeoffs/{writeoff_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "writeoff_id + return_reason",
+          "purpose": "Send a write-off proposal back to Accounts with the reason it was not approved.",
+          "parameters": [
+            {
+              "name": "writeoff_id",
+              "source": "resolved",
+              "sourceRef": "$request.writeoff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "writeoff",
+                "fromPhrase": "$request.writeoff_phrase",
+                "onNoMatch": "Refuse. No write-off proposal matches awaiting a decision.",
+                "onAmbiguous": "Ask, naming the candidates with student, invoice, amount and who raised it."
+              },
+              "notes": "The write-off proposal, resolved from how the actor named it — the reference, or the student and invoice. "
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required. The approver's own words — usually that more recovery should be attempted, or that the instrument is wrong."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The proposal as returned.",
+            "fields": [
+              {
+                "name": "writeoff_id",
+                "type": "string",
+                "description": "The proposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "As given, shown to Accounts."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The Principal or Director."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "The acting user is not a Principal or Director.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the return reason. It usually says either that more recovery should be attempted or that the wrong instrument was used, and only the approver can say which.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain a cancellation or a credit onto a return. Where the charge was actually wrong, correcting it is Accounts' work under UC-04-08 or UC-04-10, with its own approval.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never return a proposal to defer the decision. The debt stays on the overdue list either way, and a returned proposal tells Accounts to do something.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not undone. Accounts attempt more recovery, or raise the proposal again with better evidence — a fresh proposal and a fresh decision."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye write off wapas bhej do — sirf do reminder gaye hain, aur koshish karo",
+            "lang": "ur-Latn",
+            "gloss": "send this write-off back — only two reminders went, try harder"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.return",
+              "inputs": {
+                "writeoff_id": "$request.writeoff_phrase",
+                "return_reason": "Only two reminders have been sent. Attempt further recovery before writing this off.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The proposal returns to Accounts with that reason. The debt stays outstanding, on the overdue list and accruing late fee."
+        },
+        {
+          "request": "send it back — this looks like a billing error rather than a bad debt",
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.return",
+              "inputs": {
+                "writeoff_id": "$request.writeoff_phrase",
+                "return_reason": "This looks like a billing error. Check whether the charge should have been raised at all.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Cancelling it is Accounts' next act under UC-04-08, not something chained here (PR-2)."
+            }
+          ],
+          "outcome": "Returned with the doubt named. Whether it becomes a cancellation is for Accounts to establish and a School Admin to approve."
+        },
+        {
+          "request": {
+            "text": "tajweez wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "send the proposal back"
+          },
+          "context": "Principal, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.writeoff.return",
+              "inputs": {
+                "writeoff_id": "$request.writeoff_phrase",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why — Accounts need to know whether to recover harder or to correct the charge."
+        }
+      ]
+    }
+  ]
+}

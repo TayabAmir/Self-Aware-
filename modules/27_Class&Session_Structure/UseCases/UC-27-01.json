@@ -1,0 +1,864 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-27-01",
+  "featureRef": "27.1 Class creation",
+  "name": "Create the classes an academic session runs and set how each is structured",
+  "module": "Class & Session Structure",
+  "alsoAffectsModules": [
+    "Student",
+    "Attendance",
+    "Time Table",
+    "Assignment",
+    "Examination"
+  ],
+  "priority": "MVP",
+  "priorityReason": "Nothing academic can exist without it. Students, staff, attendance, timetable and results all attach to a class.",
+  "goal": {
+    "actor": "School Admin",
+    "capability": "to create the classes for an academic session and set each one as Fixed or Subject Wise",
+    "outcome": "every other module has a known class to attach to, structured the way the school actually teaches it"
+  },
+  "primaryActor": "School Admin",
+  "secondaryActors": [
+    {
+      "actor": "Coordinator",
+      "involvement": "Creates the sections under each class once it exists."
+    },
+    {
+      "actor": "Teacher",
+      "involvement": "Sees only the classes assigned to them."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "A new academic session opens and its classes are created before anything else in the session can be set up.",
+        "source": "UC-27-01"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An authenticated session exists and the acting user is School Admin.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "An academic session is open, since a class belongs to one and is not carried between them (BR-2)."
+    },
+    {
+      "condition": "The subjects a Subject Wise class will carry exist, or are created while creating it."
+    }
+  ],
+  "postConditions": [
+    "The class exists for that academic session, with its type set and its subjects attached.",
+    "Sections can now be created under it, which is what students are actually placed into.",
+    "The attendance, timetable, assignment and examination modules read the class and become available for it.",
+    "Every module that references the class sees the same definition, so a change made here appears everywhere the class is used.",
+    "No student is attached yet. A class is a structure, not a roll.",
+    "The class belongs to this academic session only, and creating next session's classes does not disturb this one."
+  ],
+  "screens": [
+    {
+      "name": "Class & Session",
+      "route": "/classes",
+      "sidebar": "Class & Session",
+      "columns": [
+        "Class",
+        "Type",
+        "Subjects",
+        "Sections",
+        "Students",
+        "Session",
+        "Status"
+      ],
+      "defaultSort": "Class order ascending",
+      "filters": [
+        "Academic session",
+        "Type",
+        "Status"
+      ],
+      "actions": [
+        "Create class",
+        "Open",
+        "Edit",
+        "Deactivate"
+      ],
+      "visibleTo": [
+        "School Admin",
+        "Coordinator",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Create class",
+      "route": "/classes/new",
+      "sidebar": "Class & Session",
+      "actions": [
+        "Set name and order",
+        "Set type",
+        "Attach subjects",
+        "Save"
+      ],
+      "visibleTo": [
+        "School Admin"
+      ]
+    },
+    {
+      "name": "Class detail",
+      "route": "/classes/{id}",
+      "sidebar": "Class & Session",
+      "columns": [
+        "Subject",
+        "Compulsory",
+        "Sections carrying it"
+      ],
+      "actions": [
+        "Edit",
+        "Attach subject",
+        "Remove subject",
+        "Create section",
+        "Deactivate"
+      ],
+      "visibleTo": [
+        "School Admin",
+        "Coordinator",
+        "Teacher",
+        "Principal / Director"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Class name",
+      "type": "text",
+      "required": "yes",
+      "validation": "2 to 60 characters. Unique within the academic session and branch (BR-3).",
+      "example": "Grade 4"
+    },
+    {
+      "name": "Class order",
+      "type": "number",
+      "required": "yes",
+      "validation": "Where the class sits in the school's sequence, so lists and promotion read in the right order rather than alphabetically.",
+      "example": 4
+    },
+    {
+      "name": "Academic session",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "The session the class belongs to. Not changeable after creation (BR-2).",
+      "default": "The current open session",
+      "example": "2025-26",
+      "lookupSource": "Open academic sessions"
+    },
+    {
+      "name": "Class type",
+      "type": "enum",
+      "required": "yes",
+      "validation": "Fixed means every student takes the same subjects. Subject Wise means students take a selection, which changes how fees, timetable and results are calculated (BR-4).",
+      "example": "Fixed",
+      "enumValues": [
+        "Fixed",
+        "Subject Wise"
+      ]
+    },
+    {
+      "name": "Subjects",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "The subjects the class carries. At least one is required, and a Subject Wise class marks which are compulsory (BR-5).",
+      "example": "Mathematics, English, Science, Urdu",
+      "lookupSource": "Subjects in this academic session"
+    },
+    {
+      "name": "Compulsory",
+      "type": "boolean",
+      "required": "conditional",
+      "validation": "Per subject. Only meaningful for a Subject Wise class, where an optional subject is one a student may not take.",
+      "default": true,
+      "example": true,
+      "requiredWhen": "The class type is Subject Wise"
+    },
+    {
+      "name": "Age range",
+      "type": "text",
+      "required": "no",
+      "validation": "The ages the class normally takes, used to check an inquiry at the point it is submitted.",
+      "example": "9 to 10 years"
+    },
+    {
+      "name": "Status",
+      "type": "generated",
+      "required": "no",
+      "validation": "See the lifecycle below.",
+      "default": "Active",
+      "example": "Active"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Class",
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "deactivate"
+      ],
+      "notes": "One per class per academic session. Deactivated, never deleted."
+    },
+    {
+      "entity": "Class subject",
+      "operations": [
+        "create",
+        "read",
+        "deactivate"
+      ],
+      "notes": "One row per subject attached to the class."
+    },
+    {
+      "entity": "Subject",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read to attach. Subjects are maintained in their own screen, not here."
+    },
+    {
+      "entity": "Academic session",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read to scope the class to a session."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Creation, every change and every deactivation."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "create",
+        "edit",
+        "deactivate"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "The only role that creates a class or changes its type."
+    },
+    {
+      "actor": "Coordinator",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Classes in their remit.",
+      "notes": "Reads the class in order to create sections under it. Cannot create or change a class."
+    },
+    {
+      "actor": "Teacher",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Only the classes assigned to them.",
+      "notes": "Read only."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches."
+    },
+    {
+      "actor": "Staff, Accounts",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Read only, since they place students into classes."
+    },
+    {
+      "actor": "Student, Parent / Guardian",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access to this screen."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "A class must exist before anything can attach to it. Sections, students, attendance, timetable, assignments and results all key off it."
+    },
+    {
+      "id": "BR-2",
+      "rule": "A class belongs to one academic session. Creating next session's classes does not disturb this session's, and a class is never carried between sessions by editing its session."
+    },
+    {
+      "id": "BR-3",
+      "rule": "A class name is unique within its academic session and branch. Two classes called Grade 4 in one session make every list ambiguous."
+    },
+    {
+      "id": "BR-4",
+      "rule": "The class type decides how the class is treated everywhere. Fixed means every student takes the same subjects; Subject Wise means students take a selection, which changes how fees, timetable and results are calculated."
+    },
+    {
+      "id": "BR-5",
+      "rule": "A class carries at least one subject. A class with no subjects cannot be timetabled, taught or examined."
+    },
+    {
+      "id": "BR-6",
+      "rule": "The class type cannot be changed once students are placed in any of its sections. Changing it would alter how their fees and results are calculated part way through a session."
+    },
+    {
+      "id": "BR-7",
+      "rule": "A subject cannot be removed from a class once marks, a timetable slot or an assignment exists against it in that session. Removing it would orphan work already done."
+    },
+    {
+      "id": "BR-8",
+      "rule": "A change to a class is reflected everywhere the class is used, in the same request. A register printed after a name correction shows the corrected name."
+    },
+    {
+      "id": "BR-9",
+      "rule": "A class is deactivated, never deleted, and cannot be deactivated at all while it holds an active section or a placed student."
+    },
+    {
+      "id": "BR-10",
+      "rule": "Creating a class creates no sections and no students. It is a structure, and students are placed into sections rather than into classes."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Class",
+      "states": [
+        "Active",
+        "Inactive"
+      ],
+      "initial": "Active",
+      "terminal": [],
+      "transitions": [
+        {
+          "from": "Active",
+          "to": "Inactive",
+          "triggeredBy": "School Admin",
+          "condition": "No active section and no placed student remain (BR-9)."
+        },
+        {
+          "from": "Inactive",
+          "to": "Active",
+          "triggeredBy": "School Admin",
+          "condition": "The class is reinstated within the same session."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "School Admin",
+      "navigation": "Login → Class & Session → Create class",
+      "userAction": "Opens Class and Session and starts a new class for the academic session.",
+      "function": "openCreateClass(sessionId)",
+      "systemResponse": "Loads the form scoped to the current open academic session.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "School Admin",
+      "navigation": "Create class → Name, order and type",
+      "userAction": "Enters the class name and its order, and sets the type as Fixed or Subject Wise.",
+      "function": "setClassDefinition(name, order, type)",
+      "systemResponse": "Checks the name is unique within the session and branch.",
+      "rules": [
+        "BR-3",
+        "BR-4"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "School Admin",
+      "navigation": "Create class → Subjects",
+      "userAction": "Attaches the subjects the class carries, marking which are compulsory where the class is Subject Wise.",
+      "function": "attachClassSubjects(classId, subjectIds, compulsoryFlags)",
+      "systemResponse": "Requires at least one subject.",
+      "rules": [
+        "BR-5"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "School Admin",
+      "navigation": "Create class → Save",
+      "userAction": "Saves the class.",
+      "function": "createClass(payload)",
+      "systemResponse": "Creates the class for that academic session and makes it available for sections to be created under it.",
+      "rules": [
+        "BR-1",
+        "BR-10"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "publishClassToModules(classId)",
+      "systemResponse": "Makes the class readable by the attendance, timetable, assignment and examination modules, which become available for it.",
+      "rules": [
+        "BR-8"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "School Admin",
+      "navigation": "Class & Session → Class detail → Edit",
+      "userAction": "Changes the class later where the school's structure changes.",
+      "function": "updateClass(classId, changedFields)",
+      "systemResponse": "Refuses a type change where students are already placed, and refuses removing a subject that already carries marks, a timetable slot or an assignment.",
+      "rules": [
+        "BR-6",
+        "BR-7",
+        "BR-8"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 2,
+      "condition": "The class is Subject Wise",
+      "actor": "School Admin",
+      "navigation": "Create class → Type → Subjects",
+      "behaviour": "Each subject is marked compulsory or optional, since a student in a Subject Wise class takes a selection rather than all of them. This is what fees, timetable and results read afterwards (BR-4).",
+      "function": "attachClassSubjects(classId, subjectIds, compulsoryFlags)",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 1,
+      "condition": "A new academic session is being set up",
+      "actor": "School Admin",
+      "navigation": "Login → Class & Session → Academic session → Create class",
+      "behaviour": "The classes are created afresh against the new session. This session's classes are untouched and keep their students (BR-2).",
+      "function": "openCreateClass(newSessionId)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 6,
+      "condition": "A subject is added to a class mid-session",
+      "actor": "School Admin",
+      "navigation": "Class detail → Attach subject",
+      "behaviour": "The subject becomes available to every section of that class, and to the timetable and examination modules from that point on.",
+      "function": "attachClassSubjects(classId, subjectIds, compulsoryFlags)",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 6,
+      "condition": "A class is no longer run",
+      "actor": "School Admin",
+      "navigation": "Class detail → Deactivate",
+      "behaviour": "The class is deactivated only once no active section and no placed student remain. It stays readable in historical reports (BR-9).",
+      "function": "deactivateClass(classId)"
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 2,
+      "condition": "A class of that name already exists in this session",
+      "systemResponse": "The class is not created (BR-3).",
+      "messageShown": "A class called Grade 4 already exists for 2025-26.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E2",
+      "atStep": 3,
+      "condition": "No subject is attached",
+      "systemResponse": "The class is not created (BR-5).",
+      "messageShown": "Attach at least one subject. A class with no subjects cannot be timetabled or examined.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E3",
+      "atStep": 6,
+      "condition": "The type is changed after students are placed",
+      "systemResponse": "The change is refused (BR-6).",
+      "messageShown": "Students are already placed in this class, so its type cannot be changed. Their fees and results are calculated from it.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 6,
+      "condition": "A subject is removed that already carries marks or a timetable slot",
+      "systemResponse": "The removal is refused (BR-7).",
+      "messageShown": "Mathematics carries marks for this session and cannot be removed from the class.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 6,
+      "condition": "Deactivation is attempted while a section or a placed student remains",
+      "systemResponse": "The class is not deactivated (BR-9).",
+      "messageShown": "This class has 2 active sections and 54 students. Move or remove them before deactivating it.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 1,
+      "condition": "No academic session is open",
+      "systemResponse": "The class cannot be created.",
+      "messageShown": "No academic session is open. Ask your administrator to open one before creating classes.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 2,
+      "condition": "A Coordinator attempts to create a class",
+      "systemResponse": "The action is refused.",
+      "messageShown": "Only a School Admin can create a class. Coordinators create the sections under one.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Class created",
+      "recipient": "Coordinator",
+      "channels": [
+        "inApp"
+      ],
+      "template": "CLASS_CREATED",
+      "contents": [
+        "Class name",
+        "Type",
+        "Subjects",
+        "That sections can now be created under it"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "Sections can now be created under the class.",
+      "affects": {
+        "id": "UC-27-02",
+        "name": "Section creation",
+        "link": "UC-27-02.json"
+      }
+    },
+    {
+      "effect": "The class becomes available for attendance marking once it holds sections and students.",
+      "affects": {
+        "id": "UC-05-01",
+        "name": "Student attendance marking",
+        "link": "UC-05-01.json"
+      }
+    },
+    {
+      "effect": "The class and its subjects become available to the timetable.",
+      "affects": {
+        "id": "UC-07-01",
+        "name": "Timetable generation",
+        "link": "UC-07-01.json"
+      }
+    },
+    {
+      "effect": "The class becomes available for examinations and results.",
+      "affects": {
+        "id": "UC-06-02",
+        "name": "Examination marks entry",
+        "link": "UC-06-02.json"
+      }
+    },
+    {
+      "effect": "The class becomes selectable as a target class on the public inquiry form.",
+      "affects": {
+        "id": "UC-02-01",
+        "name": "Online inquiry form submission",
+        "link": "UC-02-01.json"
+      }
+    },
+    {
+      "effect": "The class becomes billable, since a fee structure attaches to it.",
+      "affects": {
+        "id": "UC-04-02",
+        "name": "Fee invoicing",
+        "link": "UC-04-02.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Class structure",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Class",
+        "Order",
+        "Type",
+        "Subjects",
+        "Sections",
+        "Students",
+        "Status"
+      ],
+      "grouping": "By academic session",
+      "totals": "Classes, sections and students per session"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "An open academic session",
+      "when": "a School Admin creates Grade 4 as Fixed with four subjects",
+      "then": "the class exists for that session and sections can be created under it"
+    },
+    {
+      "id": "AC-2",
+      "given": "An existing class called Grade 4 in 2025-26",
+      "when": "another Grade 4 is created for the same session",
+      "then": "it is refused"
+    },
+    {
+      "id": "AC-3",
+      "given": "A class being created with no subject attached",
+      "when": "it is saved",
+      "then": "it is refused"
+    },
+    {
+      "id": "AC-4",
+      "given": "A class holding placed students",
+      "when": "the type is changed from Fixed to Subject Wise",
+      "then": "the change is refused"
+    },
+    {
+      "id": "AC-5",
+      "given": "A class whose Mathematics subject already carries marks",
+      "when": "Mathematics is removed from the class",
+      "then": "the removal is refused"
+    },
+    {
+      "id": "AC-6",
+      "given": "A class with two active sections",
+      "when": "deactivation is attempted",
+      "then": "it is refused and the sections and students are named"
+    },
+    {
+      "id": "AC-7",
+      "given": "A Coordinator viewing Class and Session",
+      "when": "they attempt to create a class",
+      "then": "the action is refused and School Admin is named as the role that can"
+    },
+    {
+      "id": "AC-8",
+      "given": "A class renamed from Grade 4 to Class 4",
+      "when": "a register is printed afterwards",
+      "then": "it shows the new name without anyone editing the register"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Restricts class creation to School Admin."
+      },
+      {
+        "id": "UC-27-02",
+        "name": "Section creation",
+        "link": "UC-27-02.json",
+        "why": "Created under a class, and is what students are actually placed into."
+      }
+    ],
+    "masterData": [
+      "Academic sessions",
+      "Subjects for the session",
+      "Branch records"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Creating the sections under a class",
+      "handledBy": {
+        "id": "UC-27-02",
+        "name": "Section creation",
+        "link": "UC-27-02.json"
+      }
+    },
+    {
+      "item": "Placing students into a class and section",
+      "handledBy": {
+        "id": "UC-27-03",
+        "name": "Class placement of an admitted student",
+        "link": "UC-27-03.json"
+      }
+    },
+    {
+      "item": "Maintaining the subject list itself",
+      "handledBy": {
+        "id": "UC-08-01",
+        "name": "Subject and curriculum management",
+        "link": "UC-08-01.json"
+      }
+    },
+    {
+      "item": "The fee structure attached to a class",
+      "handledBy": {
+        "id": "UC-04-01",
+        "name": "Fee structure setup",
+        "link": "UC-04-01.json"
+      }
+    },
+    {
+      "item": "Timetabling the class",
+      "handledBy": {
+        "id": "UC-07-01",
+        "name": "Timetable generation",
+        "link": "UC-07-01.json"
+      }
+    },
+    {
+      "item": "Promoting students from one class to the next",
+      "handledBy": {
+        "id": "UC-06-06",
+        "name": "Student promotion",
+        "link": "UC-06-06.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Propagation",
+        "requirement": "A change to a class appears in every module that reads it within the same request, not on a nightly job."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "A class and its structure are retained for the life of the academic session's records, since results and fee history reference it."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "Are classes carried forward when a new academic session opens, or created afresh each time?",
+      "assumption": "Created afresh. A copy-forward tool would help but is not specified.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Who maintains the subject list — School Admin or Coordinator?",
+      "assumption": "Not specified here. It sits with curriculum management.",
+      "confirmWith": "Coordinator",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should the age range on a class be enforced at admission, or only warned about?",
+      "assumption": "It is checked on the inquiry form, which rejects an out-of-range date of birth.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "Can two branches of the same school have differently structured classes of the same name?",
+      "assumption": "Yes. A class is scoped to a branch and a session.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

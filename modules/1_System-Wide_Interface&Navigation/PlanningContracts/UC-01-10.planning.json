@@ -1,0 +1,427 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-01-10",
+    "name": "Find a student or staff member from the header, from anywhere in the system",
+    "module": "Admin — system-wide",
+    "file": "../UseCases/UC-01-10.json",
+    "featureRef": "1.10 Global search"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-01-10-PC-1",
+      "intent": {
+        "name": "search.global",
+        "summary": "Find a student or staff member by name or by a system-issued number, within the role and branch scope the session already carries. One step. The matches are reported; no profile is opened.",
+        "routesHere": [
+          "find Ahmed Raza",
+          {
+            "text": "Ahmed Raza ko dhoondo",
+            "lang": "ur-Latn",
+            "gloss": "find Ahmed Raza"
+          },
+          {
+            "text": "roll number 2024-0417 kis ka hai?",
+            "lang": "ur-Latn",
+            "gloss": "whose is roll number 2024-0417?"
+          },
+          "look up roll number 2024-0417",
+          {
+            "text": "Nadia naam ki koi teacher hai?",
+            "lang": "ur-Latn",
+            "gloss": "is there a teacher called Nadia?"
+          },
+          {
+            "text": "Bilal ko search karo, wo pichle saal chala gaya tha",
+            "lang": "ur-Latn",
+            "gloss": "search for Bilal, he left last year"
+          },
+          {
+            "text": "STF-2024-0117 kis staff member ka hai?",
+            "lang": "ur-Latn",
+            "gloss": "which staff member is STF-2024-0117?"
+          },
+          "is there a student called Ayesha Khan"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "us ki profile kholo",
+              "lang": "ur-Latn",
+              "gloss": "open his profile"
+            },
+            "goesTo": "search.global first, then the actor selects.",
+            "note": "A single match is reported, not opened — the actor confirms they have the right person (A2). See PR-1."
+          },
+          {
+            "request": {
+              "text": "us ka address change kar do",
+              "lang": "ur-Latn",
+              "gloss": "change his address"
+            },
+            "goesTo": "UC-03-01 — Central student database and profile",
+            "note": "Editing anything found is out of scope here."
+          },
+          {
+            "request": {
+              "text": "Grade 5 ke saare students ki list do",
+              "lang": "ur-Latn",
+              "gloss": "give me the list of all Grade 5 students"
+            },
+            "goesTo": "report.student.run — UC-24-12, the class and section roster.",
+            "note": "Enumerating a class is a list, not a search. See PR-6."
+          },
+          {
+            "request": "find an admission enquiry from last week",
+            "goesTo": "UC-02-11 — Roster and admission record search",
+            "note": "Enquiries and applications are not searched here."
+          },
+          {
+            "request": "find the unpaid invoice for 2024-0417",
+            "goesTo": "report.fee.run — UC-24-10, the invoice register.",
+            "note": "Fee, library, inventory and attendance records are out of scope of search. UC-24-01, which this route used to name, does not exist."
+          },
+          {
+            "request": {
+              "text": "walid ka number 03001234567 hai, un ke bachay dhoondo",
+              "lang": "ur-Latn",
+              "gloss": "the father's number is 03001234567, find his children"
+            },
+            "goesTo": "Not offered.",
+            "note": "Only names and system-issued identifiers are matched (BR-3), and the use case's OQ-2 records that matching a guardian's number has not been agreed."
+          },
+          {
+            "request": "who are the fee defaulters",
+            "goesTo": "dashboard.figure.drillthrough — UC-01-07-PC-3",
+            "note": "A set defined by a figure is a drill-through, not a search."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "search.global",
+            "inputs": {
+              "q": "$request.query",
+              "record_type": "$request.record_type",
+              "include_inactive": "$request.include_inactive",
+              "branch_scope": "$session.branch_scope",
+              "session_id": "$session.session_id"
+            },
+            "note": "The only step. record_type and include_inactive are omitted entirely unless the request asks for them; the API defaults them to All and false."
+          }
+        ],
+        "onFailure": "Stop and report. The minimum length, the row scope and the role's right to search at all are enforced by the API and arrive as errors; the plan does not test for them beforehand. Nothing matching is not a failure — it is the answer (E2).",
+        "atomicity": "One step. No student or staff record is created, changed or deactivated. One thing is written: the audit entry recording the term searched (BR-9), so even a run that returns nothing leaves a record that the search happened. That entry is never editable and is not something the controller can undo."
+      },
+      "operations": [
+        {
+          "name": "search.global",
+          "method": "GET",
+          "path": "/api/v1/search",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Match a name or a system-issued number against student and staff records inside the actor's role and branch scope, and return up to twenty of them with the total.",
+          "parameters": [
+            {
+              "name": "q",
+              "source": "request",
+              "sourceRef": "$request.query",
+              "required": true,
+              "type": "string",
+              "notes": "The name or number only — the span of the sentence that names the person, never the sentence itself. \"Ahmed Raza ko dhoondo\" gives q \"Ahmed Raza\" (PR-10). Passed exactly as given: never re-spelled, transliterated or translated (PR-11). Minimum 3 characters; trimmed, case- and accent-insensitive. Matches name, roll number, student ID and staff ID only (BR-3) — never a guardian's mobile, an address or a date of birth."
+            },
+            {
+              "name": "record_type",
+              "source": "request",
+              "sourceRef": "$request.record_type",
+              "required": false,
+              "type": "enum: All | Student | Staff",
+              "notes": "Only where the sentence names the type outright — \"find the teacher Nadia\" is Staff. A form of address is not a type: madam, sir and baji narrow nothing (PR-12). Omit otherwise; the API defaults to All. Narrowing is safe from a permissions view because it never widens what the role may see (BR-1), but a wrong narrowing still hides the person."
+            },
+            {
+              "name": "include_inactive",
+              "source": "request",
+              "sourceRef": "$request.include_inactive",
+              "required": false,
+              "type": "boolean",
+              "notes": "True only where the request states the person has gone — \"chala gaya tha\", \"TC ho gaya\", \"left last year\" (PR-13). Never set true to widen a search that returned nothing — see PR-3."
+            },
+            {
+              "name": "branch_scope",
+              "source": "session",
+              "sourceRef": "$session.branch_scope",
+              "required": true,
+              "type": "string[]",
+              "notes": "The branches this role may reach. Never from the request, even where the request names a campus. Global search widens reach across modules, never across permissions (BR-1)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "The academic session held in controller context (academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Up to twenty matches, each carrying what it takes to tell two people apart, plus the full total.",
+            "fields": [
+              {
+                "name": "matches",
+                "type": "object[]",
+                "description": "record_type, record_id, name, class_or_department, roll_or_staff_number, status, branch_name, is_inactive. record_type and branch_name must be reported with each match (BR-4, BR-10)."
+              },
+              {
+                "name": "total_count",
+                "type": "integer",
+                "description": "How many matched in total, which may exceed the number shown (BR-6)."
+              },
+              {
+                "name": "shown_count",
+                "type": "integer",
+                "description": "Never more than twenty."
+              },
+              {
+                "name": "full_list_key",
+                "type": "string",
+                "description": "The student or staff list carrying the same term, where the total exceeds twenty (A1)."
+              },
+              {
+                "name": "scope_note",
+                "type": "string",
+                "description": "What was searched in words — \"Johar Town branch\", \"All branches\", \"Grade 1 and 2\". Reported with the results so an empty answer is readable."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "QUERY_TOO_SHORT",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "Fewer than three characters were submitted.",
+              "written": "Nothing. No search ran, so no audit entry either.",
+              "notWritten": "No audit entry, no results.",
+              "note": "On screen no search runs and the panel does not open. Ask for more of the name rather than searching on two letters."
+            },
+            {
+              "code": "NO_MATCHES",
+              "mapsTo": "E2",
+              "httpStatus": 200,
+              "meaning": "Nothing in scope matches the term.",
+              "written": "The audit entry for the term searched (BR-9).",
+              "notWritten": "No record opened.",
+              "treatedAsSuccess": true,
+              "note": "Message: \"No student or staff member matches that.\" This is the answer, not a failure. Never retried with include_inactive true or a shortened term."
+            },
+            {
+              "code": "SEARCH_TIMEOUT",
+              "mapsTo": "E3",
+              "httpStatus": 504,
+              "meaning": "The search took longer than 10 seconds and was abandoned.",
+              "written": "Nothing reliable. The audit entry may or may not have been written.",
+              "notWritten": "No results, no record opened.",
+              "note": "Message: \"Search is taking longer than usual. Try a fuller name or a roll number.\" Report it; do not silently retry."
+            },
+            {
+              "code": "FORBIDDEN",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "The role may not use global search at all — Teacher, Student, Parent / Guardian and Driver.",
+              "written": "Nothing.",
+              "notWritten": "No search ran.",
+              "note": "On screen the search box is not rendered in the header. A Teacher reaches their students through their class lists, which is the narrower and safer path."
+            }
+          ],
+          "writesOnRead": "Every search writes one audit entry naming the actor, the term and the time (BR-9), because this feature reaches personal data across the whole school. The entry recording which record was opened is written by whichever use case opens it, not by this plan."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never chain a profile open onto this search, not even where exactly one record matches. A single result is reported for the actor to confirm, never opened for them (A2). The plan ends at the matches.",
+          "derivedFrom": [
+            "A2",
+            "BR-7",
+            "Out of Scope"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "branch_scope comes from $session. A request naming a campus outside the actor's scope does not widen the search — it returns nothing, and that is correct. Never pass a branch from the request.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2",
+            "AC-4",
+            "branch-scope"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never re-emit the search with include_inactive set true because it returned nothing. Inactive records are included only where the request asks for a former, left or struck-off person. A struck-off student surfacing unasked is how one gets mistaken for an enrolled one.",
+          "derivedFrom": [
+            "BR-5",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never shorten, generalise or re-spell the term to find something. A search that matches nothing is the answer (E2), and a broadened one returns people nobody asked about.",
+          "derivedFrom": [
+            "E2",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never put a guardian's mobile, an address, a date of birth or a parent's name in q. Only names and system-issued identifiers are matched (BR-3), and the use case's own open question records that a guardian's number has not been agreed as matchable.",
+          "derivedFrom": [
+            "BR-3",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never plan this to enumerate. A term built to sweep a class, a department or a whole branch — \"Grade 5\", \"Khan\" to list every Khan — is a list, and lists are out of scope here.",
+          "derivedFrom": [
+            "Out of Scope",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Report each match with its record_type, and with branch_name where the scope spans branches. Dropping either is exactly how a student and a staff member of the same name, or two pupils of the same name at two campuses, get confused.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-10",
+            "AC-2"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "Where total_count exceeds shown_count, say so and offer the full list. Presenting twenty of sixty as the answer is a wrong answer.",
+          "derivedFrom": [
+            "BR-6",
+            "AC-5",
+            "A1"
+          ]
+        },
+        {
+          "id": "PR-9",
+          "rule": "Never emit this step to check whether a person exists before some other action. The audit log records every term searched, and a search run to probe is a search that will be read back later as one.",
+          "derivedFrom": [
+            "BR-9",
+            "AC-7"
+          ]
+        },
+        {
+          "id": "PR-10",
+          "rule": "Put into q only the span that names the person, never the sentence around it. \"Ahmed Raza ko dhoondo\" searches for \"Ahmed Raza\"; ko dhoondo is grammar. A sentence passed whole matches nothing and reads afterwards, in the audit log, as a search nobody would have typed.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-11",
+          "rule": "Never re-spell, transliterate or translate a name or a system-issued identifier. The record holds the spelling it was registered with, in Latin script, and Ayesha, Aisha and Ayeshah are three different searches. Where a name arrives in Urdu script, ask for it as it appears on the record rather than rendering it into Latin — a rendering is a guess with a person's identity in it. Eastern Arabic digits inside an identifier are normalised to Latin digits, which changes the script and not the number.",
+          "derivedFrom": [
+            "BR-3",
+            "AC-1"
+          ]
+        },
+        {
+          "id": "PR-12",
+          "rule": "Set record_type only where the sentence names the type outright. Ustaad, sir, madam and baji are forms of address as often as they are job descriptions, and a wrong narrowing hides the person being looked for. Where it is not stated plainly, omit record_type and let All match — the record type comes back on every row anyway.",
+          "derivedFrom": [
+            "BR-4",
+            "AC-2"
+          ]
+        },
+        {
+          "id": "PR-13",
+          "rule": "Read include_inactive from what the request states, not from how it is phrased. \"Chala gaya tha\", \"TC ho gaya\" and \"left last year\" all state that the person has gone; a wistful past tense does not. Where it is unclear, leave the flag off and report that nothing matched — PR-3 already forbids widening it afterwards.",
+          "derivedFrom": [
+            "BR-5",
+            "AC-3"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A search creates, changes and deactivates nothing, so there is nothing to reverse. The audit entry it writes is deliberate and never editable under the audit-trail convention — the controller must not attempt to remove or amend it."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "counter pe ek parent khara hai, roll number 2024-0417 bata raha hai — ye kaun hai?",
+            "lang": "ur-Latn",
+            "gloss": "a parent at the counter is quoting roll number 2024-0417 — who is this?"
+          },
+          "context": "Staff, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "search.global",
+              "inputs": {
+                "q": "2024-0417",
+                "branch_scope": "$session.branch_scope",
+                "session_id": "$session.session_id"
+              },
+              "note": "record_type and include_inactive are omitted entirely — the request asked for neither, so the API defaults them to All and false."
+            }
+          ],
+          "outcome": "One match: Ayesha Khan, Student, Grade 4 Section B, roll 2024-0417, status Enrolled. It is reported, not opened — the actor confirms the person before a profile is loaded (AC-1, A2). One audit entry records the term."
+        },
+        {
+          "request": {
+            "text": "Ahmed Raza ko dhoondo",
+            "lang": "ur-Latn",
+            "gloss": "find Ahmed Raza"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "search.global",
+              "inputs": {
+                "q": "ahmed raza",
+                "branch_scope": "$session.branch_scope",
+                "session_id": "$session.session_id"
+              },
+              "note": "q is \"ahmed raza\" — the name lifted out of the sentence. ko dhoondo is grammar and never reaches the API (PR-10)."
+            }
+          ],
+          "outcome": "Two matches, one Student in Grade 7 Section A and one Staff member in Mathematics, each carrying its record type so the two are not confused (AC-2). Both are reported; neither is opened."
+        },
+        {
+          "request": {
+            "text": "Bilal Khan ko dhoondo — mera khayal hai wo pichle saal chala gaya tha",
+            "lang": "ur-Latn",
+            "gloss": "find Bilal Khan — I think he left last year"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "search.global",
+              "inputs": {
+                "q": "bilal khan",
+                "record_type": "Student",
+                "include_inactive": true,
+                "branch_scope": "$session.branch_scope",
+                "session_id": "$session.session_id"
+              },
+              "note": "include_inactive is true because the request said he left — not because a first search came back empty (PR-3). record_type is Student because the request said so."
+            }
+          ],
+          "outcome": "One match: Bilal Khan, Student, Grade 6 Section A as at leaving, status Left, marked as inactive (AC-3). Reported with that marking, so he is never taken for an enrolled pupil."
+        }
+      ]
+    }
+  ]
+}

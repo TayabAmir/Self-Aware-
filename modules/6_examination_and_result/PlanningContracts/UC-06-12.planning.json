@@ -1,0 +1,1402 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-06-12",
+    "name": "Rank students into an ordered merit list and control how much of it families are shown",
+    "module": "Examination",
+    "file": "../UseCases/UC-06-12.json",
+    "featureRef": "6.12 Merit list generation"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-06-12-PC-1",
+      "intent": {
+        "name": "merit.list.generate",
+        "summary": "Rank the students in scope into an ordered list on a stated criterion. One step, and nobody sees it yet.",
+        "routesHere": [
+          "generate the merit list for class 8 on percentage",
+          {
+            "text": "class 8 ki merit list banao",
+            "lang": "ur-Latn",
+            "gloss": "generate class 8's merit list"
+          },
+          {
+            "text": "total marks ke hisab se tarteeb banao",
+            "lang": "ur-Latn",
+            "gloss": "rank them by total marks"
+          },
+          {
+            "text": "poore session ki merit list nikalo",
+            "lang": "ur-Latn",
+            "gloss": "produce the merit list for the whole session"
+          },
+          "rank the section by weighted score"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "cumulative natija nikalo",
+              "lang": "ur-Latn",
+              "gloss": "produce the cumulative result"
+            },
+            "goesTo": "exam.cumulative.run — UC-06-05",
+            "note": "A cumulative figure is a standing, not an order. No position is calculated there (UC-06-05 BR-7)."
+          },
+          {
+            "request": {
+              "text": "position walidain ko bata do",
+              "lang": "ur-Latn",
+              "gloss": "tell the parents the positions"
+            },
+            "goesTo": "merit.list.publish — UC-06-12-PC-4",
+            "note": "Generating produces the order; what families are shown is a separate, deliberate choice (BR-5)."
+          },
+          {
+            "request": {
+              "text": "kisi bache ki position theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "correct a student's position"
+            },
+            "goesTo": "exam.mark.correct — UC-06-02, then regenerate",
+            "note": "The list reads approved results and never changes them. Correcting a position means correcting a mark and regenerating (BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "merit.list.generate",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "scope": "$request.scope",
+              "class_id": "$request.class_phrase",
+              "section_id": "$request.section_phrase",
+              "criterion": "$request.criterion",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every subject result for the exam must be approved first (BR-1) — a ranking built on part of the marks is not a ranking."
+          }
+        ],
+        "onFailure": "Stop and report. An unapproved subject result blocks the list outright; students with unresolved absences and mixed subject sets are handled within the run and reported.",
+        "atomicity": "One write: the list, its positions, its exclusions and the criterion used together or not at all (BR-9). Nothing is visible to any family — the Principal or School Admin approves it and the Coordinator then chooses what is published, because a ranking published wrongly cannot be unseen (BR-4)."
+      },
+      "operations": [
+        {
+          "name": "merit.list.generate",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/merit-lists",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "exam_id + scope + class_id + section_id + criterion, since a repeat regenerates rather than stacks",
+          "purpose": "Rank the students in scope on the stated criterion.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code, dates and whether every subject result is approved."
+              },
+              "notes": "An exam whose every subject result has been approved (BR-1, E1)."
+            },
+            {
+              "name": "scope",
+              "source": "request",
+              "sourceRef": "$request.scope",
+              "required": true,
+              "type": "enum: Section | Class | Session year",
+              "notes": "What the list covers. The actor's, never widened."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where the scope is Class or Section."
+            },
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No section matches within that class.",
+                "onAmbiguous": "Ask, naming the sections."
+              },
+              "notes": "Required where the scope is Section."
+            },
+            {
+              "name": "criterion",
+              "source": "request",
+              "sourceRef": "$request.criterion",
+              "required": true,
+              "type": "enum: Total marks | Percentage | Weighted score",
+              "notes": "How students are ordered (BR-9). An order produced on total marks is not the same as one produced on percentage, so it is stated rather than assumed and is recorded with the list."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The list as generated.",
+            "fields": [
+              {
+                "name": "merit_list_id",
+                "type": "string",
+                "description": "The list."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Generated. Visible to nobody outside the school (BR-4)."
+              },
+              {
+                "name": "criterion",
+                "type": "string",
+                "description": "Recorded with the list, so a published position stays explainable (BR-9)."
+              },
+              {
+                "name": "positions",
+                "type": "object[]",
+                "description": "Each student with their position. Equal marks share a position and the next is skipped (BR-3)."
+              },
+              {
+                "name": "shared_positions",
+                "type": "integer",
+                "description": "Positions held by more than one student (BR-3)."
+              },
+              {
+                "name": "excluded_students",
+                "type": "object[]",
+                "description": "Students left out because an absence is unresolved, each with the reason (BR-2)."
+              },
+              {
+                "name": "separate_lists",
+                "type": "object[]",
+                "description": "Where the scope holds students who took different subject sets, one list per set (BR-8, E3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RESULTS_NOT_APPROVED",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "A subject result for the exam is not yet approved.",
+              "written": "Nothing.",
+              "notWritten": "No list produced.",
+              "note": "The message names the subjects. A ranking built on part of the marks is not a ranking (BR-1)."
+            },
+            {
+              "code": "ALL_EXCLUDED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "Every student in scope has an unresolved absence.",
+              "written": "Nothing.",
+              "notWritten": "No list produced."
+            },
+            {
+              "code": "MIXED_SUBJECT_SETS",
+              "mapsTo": "E3",
+              "httpStatus": 200,
+              "meaning": "The scope holds students who took different subject sets.",
+              "written": "Separate lists, one per subject set.",
+              "notWritten": "No single combined list.",
+              "treatedAsSuccess": true,
+              "note": "Not a refusal. Ranking by total marks compares only students who sat the same subjects (BR-8) — report that more than one list came out."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the ranking criterion. Total marks, percentage and weighted score produce different orders (BR-9), and a planner that picked one has decided who comes first.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never approve a subject result to make a list possible. E1 is BR-1 working, and releasing a result puts a grade in front of every family as a side effect of wanting a ranking.",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the excluded students and why. A student with an unresolved absence is left out until the makeup is marked or the absence is finalised (BR-2), and their family will not find them on a list nobody explained.",
+          "derivedFrom": [
+            "BR-2",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report shared positions plainly. Equal marks share a position and the next is skipped — two students placed second are followed by a fourth, not a third (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report where more than one list came out. In a Subject Wise class students take different subjects, and one list across them would compare figures that are not comparable (BR-8, E3).",
+          "derivedFrom": [
+            "BR-8",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never describe the list as published. Nothing is visible to any family until it is approved and a publication choice is made (BR-4, BR-5).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A list is regenerated rather than withdrawn while unpublished. Once published, withdrawal carries a reason (BR-7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "class 8 ki merit list percentage ke hisab se banao",
+            "lang": "ur-Latn",
+            "gloss": "generate class 8's merit list by percentage"
+          },
+          "context": "Coordinator, Johar Town branch, every subject result approved.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.generate",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "scope": "Class",
+                "class_id": "$request.class_phrase → \"class 8\"",
+                "section_id": "omitted",
+                "criterion": "Percentage",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The criterion is the Coordinator's own word (PR-1)."
+            }
+          ],
+          "outcome": "Generated and visible to nobody (PR-6). Report the shared positions (PR-4) and the students excluded for unresolved absences (PR-3) — those families will ask."
+        },
+        {
+          "request": {
+            "text": "merit list banao",
+            "lang": "ur-Latn",
+            "gloss": "generate the merit list"
+          },
+          "context": "Coordinator, Johar Town branch, with science results not yet approved.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.generate",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "scope": "$request.scope",
+                "class_id": "$request.class_phrase",
+                "section_id": "omitted",
+                "criterion": "$request.criterion",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked, with no release chained to clear the way (PR-2). The API returns RESULTS_NOT_APPROVED (E1)."
+            }
+          ],
+          "outcome": "No list is produced. Report that science is not approved, and that approving it would put every family's grade in front of them — a decision to take on its own, not to get a ranking out."
+        },
+        {
+          "request": {
+            "text": "subject wise class ki merit list banao",
+            "lang": "ur-Latn",
+            "gloss": "generate the merit list for the subject-wise class"
+          },
+          "context": "Coordinator, Johar Town branch, where students take different subject sets.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.generate",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "scope": "Class",
+                "class_id": "$request.class_phrase",
+                "section_id": "omitted",
+                "criterion": "Total marks",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns MIXED_SUBJECT_SETS (E3) on the success path."
+            }
+          ],
+          "outcome": "Separate lists are produced, one per subject set. Report that plainly (PR-5) — a student taking four subjects and one taking six cannot be ranked against each other on total marks, so there is no single order to publish."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-12-PC-2",
+      "intent": {
+        "name": "merit.list.approval.submit",
+        "summary": "Send a generated merit list to the Principal or School Admin for approval. One step.",
+        "routesHere": [
+          "send the merit list for approval",
+          {
+            "text": "merit list manzoori ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the merit list for approval"
+          },
+          {
+            "text": "list Principal ko bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send the list to the Principal"
+          },
+          {
+            "text": "tarteeb manzoori ke liye aage barha do",
+            "lang": "ur-Latn",
+            "gloss": "pass the ranking on for approval"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "list shaya kar do",
+              "lang": "ur-Latn",
+              "gloss": "publish the list"
+            },
+            "goesTo": "merit.list.publish — UC-06-12-PC-4",
+            "note": "Publication before approval is refused (E5). A ranking published wrongly cannot be unseen (BR-4)."
+          },
+          {
+            "request": {
+              "text": "khud manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve it yourself"
+            },
+            "goesTo": "merit.list.approve — UC-06-12-PC-3",
+            "note": "The Coordinator generates; the Principal or School Admin approves (BR-4, E4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "merit.list.approval.submit",
+            "inputs": {
+              "merit_list_id": "$request.list_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it publishes nothing."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the list moves to Awaiting approval, with the audit entry. No family sees anything."
+      },
+      "operations": [
+        {
+          "name": "merit.list.approval.submit",
+          "method": "POST",
+          "path": "/api/v1/merit-lists/{merit_list_id}/submit",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "merit_list_id, since a list sits in one place at a time",
+          "purpose": "Send the merit list for approval.",
+          "parameters": [
+            {
+              "name": "merit_list_id",
+              "source": "resolved",
+              "sourceRef": "$request.list_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "merit_list",
+                "fromPhrase": "$request.list_phrase",
+                "onNoMatch": "Refuse. No merit list matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their exam, scope, criterion and status."
+              },
+              "notes": "The merit list, resolved from its exam and scope."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The submission.",
+            "fields": [
+              {
+                "name": "merit_list_id",
+                "type": "string",
+                "description": "The list."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval."
+              },
+              {
+                "name": "criterion",
+                "type": "string",
+                "description": "The criterion it was built on (BR-9)."
+              },
+              {
+                "name": "students_ranked",
+                "type": "integer",
+                "description": "How many are on it."
+              },
+              {
+                "name": "excluded_students",
+                "type": "integer",
+                "description": "How many are left out (BR-2)."
+              },
+              {
+                "name": "out_of_date",
+                "type": "boolean",
+                "description": "True where a mark has changed since it was generated. A published list is flagged as out of date rather than left reading as current (E8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_GENERATED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The list is published, withdrawn or not yet generated.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve as part of submitting. The Coordinator generates and the Principal or School Admin approves (BR-4), and one person doing both removes the only check before a ranking reaches families.",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report where a mark has changed since the list was generated. The order may no longer be the order (E8), and approving a stale ranking is worse than regenerating it.",
+          "derivedFrom": [
+            "BR-7",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the exclusions again at submission. The approver is agreeing to a list that leaves particular children out (BR-2), and should see who.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A submission is not withdrawn. The approver approves or the list is regenerated."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "merit list manzoori ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the merit list for approval"
+          },
+          "context": "Coordinator, Johar Town branch, on a generated list.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.approval.submit",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "It sits with the Principal or School Admin. Report the criterion, the numbers ranked and excluded (PR-3), and that nothing is public yet."
+        },
+        {
+          "request": {
+            "text": "list bhej kar manzoor bhi kar do",
+            "lang": "ur-Latn",
+            "gloss": "send the list and approve it too"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.approval.submit",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The submission only. The approval is not chained (PR-1)."
+            }
+          ],
+          "outcome": "Submitted. Report that the Principal or School Admin approves — a ranking published wrongly cannot be unseen by the families who saw it, and that check is the reason for the separation."
+        },
+        {
+          "request": {
+            "text": "merit list aage bhej do",
+            "lang": "ur-Latn",
+            "gloss": "pass the merit list on"
+          },
+          "context": "Coordinator, Johar Town branch, where a mark was corrected after the list was generated.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.approval.submit",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Submitted, and out_of_date comes back true. Report it plainly (PR-2) — a mark has changed since the ranking was built, so the order in front of the approver may not be the order. Regenerating first is the cheaper mistake."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-12-PC-3",
+      "intent": {
+        "name": "merit.list.approve",
+        "summary": "Approve a merit list so it can be published. Principal, Director or School Admin, one step, and it publishes nothing.",
+        "routesHere": [
+          "approve the class 8 merit list",
+          {
+            "text": "merit list manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the merit list"
+          },
+          {
+            "text": "tarteeb theek hai, manzoori de do",
+            "lang": "ur-Latn",
+            "gloss": "the ranking is right, approve it"
+          },
+          {
+            "text": "Principal ki manzoori de do",
+            "lang": "ur-Latn",
+            "gloss": "give the Principal's approval"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "list walidain tak pahuncha do",
+              "lang": "ur-Latn",
+              "gloss": "get the list to the parents"
+            },
+            "goesTo": "merit.list.publish — UC-06-12-PC-4",
+            "note": "Approval permits publication; what families are shown is chosen separately and deliberately (BR-5)."
+          },
+          {
+            "request": {
+              "text": "list dobara banao",
+              "lang": "ur-Latn",
+              "gloss": "regenerate the list"
+            },
+            "goesTo": "merit.list.generate — UC-06-12-PC-1"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "merit.list.approve",
+            "inputs": {
+              "merit_list_id": "$request.list_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It publishes nothing — the Coordinator still has to choose what families are shown (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by the Coordinator who generated the list is refused by the API.",
+        "atomicity": "One write: the approval and the audit entry together or not at all. No family sees anything yet. This is the check that stands between a ranking and the households it names, because a ranking published wrongly cannot be unseen (BR-4)."
+      },
+      "operations": [
+        {
+          "name": "merit.list.approve",
+          "method": "POST",
+          "path": "/api/v1/merit-lists/{merit_list_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "merit_list_id, since a list is approved once",
+          "purpose": "Approve a merit list for publication.",
+          "parameters": [
+            {
+              "name": "merit_list_id",
+              "source": "resolved",
+              "sourceRef": "$request.list_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "merit_list",
+                "fromPhrase": "$request.list_phrase",
+                "onNoMatch": "Refuse. No merit list matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their exam, scope, criterion and status."
+              },
+              "notes": "The merit list, resolved from its exam and scope."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval.",
+            "fields": [
+              {
+                "name": "merit_list_id",
+                "type": "string",
+                "description": "The list."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved. Not published (BR-5)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The Principal, Director or School Admin."
+              },
+              {
+                "name": "criterion",
+                "type": "string",
+                "description": "The criterion it was built on (BR-9)."
+              },
+              {
+                "name": "students_ranked",
+                "type": "integer",
+                "description": "How many are on it."
+              },
+              {
+                "name": "out_of_date",
+                "type": "boolean",
+                "description": "True where a mark has changed since it was generated (E8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SELF_APPROVAL",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The actor is the Coordinator who generated the list.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "The Coordinator generates; the Principal or School Admin approves (BR-4)."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The list is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a list the actor generated. E4 is BR-4 working, and it is the only check between a ranking and every family it names.",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain publication onto approval. What families are shown is chosen deliberately, not defaulted (BR-5, E6) — the two are separate decisions by design.",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where a mark has changed since generation. Approving a stale order is how a wrong ranking reaches families (E8).",
+          "derivedFrom": [
+            "BR-7",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. Where the list turns out wrong before publication it is regenerated; after publication it is withdrawn with a reason (BR-7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "class 8 ki merit list manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve class 8's merit list"
+          },
+          "context": "Principal, Johar Town branch, on a list awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.approve",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only. No publication is chained (PR-2)."
+            }
+          ],
+          "outcome": "Approved and still visible to nobody. Report that the Coordinator now chooses what families are shown — their own child's position alone, or the top three announced to all."
+        },
+        {
+          "request": {
+            "text": "apni banai hui list manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the list I generated"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.approve",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns SELF_APPROVAL (E4)."
+            }
+          ],
+          "outcome": "Not approved. Report that the Principal, Director or School Admin approves — this is the only check before a ranking reaches the families it names."
+        },
+        {
+          "request": {
+            "text": "manzoor kar ke walidain ko bhej do",
+            "lang": "ur-Latn",
+            "gloss": "approve it and send it to the parents"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.approve",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only (PR-2)."
+            }
+          ],
+          "outcome": "Approved. Report that publication needs a choice nobody has made yet: every family told their own child's position, or the top three announced to all plus each family's own. Defaulting it would decide what the school tells its parents."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-12-PC-4",
+      "intent": {
+        "name": "merit.list.publish",
+        "summary": "Publish an approved merit list, choosing what families are shown. Coordinator, one step, and the choice is never defaulted.",
+        "routesHere": [
+          "publish the merit list — announce the top three",
+          {
+            "text": "merit list shaya kar do",
+            "lang": "ur-Latn",
+            "gloss": "publish the merit list"
+          },
+          {
+            "text": "sirf har bache ki apni position bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send each child only their own position"
+          },
+          {
+            "text": "pehli teen positions sab ko bata do",
+            "lang": "ur-Latn",
+            "gloss": "announce the first three positions to everybody"
+          },
+          "publish it, own position only"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "poori list sab walidain ko bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the whole list to all the parents"
+            },
+            "goesTo": "Not offered.",
+            "note": "A family never sees another child's position beyond the top three where the school chose to announce them (BR-6)."
+          },
+          {
+            "request": {
+              "text": "shaya-shuda list wapas le lo",
+              "lang": "ur-Latn",
+              "gloss": "withdraw the published list"
+            },
+            "goesTo": "merit.list.withdraw — UC-06-12-PC-5"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "merit.list.publish",
+            "inputs": {
+              "merit_list_id": "$request.list_phrase",
+              "publication_choice": "$request.publication_choice",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches every family in scope. The choice decides what each of them learns (BR-5, BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. Publication before approval, and publication with no choice made, are both refused.",
+        "atomicity": "One write, atomic in itself: the publication and the messages to families together or not at all. Each family is told their own child's position; where the school chose to announce them, the first, second and third are told to all (BR-5). A family never sees another child's position beyond that (BR-6). It cannot be unseen — a wrong list is withdrawn with a reason, but the households that read it have read it (BR-4, BR-7)."
+      },
+      "operations": [
+        {
+          "name": "merit.list.publish",
+          "method": "POST",
+          "path": "/api/v1/merit-lists/{merit_list_id}/publish",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "merit_list_id, since a list is published once and a repeat must not message every family twice",
+          "purpose": "Publish an approved merit list to families, on the chosen basis.",
+          "parameters": [
+            {
+              "name": "merit_list_id",
+              "source": "resolved",
+              "sourceRef": "$request.list_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "merit_list",
+                "fromPhrase": "$request.list_phrase",
+                "onNoMatch": "Refuse. No merit list matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their exam, scope, criterion and status."
+              },
+              "notes": "The merit list, resolved from its exam and scope."
+            },
+            {
+              "name": "publication_choice",
+              "source": "request",
+              "sourceRef": "$request.publication_choice",
+              "required": true,
+              "type": "enum: Own position only | Top three to all, plus own position",
+              "notes": "What families are shown. Chosen deliberately, not defaulted (BR-5, E6). It decides whether the school names its top three to every household, which is a decision about the school and not about the data."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The publication.",
+            "fields": [
+              {
+                "name": "merit_list_id",
+                "type": "string",
+                "description": "The list."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Published."
+              },
+              {
+                "name": "publication_choice",
+                "type": "string",
+                "description": "As chosen (BR-5)."
+              },
+              {
+                "name": "families_notified",
+                "type": "integer",
+                "description": "Each told their own child's position (BR-6)."
+              },
+              {
+                "name": "top_three_announced",
+                "type": "boolean",
+                "description": "True where the first three positions went to all families."
+              },
+              {
+                "name": "excluded_students",
+                "type": "integer",
+                "description": "Students left out of the list, whose families are told no position (BR-2)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_APPROVED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "Publication was attempted before approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing published.",
+              "note": "A ranking published wrongly cannot be unseen (BR-4)."
+            },
+            {
+              "code": "NO_PUBLICATION_CHOICE",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "No publication choice was made.",
+              "written": "Nothing.",
+              "notWritten": "Nothing published.",
+              "note": "It is chosen deliberately, never defaulted (BR-5)."
+            },
+            {
+              "code": "OUT_OF_DATE",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "A mark has changed since the list was generated.",
+              "written": "Nothing.",
+              "notWritten": "Nothing published.",
+              "note": "The list is flagged as out of date rather than left reading as current. Regenerate it (BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never default the publication choice. Whether the school names its top three to every household is a decision about the school (BR-5, E6), and a planner that chose has made it.",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never publish more of the list than the choice allows. A family never sees another child's position beyond the top three where the school chose to announce them (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never publish an out-of-date list. A mark has changed and the order may have changed with it (E8) — regenerating costs nothing, and an unseen wrong ranking cannot be unsent.",
+          "derivedFrom": [
+            "BR-7",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the excluded students. Their families are told no position at all (BR-2), and on a day the top three are announced that absence is conspicuous.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never read positions out to anybody who is not entitled to them. The same rule that governs publication governs the reply.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "merit.list.withdraw",
+        "statement": "Withdrawing the published list with a reason (BR-7). It does not unsend what families have already read — where a mark is corrected, the list is recalculated, reissued, and every family whose position changed is told."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "merit list shaya kar do — pehli teen positions sab ko bata do",
+            "lang": "ur-Latn",
+            "gloss": "publish the merit list — announce the first three positions to everybody"
+          },
+          "context": "Coordinator, Johar Town branch, on an approved list.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.publish",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "publication_choice": "Top three to all, plus own position",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The choice is the Coordinator's own words (PR-1)."
+            }
+          ],
+          "outcome": "Published. Every family is told their own child's position and the first three are announced to all. Report the excluded students (PR-4) — their families are told no position, on a day three names go out to everybody."
+        },
+        {
+          "request": {
+            "text": "list shaya kar do",
+            "lang": "ur-Latn",
+            "gloss": "publish the list"
+          },
+          "context": "Coordinator, Johar Town branch, on an approved list, with no publication choice stated.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.publish",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "publication_choice": "$request.publication_choice — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The choice has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is published. Ask whether every family is told only their own child's position, or the top three are announced to all as well — that is a decision about what the school tells its parents, and it is not one to default."
+        },
+        {
+          "request": {
+            "text": "poori merit list sab walidain ko bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the full merit list to all the parents"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.publish",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "publication_choice": "$request.publication_choice",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted for the full list — there is no such choice (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is published. Report that a family never sees another child's position beyond the top three where the school chose to announce them, and offer the two choices that exist."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-12-PC-5",
+      "intent": {
+        "name": "merit.list.withdraw",
+        "summary": "Withdraw a published merit list with the reason. One step, and it does not unsend what families have read.",
+        "routesHere": [
+          "withdraw the merit list — a mark was wrong",
+          {
+            "text": "shaya-shuda merit list wapas le lo, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "withdraw the published merit list, with the reason"
+          },
+          {
+            "text": "list mein ghalti hai, wapas lo",
+            "lang": "ur-Latn",
+            "gloss": "there is a mistake in the list, withdraw it"
+          },
+          {
+            "text": "tarteeb galat thi, hata do",
+            "lang": "ur-Latn",
+            "gloss": "the order was wrong, take it down"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "list dobara banao",
+              "lang": "ur-Latn",
+              "gloss": "regenerate the list"
+            },
+            "goesTo": "merit.list.generate — UC-06-12-PC-1",
+            "note": "Where a mark is corrected after publication the list is recalculated and the corrected version reissued, and every family whose position changed is told (BR-7)."
+          },
+          {
+            "request": {
+              "text": "bhejay hue paighamat wapas lo",
+              "lang": "ur-Latn",
+              "gloss": "take back the messages already sent"
+            },
+            "goesTo": "Not offered.",
+            "note": "Withdrawal takes the list down. It does not unsend what families have already read (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "merit.list.withdraw",
+            "inputs": {
+              "merit_list_id": "$request.list_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A published list can be withdrawn, with a reason (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A withdrawal with no reason arrives as an error.",
+        "atomicity": "One write: the withdrawal, its reason and the audit entry together or not at all. The list stops reading as current. It does not unsend anything — families who were told a position still hold it, which is why a corrected list is reissued and everybody whose position changed is told (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "merit.list.withdraw",
+          "method": "POST",
+          "path": "/api/v1/merit-lists/{merit_list_id}/withdraw",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "merit_list_id, since a list is withdrawn once",
+          "purpose": "Withdraw a published merit list, with the reason.",
+          "parameters": [
+            {
+              "name": "merit_list_id",
+              "source": "resolved",
+              "sourceRef": "$request.list_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "merit_list",
+                "fromPhrase": "$request.list_phrase",
+                "onNoMatch": "Refuse. No merit list matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their exam, scope, criterion and status."
+              },
+              "notes": "The merit list, resolved from its exam and scope."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (BR-7, E7). Why a published ranking is being taken down. Families were told positions from it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The withdrawal.",
+            "fields": [
+              {
+                "name": "merit_list_id",
+                "type": "string",
+                "description": "The list."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Withdrawn."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "families_already_told",
+                "type": "integer",
+                "description": "Families who were sent a position from this list. It stands until a corrected list reaches them (BR-7)."
+              },
+              {
+                "name": "withdrawn_by",
+                "type": "string",
+                "description": "The Coordinator."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A published list was withdrawn with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing withdrawn."
+            },
+            {
+              "code": "NOT_PUBLISHED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The list is not published.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "An unpublished list is regenerated rather than withdrawn."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. A published ranking being taken down is something families will ask about, and the answer is the school's.",
+          "derivedFrom": [
+            "BR-7",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never describe withdrawal as undoing the publication. Families who were told a position still hold it (BR-4) — the correction reaches them only when a recalculated list is reissued (BR-7).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report how many families were already told. That is the size of what has to be put right, and it is invisible from the word withdrawn.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain a regeneration onto the withdrawal. The mark has to be corrected first, and the list built again reads the corrected results (BR-11).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A withdrawal is not undone. A corrected list is generated afresh, approved, and published — and every family whose position changed is told (BR-7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "merit list wapas le lo — ek bache ka number ghalat tha",
+            "lang": "ur-Latn",
+            "gloss": "withdraw the merit list — one student's mark was wrong"
+          },
+          "context": "Coordinator, Johar Town branch, on a published list.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.withdraw",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "reason": "A mark was found wrong after publication and the order is affected.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Coordinator's own (PR-1)."
+            }
+          ],
+          "outcome": "Withdrawn. Report how many families were already told a position (PR-3), and that the mark is corrected, the list regenerated and reissued, and everybody whose position changed told — the withdrawal alone reaches none of them (PR-2)."
+        },
+        {
+          "request": {
+            "text": "list wapas lo aur foran nayi bana do",
+            "lang": "ur-Latn",
+            "gloss": "withdraw the list and rebuild it straight away"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.withdraw",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The withdrawal only. Regenerating now would rebuild the same order from the same uncorrected marks (PR-4)."
+            }
+          ],
+          "outcome": "Withdrawn. Report that the mark is corrected first — the list reads approved results and never changes them, so a rebuild before the correction produces exactly the list that was just taken down."
+        },
+        {
+          "request": {
+            "text": "ye list hata do",
+            "lang": "ur-Latn",
+            "gloss": "take this list down"
+          },
+          "context": "Coordinator, Johar Town branch, on a list that was approved but never published.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "merit.list.withdraw",
+              "inputs": {
+                "merit_list_id": "$request.list_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_PUBLISHED (E5)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that no family has seen it — it is regenerated instead, and nobody has to be told anything."
+        }
+      ]
+    }
+  ]
+}

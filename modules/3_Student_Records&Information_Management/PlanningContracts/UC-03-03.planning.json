@@ -1,0 +1,1252 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-03-03",
+    "name": "Import many students at once from a spreadsheet",
+    "module": "Student",
+    "file": "../UseCases/UC-03-03.json",
+    "featureRef": "3.3 Bulk student import"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-03-03-PC-1",
+      "intent": {
+        "name": "student.import.run",
+        "summary": "Create the students from the valid rows of a validated import batch, leaving the rejected rows reported and uncreated. One step, and each row stands or falls on its own.",
+        "routesHere": [
+          "import the valid rows from this batch",
+          {
+            "text": "file check ho gayi hai, import chala do",
+            "lang": "ur-Latn",
+            "gloss": "the file has been checked, run the import"
+          },
+          {
+            "text": "jo rows sahi hain wo import kar do",
+            "lang": "ur-Latn",
+            "gloss": "import the rows that are correct"
+          },
+          "go ahead and create the 398 valid students",
+          {
+            "text": "import shuru kar do",
+            "lang": "ur-Latn",
+            "gloss": "start the import"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye file import kar do",
+              "lang": "ur-Latn",
+              "gloss": "import this file"
+            },
+            "goesTo": "Not offered through a plan.",
+            "note": "Uploading needs the file itself and the request channel carries no file. The upload and the validation happen on the screen; what a plan can do is run, authorise or cancel a batch that is already there."
+          },
+          {
+            "request": {
+              "text": "import approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the import"
+            },
+            "goesTo": "student.import.authorise — UC-03-03-PC-2",
+            "note": "A batch above the row threshold creates nothing until a School Admin authorises it (BR-12, A1)."
+          },
+          {
+            "request": {
+              "text": "import cancel kar do",
+              "lang": "ur-Latn",
+              "gloss": "cancel the import"
+            },
+            "goesTo": "student.import.cancel — UC-03-03-PC-3"
+          },
+          {
+            "request": {
+              "text": "kitni rows import hui?",
+              "lang": "ur-Latn",
+              "gloss": "how many rows were imported?"
+            },
+            "goesTo": "student.import.status — UC-03-03-PC-4"
+          },
+          {
+            "request": {
+              "text": "ek student add karna hai",
+              "lang": "ur-Latn",
+              "gloss": "I need to add one student"
+            },
+            "goesTo": "Not offered.",
+            "note": "A student record is never created by typing (UC-03-01 BR-1). One student arrives through admission; an import is a migration path for a whole cohort (BR-1)."
+          },
+          {
+            "request": {
+              "text": "import ke baad ek record theek karna hai",
+              "lang": "ur-Latn",
+              "gloss": "I need to correct a record after the import"
+            },
+            "goesTo": "student.update — UC-03-01-PC-2",
+            "note": "Correcting an imported record is the ordinary maintenance path, not part of the import."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.import.run",
+            "inputs": {
+              "batch_id": "$request.batch_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. Every row was validated before this was reachable (BR-3), so nothing here discovers on row 300 that the file was wrong. The rejected rows are already known and are not attempted."
+          }
+        ],
+        "onFailure": "Stop and report. The authorisation threshold, the batch's status and whether existing roll numbers were supplied are all enforced by the API and arrive as errors. A batch above the threshold is not refused — it is sent for School Admin authorisation (E9), which is an outcome to report rather than a failure.",
+        "atomicity": "Two different guarantees, and they matter separately. Each row is atomic: it produces a complete student, guardian, family and enrolment, or it produces nothing at all, so a row that fails while its guardian is being created leaves no fragment behind (BR-11, E8, AC-8). The batch is not atomic: valid rows are created and rejected rows are reported with their row number and reason, and one bad row never stops the rest (BR-4). So a partial result is the normal shape here. Rows already created by an earlier run of the same file are recognised and skipped rather than duplicated (BR-13, A6)."
+      },
+      "operations": [
+        {
+          "name": "student.import.run",
+          "method": "POST",
+          "path": "/api/v1/students/imports/{batch_id}/run",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "batch_id, and BR-13 backs it — a repeat recognises the rows already created and skips them rather than duplicating a cohort",
+          "purpose": "Create the students, guardians, families and enrolments from the valid rows of a validated batch, reporting each rejected row with its reason.",
+          "parameters": [
+            {
+              "name": "batch_id",
+              "source": "resolved",
+              "sourceRef": "$request.batch_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "import_batch",
+                "fromPhrase": "$request.batch_phrase",
+                "onNoMatch": "Refuse. No import batch matches in this branch at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with file name, upload time, row count and status. Two files uploaded the same morning is the ordinary case."
+              },
+              "notes": "The import batch, resolved from how the actor named it — the file name, the upload time, or simply the most recent one. It exists because someone uploaded a file on the screen; a plan cannot create one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "A per-row result, because one bad row never stops the rest.",
+            "fields": [
+              {
+                "name": "batch_id",
+                "type": "string",
+                "description": "The batch run."
+              },
+              {
+                "name": "rows_read",
+                "type": "integer",
+                "description": "How many rows the file held."
+              },
+              {
+                "name": "rows_created",
+                "type": "integer",
+                "description": "How many students now exist."
+              },
+              {
+                "name": "rows_rejected",
+                "type": "integer",
+                "description": "How many were reported and created nothing."
+              },
+              {
+                "name": "rows_skipped",
+                "type": "integer",
+                "description": "Already created by an earlier run of this file, recognised and not duplicated (BR-13)."
+              },
+              {
+                "name": "rejected",
+                "type": "object[]",
+                "description": "row_number and reason for each. Listed rather than silently dropped (BR-4)."
+              },
+              {
+                "name": "guardians_created",
+                "type": "integer",
+                "description": "Fewer than rows_created where siblings shared a guardian identity number and joined one household (BR-7, AC-3)."
+              },
+              {
+                "name": "families_created",
+                "type": "integer",
+                "description": "One per household, not one per child."
+              },
+              {
+                "name": "registered_without_class",
+                "type": "integer",
+                "description": "Rows carrying no class, created at Registered with no roll number (BR-8, A5, AC-7)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Completed, or Awaiting authorisation where the threshold sent it for approval."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "AWAITING_AUTHORISATION",
+              "mapsTo": "E9",
+              "httpStatus": 202,
+              "meaning": "The row count is above the threshold a Staff user may import unaided.",
+              "written": "Nothing. The validated file is frozen so it cannot change while it waits (A1).",
+              "notWritten": "No student created.",
+              "treatedAsSuccess": true,
+              "note": "Not a failure. Report that it has gone to School Admin for authorisation and that nothing has been created (AC-10). Never split the file to get under the threshold."
+            },
+            {
+              "code": "ROLL_NUMBERS_NOT_PERMITTED",
+              "mapsTo": "E10",
+              "httpStatus": 403,
+              "meaning": "A Staff user ran a file supplying existing roll numbers.",
+              "written": "Nothing.",
+              "notWritten": "No student created.",
+              "note": "Only a School Admin may import with existing roll numbers (BR-10, A4)."
+            },
+            {
+              "code": "EVERY_ROW_REJECTED",
+              "mapsTo": "E7",
+              "httpStatus": 200,
+              "meaning": "No row in the file could be imported.",
+              "written": "Nothing. The batch completes with a report.",
+              "notWritten": "No student created.",
+              "treatedAsSuccess": true,
+              "note": "Message points at the report. This is an answer about the file, not a failure of the run."
+            },
+            {
+              "code": "ROW_CREATION_FAILED",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "A row failed part way through creation.",
+              "written": "Nothing for that row — no student, no guardian, no enrolment (BR-11, AC-8). Every other row is unaffected.",
+              "notWritten": "That row's records.",
+              "treatedAsSuccess": true,
+              "note": "Reported in rejected with its row number. The row is atomic, so there is no fragment to clean up."
+            },
+            {
+              "code": "BATCH_NOT_VALIDATED",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The batch has not finished validating, or has already run.",
+              "written": "Nothing.",
+              "notWritten": "No student created.",
+              "note": "UC-03-03 defines no exception for it because the run control is only offered on a validated batch. See OPEN-QUESTIONS."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report the counts before the plan is emitted, and never run a batch the actor has not seen the size of. This creates student records, guardian portal accounts and fee liability for a whole cohort at once, and none of it can be uncreated.",
+          "derivedFrom": [
+            "BR-1",
+            "AC-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never split a file to get under the authorisation threshold. The threshold exists so a School Admin sees a large import before it runs (BR-12); two batches under it create the same students with nobody having looked.",
+          "derivedFrom": [
+            "BR-12",
+            "E9",
+            "AC-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the three counts separately — created, rejected, skipped — and name the rejected rows. A batch reported as a success hides the rows BR-4 insists on listing, and the actor has a corrected file to prepare.",
+          "derivedFrom": [
+            "BR-4",
+            "AC-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never treat a rejected row as something to fix in the plan. An ambiguous date is rejected rather than guessed (BR-5), a duplicate identity number names the existing record (BR-6), a full section is not over-filled (BR-9). Each is the file being wrong, and the fix is a corrected file.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-6",
+            "BR-9",
+            "AC-4",
+            "AC-5",
+            "AC-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never re-run a batch to retry the rejected rows. Re-running recognises what already succeeded and skips it (BR-13), but the rejected rows are still rejected — they need correcting in the file and re-uploading, which is a screen act.",
+          "derivedFrom": [
+            "BR-13",
+            "A6",
+            "AC-9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never plan an import to add one student, or a handful. This path exists deliberately outside the inquiry, approval and test (BR-1); using it for a child who should go through admission bypasses every check that pipeline exists to make.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id and session_id come from $session. A file is imported into the branch and academic session the controller holds, never one named in the request.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is none. An import creates students with generated IDs and roll numbers that are never reused, guardian accounts, family codes, enrolments and fee liability. Undoing it means deactivating each record, which is UC-03-01's business, refused outright where a fee transaction already references one (UC-03-01 BR-11). The controller must not attempt a compensating call, and must not re-run the batch in the hope of correcting it — a re-run skips what exists rather than replacing it."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "file check ho gayi, import chala do",
+            "lang": "ur-Latn",
+            "gloss": "the file has been checked, run the import"
+          },
+          "context": "Staff, Johar Town branch, academic session 2025-26. A validated batch of 412 rows, 14 of them rejected, below the authorisation threshold.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.run",
+              "inputs": {
+                "batch_id": "$request.batch_phrase → the validated 412-row batch",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The counts are reported to the actor before the plan is emitted — 412 read, 398 valid, 14 rejected (PR-1)."
+            }
+          ],
+          "outcome": "398 students exist, each with a generated student ID and roll number. The 14 rejected rows come back with their row numbers and reasons for a corrected file (AC-1). Report all three numbers; a bare \"import complete\" hides the 14."
+        },
+        {
+          "request": {
+            "text": "import chala do, 900 rows hain",
+            "lang": "ur-Latn",
+            "gloss": "run the import, there are 900 rows"
+          },
+          "context": "Staff, Johar Town branch, where the authorisation threshold is below 900.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.run",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The plan is emitted unchanged; it does not test the threshold beforehand. The API returns AWAITING_AUTHORISATION (E9) on the success path."
+            }
+          ],
+          "outcome": "Nothing is created. The validated file is frozen so it cannot change while it waits, and School Admin has the authorisation request (AC-10). Report that plainly — the actor will otherwise assume 900 students now exist."
+        },
+        {
+          "request": {
+            "text": "teenon bhai behno wali file import kar do",
+            "lang": "ur-Latn",
+            "gloss": "run the import for the file with the three siblings"
+          },
+          "context": "School Admin, Johar Town branch. Three rows share one guardian identity number.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.run",
+              "inputs": {
+                "batch_id": "$request.batch_phrase → the sibling file",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              }
+            }
+          ],
+          "outcome": "Three students, one guardian and one family code — the siblings join one household rather than becoming three families (BR-7, AC-3). guardians_created comes back as 1 against rows_created 3, and that difference is worth reporting: it is the rule working."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-03-PC-2",
+      "intent": {
+        "name": "student.import.authorise",
+        "summary": "Authorise an import batch that is above the row threshold, so its valid rows are created. School Admin only, one step.",
+        "routesHere": [
+          "authorise the pending import",
+          {
+            "text": "import approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the import"
+          },
+          {
+            "text": "is batch ko authorise kar do",
+            "lang": "ur-Latn",
+            "gloss": "authorise this batch"
+          },
+          {
+            "text": "jo import approval ka intezaar kar raha hai, wo chala do",
+            "lang": "ur-Latn",
+            "gloss": "run the import that is waiting for approval"
+          },
+          "yes, go ahead with the 900-row import"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "import chala do",
+              "lang": "ur-Latn",
+              "gloss": "run the import"
+            },
+            "goesTo": "student.import.run — UC-03-03-PC-1",
+            "note": "A batch below the threshold runs without authorisation."
+          },
+          {
+            "request": {
+              "text": "import reject kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject the import"
+            },
+            "goesTo": "student.import.cancel — UC-03-03-PC-3",
+            "note": "Declining an authorisation is a cancellation, and the batch is not run."
+          },
+          {
+            "request": {
+              "text": "ye file import kar do",
+              "lang": "ur-Latn",
+              "gloss": "import this file"
+            },
+            "goesTo": "Not offered through a plan.",
+            "note": "Uploading needs the file itself and the request channel carries no file. The upload and the validation happen on the screen; what a plan can do is run, authorise or cancel a batch that is already there."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.import.authorise",
+            "inputs": {
+              "batch_id": "$request.batch_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step, and it runs the import. Authorising is not an approval that sits waiting — it is the act that creates the students, so everything the run contract says about counts and per-row atomicity applies here too."
+          }
+        ],
+        "onFailure": "Stop and report. The acting role and the batch's status are enforced by the API and arrive as errors.",
+        "atomicity": "The same two guarantees as the run: each row atomic, the batch not (BR-4, BR-11). Authorising creates the students immediately, so a partial result is the normal shape and the rejected rows are reported with their reasons. The file was frozen at validation and could not change while it waited (A1), so what is created is what the School Admin was shown."
+      },
+      "operations": [
+        {
+          "name": "student.import.authorise",
+          "method": "POST",
+          "path": "/api/v1/students/imports/{batch_id}/authorise",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "batch_id, so a repeated authorisation does not create the cohort twice",
+          "purpose": "Authorise a batch above the row threshold and create the students from its valid rows.",
+          "parameters": [
+            {
+              "name": "batch_id",
+              "source": "resolved",
+              "sourceRef": "$request.batch_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "import_batch",
+                "fromPhrase": "$request.batch_phrase",
+                "onNoMatch": "Refuse. No import batch matches in this branch at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with file name, upload time, row count and status. Two files uploaded the same morning is the ordinary case."
+              },
+              "notes": "The import batch, resolved from how the actor named it — the file name, the upload time, or simply the most recent one. It exists because someone uploaded a file on the screen; a plan cannot create one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The same per-row result the run returns, since authorising is what runs it.",
+            "fields": [
+              {
+                "name": "batch_id",
+                "type": "string",
+                "description": "The batch authorised."
+              },
+              {
+                "name": "authorised_by",
+                "type": "string",
+                "description": "The acting School Admin."
+              },
+              {
+                "name": "rows_created",
+                "type": "integer",
+                "description": "How many students now exist."
+              },
+              {
+                "name": "rows_rejected",
+                "type": "integer",
+                "description": "How many were reported and created nothing."
+              },
+              {
+                "name": "rejected",
+                "type": "object[]",
+                "description": "row_number and reason for each (BR-4)."
+              },
+              {
+                "name": "requested_by",
+                "type": "string",
+                "description": "Who uploaded the file and asked for it. Worth reporting — the authorisation was on their behalf."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Completed."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E9",
+              "httpStatus": 403,
+              "meaning": "The acting user is not a School Admin.",
+              "written": "Nothing.",
+              "notWritten": "No student created.",
+              "note": "Only a School Admin may authorise (BR-12). In practice the capability is absent from a Staff or Accounts allow-list."
+            },
+            {
+              "code": "EVERY_ROW_REJECTED",
+              "mapsTo": "E7",
+              "httpStatus": 200,
+              "meaning": "No row could be imported.",
+              "written": "Nothing.",
+              "notWritten": "No student created.",
+              "treatedAsSuccess": true,
+              "note": "An answer about the file, not a failure."
+            },
+            {
+              "code": "ROW_CREATION_FAILED",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "A row failed part way.",
+              "written": "Nothing for that row (BR-11).",
+              "notWritten": "That row's records.",
+              "treatedAsSuccess": true,
+              "note": "Reported in rejected with its row number."
+            },
+            {
+              "code": "NOT_AWAITING_AUTHORISATION",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The batch is not waiting for authorisation.",
+              "written": "Nothing.",
+              "notWritten": "Nothing created.",
+              "note": "It has already run, been cancelled, or was never above the threshold. UC-03-03 defines no exception for it — see OPEN-QUESTIONS."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report what is being authorised before the plan is emitted — the row count, who uploaded it and how many rows were rejected at validation. Authorising is not a formality: it creates the students immediately.",
+          "derivedFrom": [
+            "BR-12",
+            "A1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never authorise a batch the acting user uploaded themselves without saying so. The threshold exists so a second person looks at a large import (BR-12), and a School Admin authorising their own file is within their rights but worth stating.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain an authorisation onto a run that was refused for the threshold. E9 sends the batch to a School Admin, and authorising it in the same breath — in a session that happens to hold both capabilities — removes the second pair of eyes the threshold exists to insert.",
+          "derivedFrom": [
+            "BR-12",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the rejected rows exactly as the run contract does. Authorising a 900-row file and reporting a success hides the rows BR-4 insists on listing.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "None. Authorising creates the students, and everything the run contract says about irreversibility applies unchanged. Declining is not a reversal — it is student.import.cancel, and only before this has run."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "jo 900 rows wali import approval ka intezaar kar rahi hai, wo approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the 900-row import that is waiting for authorisation"
+          },
+          "context": "School Admin, Johar Town branch, academic session 2025-26. Staff uploaded and validated it; 12 rows were rejected at validation.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.authorise",
+              "inputs": {
+                "batch_id": "$request.batch_phrase → the 900-row pending batch",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The row count, who uploaded it and the 12 rejections are reported to the School Admin before the plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "888 students created, 12 rejected rows reported with their reasons. The file was frozen at validation, so what was created is what the School Admin was shown (A1)."
+        },
+        {
+          "request": {
+            "text": "import approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the import"
+          },
+          "context": "Staff, Johar Town branch, on a batch awaiting authorisation.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.authorise",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "In practice the capability is absent from a Staff allow-list, so this plan is never built. Where it is attempted the API returns NOT_PERMITTED."
+            }
+          ],
+          "outcome": "Nothing is created. Report that a School Admin must authorise it, and that the request is already with them — the batch is not stuck, it is waiting."
+        },
+        {
+          "request": "authorise it — I uploaded it myself but I'm the admin",
+          "context": "School Admin, Johar Town branch, on a batch they uploaded.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.authorise",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Permitted, and the plan is the same. requested_by comes back as the same person (PR-2)."
+            }
+          ],
+          "outcome": "The students are created. Report that the file was uploaded and authorised by the same person — within their rights, and the kind of thing the audit log is read for later."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-03-PC-3",
+      "intent": {
+        "name": "student.import.cancel",
+        "summary": "Cancel a validated import batch before it runs, so nothing is created. One step.",
+        "routesHere": [
+          "cancel that import, the file was wrong",
+          {
+            "text": "import cancel kar do, file galat thi",
+            "lang": "ur-Latn",
+            "gloss": "cancel the import, the file was wrong"
+          },
+          {
+            "text": "ye batch chhod do, nayi file bhejunga",
+            "lang": "ur-Latn",
+            "gloss": "drop this batch, I will send a new file"
+          },
+          {
+            "text": "import mat chalao",
+            "lang": "ur-Latn",
+            "gloss": "do not run the import"
+          },
+          "discard the pending import batch"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "import chala do",
+              "lang": "ur-Latn",
+              "gloss": "run the import"
+            },
+            "goesTo": "student.import.run — UC-03-03-PC-1"
+          },
+          {
+            "request": {
+              "text": "jo import ho chuki hai use undo kar do",
+              "lang": "ur-Latn",
+              "gloss": "undo the import that already ran"
+            },
+            "goesTo": "Not offered.",
+            "note": "Cancelling is only possible before the rows are created. Once students exist, undoing means deactivating each record, which is UC-03-01's business and refused where a fee transaction references one."
+          },
+          {
+            "request": {
+              "text": "ye file import kar do",
+              "lang": "ur-Latn",
+              "gloss": "import this file"
+            },
+            "goesTo": "Not offered through a plan.",
+            "note": "Uploading needs the file itself and the request channel carries no file. The upload and the validation happen on the screen; what a plan can do is run, authorise or cancel a batch that is already there."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.import.cancel",
+            "inputs": {
+              "batch_id": "$request.batch_phrase",
+              "cancel_reason": "$request.cancel_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it is only reachable before the rows are created. A batch that has run cannot be cancelled — there is nothing left to stop."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the batch has already run is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the batch moves to Cancelled and the audit entry is written, together or not at all. No student, guardian, family or enrolment is created or removed — the batch never created any. The uploaded file and its validation report stay readable, so the rejected rows can still be corrected for a fresh upload."
+      },
+      "operations": [
+        {
+          "name": "student.import.cancel",
+          "method": "POST",
+          "path": "/api/v1/students/imports/{batch_id}/cancel",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "batch_id, since a batch has one cancellation and a repeat returns ALREADY_CANCELLED",
+          "purpose": "Cancel a validated or pending batch so its rows are never created, keeping the file and its validation report.",
+          "parameters": [
+            {
+              "name": "batch_id",
+              "source": "resolved",
+              "sourceRef": "$request.batch_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "import_batch",
+                "fromPhrase": "$request.batch_phrase",
+                "onNoMatch": "Refuse. No import batch matches in this branch at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with file name, upload time, row count and status. Two files uploaded the same morning is the ordinary case."
+              },
+              "notes": "The import batch, resolved from how the actor named it — the file name, the upload time, or simply the most recent one. It exists because someone uploaded a file on the screen; a plan cannot create one."
+            },
+            {
+              "name": "cancel_reason",
+              "source": "request",
+              "sourceRef": "$request.cancel_reason",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 250 characters. Only where the request gives one. Not required by the use case, but it is what someone reads when they find a cancelled batch later."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The batch as cancelled.",
+            "fields": [
+              {
+                "name": "batch_id",
+                "type": "string",
+                "description": "The batch cancelled."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Cancelled. Terminal."
+              },
+              {
+                "name": "rows_read",
+                "type": "integer",
+                "description": "What the file held, kept for reference."
+              },
+              {
+                "name": "cancelled_by",
+                "type": "string",
+                "description": "The acting user."
+              },
+              {
+                "name": "validation_report_available",
+                "type": "boolean",
+                "description": "The rejected rows and their reasons stay readable for a corrected file."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ALREADY_RUN",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The batch has already been imported.",
+              "written": "Nothing.",
+              "notWritten": "Nothing removed.",
+              "note": "Students exist and cancelling does not remove them. UC-03-03 defines no exception for it because the cancel control is only offered before the run — see OPEN-QUESTIONS."
+            },
+            {
+              "code": "ALREADY_CANCELLED",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The batch was already cancelled.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Cancelled is terminal. Not a failure to retry."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never cancel a batch to deal with rejected rows. Rejected rows create nothing anyway (BR-4), and the valid ones are worth importing — cancelling throws away the good rows to avoid the bad ones.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never treat ALREADY_RUN as an undo. Cancelling stops a batch from running; it does not remove students that exist. Where the wrong cohort was imported, that is a deactivation problem on each record, not a cancellation.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain a cancellation onto a failed run. A run that reported rejected rows still created the valid ones, and cancelling afterwards changes nothing while suggesting it did.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Cancelled is terminal. A cancelled batch is not re-run — the file is corrected and uploaded afresh, which is a screen act. Nothing was created, so there is nothing to undo either way."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "import cancel kar do, file galat thi — purane session ki classes likhi hui hain",
+            "lang": "ur-Latn",
+            "gloss": "cancel the import, the file was wrong — it has last session's classes in it"
+          },
+          "context": "Staff, Johar Town branch, on a validated batch that has not run.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.cancel",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "cancel_reason": "The file carries last session's classes.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The batch is Cancelled and nothing was created. The validation report stays readable, so the actor can see which rows would have failed before they prepare the corrected file."
+        },
+        {
+          "request": {
+            "text": "wo import cancel kar do",
+            "lang": "ur-Latn",
+            "gloss": "cancel that import"
+          },
+          "context": "Staff, Johar Town branch, on a batch that ran an hour ago and created 398 students.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.cancel",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged; it does not check the status beforehand. The API returns ALREADY_RUN."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the batch has already run and 398 students exist — cancelling does not remove them, and removing them is a different and much harder act (PR-2)."
+        },
+        {
+          "request": "cancel the pending import, we'll do it after the session opens",
+          "context": "School Admin, Johar Town branch, on a batch awaiting authorisation.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.cancel",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "cancel_reason": "Deferred until the new session opens.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The batch is cancelled and the authorisation request is withdrawn with it. The file will need uploading again afterwards, because Cancelled is terminal."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-03-PC-4",
+      "intent": {
+        "name": "student.import.status",
+        "summary": "Read how an import batch went — how many rows were read, created, rejected and skipped, and why each rejection happened. One step.",
+        "routesHere": [
+          "how did the import go?",
+          {
+            "text": "import kaisa raha?",
+            "lang": "ur-Latn",
+            "gloss": "how did the import go?"
+          },
+          {
+            "text": "kitni rows import hui?",
+            "lang": "ur-Latn",
+            "gloss": "how many rows were imported?"
+          },
+          {
+            "text": "kaunsi rows reject hui aur kyun?",
+            "lang": "ur-Latn",
+            "gloss": "which rows were rejected and why?"
+          },
+          "what's the status of the pending import batch",
+          {
+            "text": "import mukammal ho gayi?",
+            "lang": "ur-Latn",
+            "gloss": "has the import finished?"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "import chala do",
+              "lang": "ur-Latn",
+              "gloss": "run the import"
+            },
+            "goesTo": "student.import.run — UC-03-03-PC-1"
+          },
+          {
+            "request": {
+              "text": "reject hui rows theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix the rejected rows"
+            },
+            "goesTo": "Not offered.",
+            "note": "Rejected rows are corrected in the file and uploaded again, which is a screen act. Nothing in a plan edits a row."
+          },
+          {
+            "request": {
+              "text": "jo students import hue unki list do",
+              "lang": "ur-Latn",
+              "gloss": "give me the list of students that were imported"
+            },
+            "goesTo": "The student list.",
+            "note": "The batch reports counts and rejections. Listing the students themselves is a list of students, not a read of the batch."
+          },
+          {
+            "request": {
+              "text": "is student ka record kholo",
+              "lang": "ur-Latn",
+              "gloss": "open this student's record"
+            },
+            "goesTo": "student.read — UC-03-01-PC-1"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.import.status",
+            "inputs": {
+              "batch_id": "$request.batch_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Where the request names no batch — \"how did the import go\" — resolution takes the most recent one in this branch and reports which it chose."
+          }
+        ],
+        "onFailure": "Stop and report. Row scope is enforced by the API and arrives as an error.",
+        "atomicity": "A read. Nothing is created, changed or cancelled, and nothing is written."
+      },
+      "operations": [
+        {
+          "name": "student.import.status",
+          "method": "GET",
+          "path": "/api/v1/students/imports/{batch_id}",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return an import batch's counts, its status, and every rejected row with its reason.",
+          "parameters": [
+            {
+              "name": "batch_id",
+              "source": "resolved",
+              "sourceRef": "$request.batch_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "import_batch",
+                "fromPhrase": "$request.batch_phrase",
+                "onNoMatch": "Refuse. No import batch matches in this branch at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with file name, upload time, row count and status. Two files uploaded the same morning is the ordinary case."
+              },
+              "notes": "The import batch, resolved from how the actor named it — the file name, the upload time, or simply the most recent one. It exists because someone uploaded a file on the screen; a plan cannot create one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Where the batch stands and what it did.",
+            "fields": [
+              {
+                "name": "batch_id",
+                "type": "string",
+                "description": "The batch read."
+              },
+              {
+                "name": "file_name",
+                "type": "string",
+                "description": "What was uploaded, for confirming the right batch was read."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Uploaded, Validating, Validated, Awaiting authorisation, Importing, Completed, Cancelled or Failed."
+              },
+              {
+                "name": "uploaded_by",
+                "type": "string",
+                "description": "Who uploaded it, and when."
+              },
+              {
+                "name": "rows_read",
+                "type": "integer",
+                "description": "What the file held."
+              },
+              {
+                "name": "rows_created",
+                "type": "integer",
+                "description": "How many students exist because of it."
+              },
+              {
+                "name": "rows_rejected",
+                "type": "integer",
+                "description": "How many created nothing."
+              },
+              {
+                "name": "rows_skipped",
+                "type": "integer",
+                "description": "Already created by an earlier run of the same file (BR-13)."
+              },
+              {
+                "name": "rejected",
+                "type": "object[]",
+                "description": "row_number and reason for each (BR-4)."
+              },
+              {
+                "name": "guardians_created",
+                "type": "integer",
+                "description": "Fewer than rows_created where siblings shared a household (BR-7)."
+              },
+              {
+                "name": "registered_without_class",
+                "type": "integer",
+                "description": "Created at Registered with no roll number (BR-8)."
+              },
+              {
+                "name": "awaiting_authorisation_from",
+                "type": "string",
+                "description": "Present where the batch is waiting on a School Admin (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_IN_SCOPE",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The batch belongs to another branch.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned.",
+              "note": "Covered by the role-based-access convention rather than by an E-id. Principal and Director see all branches' batch history; everyone else sees their own."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say which batch was read whenever the request named none. \"How did the import go\" resolves to the most recent, and a school running two files in a morning gets the wrong answer silently otherwise.",
+          "derivedFrom": [
+            "list-screens"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report created, rejected and skipped as three numbers, never as one. A batch of 412 that created 398 is not a success or a failure; it is both, and the 14 need a corrected file (BR-4, AC-1).",
+          "derivedFrom": [
+            "BR-4",
+            "AC-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never read Awaiting authorisation as an in-progress import. Nothing has been created and nothing will be until a School Admin authorises it (BR-12) — reporting it as running leaves a cohort that nobody knows is waiting.",
+          "derivedFrom": [
+            "BR-12",
+            "A1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never infer why a row was rejected. Each rejection carries its own reason — an ambiguous date, a duplicate identity number, a full section (BR-5, BR-6, BR-9) — and they lead to different corrections in the file.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-6",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain a run onto a status read. Asking how an import went is not asking to run it, and a batch still Validated is one somebody has not decided about yet.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "import kaisa raha?",
+            "lang": "ur-Latn",
+            "gloss": "how did the import go?"
+          },
+          "context": "Staff, Johar Town branch, with one batch run this morning.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.status",
+              "inputs": {
+                "batch_id": "$request.batch_phrase → the most recent batch",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The request names no batch, so resolution takes the most recent. Which one it chose is reported (PR-1)."
+            }
+          ],
+          "outcome": "412 rows read, 398 created, 14 rejected. Report all three with the file name, and list the 14 with their reasons — that list is what the corrected file is built from."
+        },
+        {
+          "request": {
+            "text": "kaunsi rows reject hui thi aur kyun?",
+            "lang": "ur-Latn",
+            "gloss": "which rows were rejected and why?"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.status",
+              "inputs": {
+                "batch_id": "$request.batch_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The 14 rejections come back with their row numbers and reasons — row 42 an unreadable date, row 87 an identity number already held, row 61 a full section. Report each as given; they lead to different corrections (PR-4)."
+        },
+        {
+          "request": {
+            "text": "900 wali import mukammal ho gayi?",
+            "lang": "ur-Latn",
+            "gloss": "has the 900-row import finished?"
+          },
+          "context": "School Admin, Johar Town branch, on a batch above the threshold that nobody has authorised.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.import.status",
+              "inputs": {
+                "batch_id": "$request.batch_phrase → the 900-row batch",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "status comes back Awaiting authorisation with awaiting_authorisation_from naming the School Admin. Report that nothing has been created and it is waiting on a person — not that it is still running (PR-3)."
+        }
+      ]
+    }
+  ]
+}

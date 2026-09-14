@@ -1,0 +1,635 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-02-11",
+    "name": "Close an enquiry as not interested, and re-open one closed by mistake",
+    "module": "Admissions & Inquiry Management",
+    "file": "../UseCases/UC-02-11.json",
+    "featureRef": "2.11 Marking a lead as declined, and re-opening it"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-02-11-PC-1",
+      "intent": {
+        "name": "inquiry.close",
+        "summary": "Close an enquiry as not interested, with the reason the family gave. One step, and reversible by inquiry.reopen.",
+        "routesHere": [
+          "close the Ahmed Raza enquiry, they went to another school",
+          {
+            "text": "ye inquiry band kar do, unhone dusre school mein admission le liya",
+            "lang": "ur-Latn",
+            "gloss": "close this enquiry, they took admission at another school"
+          },
+          {
+            "text": "unhone mana kar diya, fees zyada thi",
+            "lang": "ur-Latn",
+            "gloss": "they said no, the fees were too high"
+          },
+          "mark this lead as not interested — no longer responding",
+          {
+            "text": "ye family ab interested nahi hai",
+            "lang": "ur-Latn",
+            "gloss": "this family is not interested any more"
+          },
+          "close it, they moved out of the city"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye inquiry ghalti se band hui thi",
+              "lang": "ur-Latn",
+              "gloss": "this enquiry was closed by mistake"
+            },
+            "goesTo": "inquiry.reopen — UC-02-11-PC-2",
+            "note": "The reverse of this, and it needs its own reason."
+          },
+          {
+            "request": {
+              "text": "abhi soch rahe hain, baad mein call karunga",
+              "lang": "ur-Latn",
+              "gloss": "they are still thinking, I'll call later"
+            },
+            "goesTo": "inquiry.contact.log — UC-02-10-PC-2",
+            "note": "Still considering is a contact outcome, not a closure. Closing a family who has not said no removes them from every reminder (BR-1)."
+          },
+          {
+            "request": "reject this inquiry",
+            "goesTo": "inquiry.reject — UC-02-03-PC-2",
+            "note": "A Principal's rejection is a decision on a forwarded inquiry, and it closes the enquiry itself (BR-9). Closing here is the school recording that the family withdrew."
+          },
+          {
+            "request": {
+              "text": "unko bata do ke hum ne band kar diya",
+              "lang": "ur-Latn",
+              "gloss": "tell them we have closed it"
+            },
+            "goesTo": "inquiry.message — UC-02-12",
+            "note": "Closing sends the family nothing by itself (BR-11). Telling them is a separate message, logged as one."
+          },
+          {
+            "request": "delete this enquiry",
+            "goesTo": "Not offered.",
+            "note": "An enquiry is never deleted (BR-4). It moves to the Not Interested List and keeps its history, so a family who returns is recognised."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "inquiry.close",
+            "inputs": {
+              "inquiry_id": "$request.inquiry_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The reason is the point of the act — closing without one makes the loss report useless (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the enquiry is already closed, and whether it has been taken forward to an admission, are enforced by the API and arrive as errors.",
+        "atomicity": "One write. The status change, the closure record, the contact-history entry and the audit entry are written together or not at all. Nothing is deleted — the enquiry and its full history stay readable on the Not Interested List (BR-4). Nothing is sent to the family (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "inquiry.close",
+          "method": "POST",
+          "path": "/api/v1/inquiries/{inquiry_id}/close",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "inquiry_id, since an enquiry has one closure at a time and a repeat returns ALREADY_CLOSED rather than recording a second",
+          "purpose": "Close an enquiry as not interested, recording why, and remove it from the follow-up list and every reminder.",
+          "parameters": [
+            {
+              "name": "inquiry_id",
+              "source": "resolved",
+              "sourceRef": "$request.inquiry_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "inquiry",
+                "fromPhrase": "$request.inquiry_phrase",
+                "onNoMatch": "Refuse. No enquiry matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with child name, guardian and status. Two families of the same name is ordinary here."
+              },
+              "notes": "The enquiry, resolved from how the actor named it — a reference, the child's name, or the guardian's number."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "enum: Fee too high | Chose another school | Moved away | Distance too far | No seat in the class wanted | Timing not suitable | No response after follow-up | Rejected at approval | Other",
+              "notes": "Mandatory. A closure with no reason teaches the school nothing and makes the loss report useless (BR-2)."
+            },
+            {
+              "name": "other_reason",
+              "source": "request",
+              "sourceRef": "$request.other_reason",
+              "required": false,
+              "type": "string",
+              "notes": "Required when reason is Other (BR-3, E2). Omit otherwise — sending it with a listed reason records a second explanation nobody asked for."
+            },
+            {
+              "name": "competitor_school",
+              "source": "request",
+              "sourceRef": "$request.competitor_school",
+              "required": false,
+              "type": "string",
+              "notes": "Where the family named the school they chose. Only where the request states it; never inferred from the area."
+            },
+            {
+              "name": "closing_note",
+              "source": "request",
+              "sourceRef": "$request.closing_note",
+              "required": false,
+              "type": "string",
+              "notes": "Appended to the contact history, never replacing it. The family's words belong here."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The enquiry as closed, and what it kept.",
+            "fields": [
+              {
+                "name": "inquiry_id",
+                "type": "string",
+                "description": "The enquiry closed."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Not interested."
+              },
+              {
+                "name": "closed_on",
+                "type": "datetime",
+                "description": "DD-MM-YYYY HH:mm, school-local."
+              },
+              {
+                "name": "closed_by",
+                "type": "string",
+                "description": "The acting user."
+              },
+              {
+                "name": "previous_status",
+                "type": "string",
+                "description": "What it was before closing. Restored by inquiry.reopen (BR-7)."
+              },
+              {
+                "name": "reopenable",
+                "type": "boolean",
+                "description": "False where the closure followed a rejection at approval (UC-02-11 E8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "No reason was given.",
+              "written": "Nothing.",
+              "notWritten": "Not closed.",
+              "note": "Message: \"Select a reason before closing this enquiry.\" Ask which reason; do not choose one."
+            },
+            {
+              "code": "OTHER_REASON_REQUIRED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "Reason is Other with no free text.",
+              "written": "Nothing.",
+              "notWritten": "Not closed."
+            },
+            {
+              "code": "ALREADY_CLOSED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The enquiry was already closed.",
+              "written": "Nothing.",
+              "notWritten": "No second closure recorded.",
+              "note": "The message names the closure date. Not a failure to retry, and not a reason to re-open."
+            },
+            {
+              "code": "ADMITTED",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The enquiry was taken forward to a completed admission.",
+              "written": "Nothing.",
+              "notWritten": "Not closed.",
+              "note": "Message names the admission date. The family is a student (BR-10); there is nothing here to close."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never close an enquiry the family has not refused. Closing removes it from every reminder (BR-1), and a family still considering who is closed is a family the school stops calling. \"Soch rahe hain\" and \"baad mein batayenge\" are contact outcomes, not closures.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Read the reason from what the family actually said, and never fall back on Other to get past a refusal. Other exists for reasons the list does not hold, and using it as a default makes the whole list stop meaning anything (BR-3). Where the sentence does not settle which reason it is, ask.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Put the family's own words in closing_note, not in reason. reason is the fixed set the loss report is built from; the words are what the next person reads when the family comes back.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain a re-open onto a refusal. An enquiry already closed is an answer (E3), and re-opening to make a close succeed is nonsense — it would then be closed again with a second reason.",
+          "derivedFrom": [
+            "E3",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain a message onto this plan. Closing tells the family nothing by itself (BR-11); where they are to be told, that is inquiry.message, planned separately and logged as a message.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "inquiry.reopen",
+        "statement": "inquiry.reopen restores the enquiry to its previous status and requires a new follow-up date (BR-5, BR-7). This is the one genuinely reversible act in the module, and deliberately so: closure is a judgement made in a hurry at a desk. Re-opening is a fresh decision with its own reason, never a compensating call the controller makes on its own after a failure."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ahmed Raza wali inquiry band kar do — unhone Beaconhouse mein admission le liya",
+            "lang": "ur-Latn",
+            "gloss": "close the Ahmed Raza enquiry — they took admission at Beaconhouse"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.close",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Ahmed Raza\"",
+                "reason": "Chose another school",
+                "competitor_school": "Beaconhouse",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The competitor is named in the request, so it is recorded. Had the request not named one, the field would be omitted rather than guessed from the area (PR-3)."
+            }
+          ],
+          "outcome": "The enquiry moves to Not Interested with its full contact history intact, drops off the follow-up list, and enters the loss report under Chose another school with Beaconhouse named. Nothing is sent to the family."
+        },
+        {
+          "request": {
+            "text": "unhone mana kar diya, keh rahe the fees bohat zyada hai",
+            "lang": "ur-Latn",
+            "gloss": "they said no, they said the fees are much too high"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.close",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "reason": "Fee too high",
+                "closing_note": "Said the fees are much too high.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "\"Fees bohat zyada hai\" becomes the reason Fee too high, and the family's own words go to closing_note. The two are not the same field (PR-3)."
+            }
+          ],
+          "outcome": "Closed under Fee too high, which is the line of the loss report the school's fee decisions are read against."
+        },
+        {
+          "request": "close this one, they've stopped answering after four attempts",
+          "context": "Staff, Johar Town branch, on an enquiry already flagged Stale.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.close",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "reason": "No response after follow-up",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Stale and closed are different states: stale drops the enquiry out of the daily list but keeps it open (UC-02-10 BR-6). Closing it is a decision someone takes."
+            }
+          ],
+          "outcome": "The enquiry closes under No response after follow-up and leaves the pipeline. It stays on the Not Interested List, so if the family returns next year they are recognised."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-02-11-PC-2",
+      "intent": {
+        "name": "inquiry.reopen",
+        "summary": "Re-open an enquiry closed by mistake, restoring its previous status and setting a new follow-up date. One step.",
+        "routesHere": [
+          "re-open the Ahmed Raza enquiry, it was closed by mistake",
+          {
+            "text": "ye inquiry ghalti se band ho gayi thi, dobara kholo",
+            "lang": "ur-Latn",
+            "gloss": "this enquiry was closed by mistake, open it again"
+          },
+          {
+            "text": "family ne wapas call kiya hai, inquiry khol do",
+            "lang": "ur-Latn",
+            "gloss": "the family called back, open the enquiry"
+          },
+          "they've changed their mind — re-open this lead and call them Monday",
+          {
+            "text": "band hui inquiry dobara chalu karni hai",
+            "lang": "ur-Latn",
+            "gloss": "I need to restart a closed enquiry"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye inquiry band kar do",
+              "lang": "ur-Latn",
+              "gloss": "close this enquiry"
+            },
+            "goesTo": "inquiry.close — UC-02-11-PC-1"
+          },
+          {
+            "request": "open a fresh enquiry for this family",
+            "goesTo": "inquiry.record — UC-02-10-PC-1",
+            "note": "Where the family is enquiring about a different child, or a different academic session, that is a new enquiry rather than a re-opening."
+          },
+          {
+            "request": {
+              "text": "is inquiry pe contact log kar do",
+              "lang": "ur-Latn",
+              "gloss": "log a contact on this enquiry"
+            },
+            "goesTo": "inquiry.contact.log — UC-02-10-PC-2",
+            "note": "A closed enquiry refuses a contact log (UC-02-10 E6). Re-opening first is a separate decision, never chained."
+          },
+          {
+            "request": "un-reject this applicant",
+            "goesTo": "Not offered.",
+            "note": "An enquiry closed by a rejection at approval is not re-opened here (E8). A rejection is a decision, and decisions are never edited."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "inquiry.reopen",
+            "inputs": {
+              "inquiry_id": "$request.inquiry_phrase",
+              "reopen_reason": "$request.reopen_reason",
+              "new_follow_up_date": "$request.new_follow_up_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Both the reason and the new date are required: a lead back in the list with no date disappears again (BR-7), and a lead closed and re-opened repeatedly should be visible rather than silent (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the enquiry is closed at all, and whether it was closed by a rejection, are enforced by the API and arrive as errors.",
+        "atomicity": "One write. The restored status, the re-opening record, the new follow-up date and the audit entry are written together or not at all. The closure is not erased — it stays in the history, so a re-opened enquiry never looks as though it was never closed (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "inquiry.reopen",
+          "method": "POST",
+          "path": "/api/v1/inquiries/{inquiry_id}/reopen",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "inquiry_id + the closure it is re-opening, so a repeat does not inflate reopen_count",
+          "purpose": "Restore a closed enquiry to its previous status with a new follow-up date, keeping the closure in its history.",
+          "parameters": [
+            {
+              "name": "inquiry_id",
+              "source": "resolved",
+              "sourceRef": "$request.inquiry_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "inquiry",
+                "fromPhrase": "$request.inquiry_phrase",
+                "onNoMatch": "Refuse. No enquiry matches in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with child name, guardian and status. Two families of the same name is ordinary here."
+              },
+              "notes": "The enquiry, resolved from how the actor named it — a reference, the child's name, or the guardian's number."
+            },
+            {
+              "name": "reopen_reason",
+              "source": "request",
+              "sourceRef": "$request.reopen_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters. Mandatory, so a lead closed and re-opened repeatedly is visible rather than silent (BR-6)."
+            },
+            {
+              "name": "new_follow_up_date",
+              "source": "request",
+              "sourceRef": "$request.new_follow_up_date",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the past. Mandatory: an enquiry back in the list with no date disappears again (BR-7, E6)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The enquiry as restored.",
+            "fields": [
+              {
+                "name": "inquiry_id",
+                "type": "string",
+                "description": "The enquiry re-opened."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "The status it held before closure, restored (BR-7)."
+              },
+              {
+                "name": "new_follow_up_date",
+                "type": "date",
+                "description": "The date now set."
+              },
+              {
+                "name": "reopen_count",
+                "type": "integer",
+                "description": "How many times this enquiry has been closed and re-opened. Visible rather than silent (BR-6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REOPEN_REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "No reason was given for re-opening.",
+              "written": "Nothing.",
+              "notWritten": "Not re-opened."
+            },
+            {
+              "code": "FOLLOW_UP_DATE_REQUIRED",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "No new follow-up date was given.",
+              "written": "Nothing.",
+              "notWritten": "Not re-opened.",
+              "note": "Message: \"Set a follow-up date so the enquiry does not disappear again.\" Ask for the date; do not supply one."
+            },
+            {
+              "code": "DATE_IN_PAST",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "The follow-up date is before today.",
+              "written": "Nothing.",
+              "notWritten": "Not re-opened."
+            },
+            {
+              "code": "CLOSED_BY_REJECTION",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The enquiry was closed by a rejection at approval.",
+              "written": "Nothing.",
+              "notWritten": "Not re-opened.",
+              "note": "A rejection is a decision, and decisions are never edited (UC-02-07 BR-11). There is no path from here that re-opens it."
+            },
+            {
+              "code": "NOT_CLOSED",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The enquiry is already open.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Report that it is open and at what status. UC-02-11 defines no E-id for it because the re-open control is only offered on a closed enquiry; see the open question."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never re-open an enquiry as a step towards something else. Re-opening is a decision with a reason that someone stands behind (BR-6), and doing it silently so a contact log or a message succeeds hides that the enquiry had been closed.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply new_follow_up_date yourself. E6 refuses the re-opening without one precisely so that a person commits to a date, and a date invented here re-opens a lead nobody has agreed to chase.",
+          "derivedFrom": [
+            "BR-7",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never treat CLOSED_BY_REJECTION as something to route around. An enquiry closed by a Principal's rejection has a decision behind it, and decisions are never edited (UC-02-07 BR-11). There is no other capability that achieves it either.",
+          "derivedFrom": [
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Carry the actor's own words into reopen_reason. \"Family ne wapas call kiya\" is the reason; a planner's tidy paraphrase loses who did what.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "inquiry.close",
+        "statement": "inquiry.close closes it again, with a fresh reason. The pair is genuinely reversible in both directions, and the history keeps every closure and every re-opening (BR-8), so the sequence survives however many times it happens. The controller must not close an enquiry on its own to undo a re-opening it made."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ahmed Raza wali inquiry ghalti se band ho gayi thi — dobara khol do aur pir ko follow-up rakho",
+            "lang": "ur-Latn",
+            "gloss": "the Ahmed Raza enquiry was closed by mistake — re-open it and set the follow-up for Friday"
+          },
+          "context": "Staff, Johar Town branch. Today is 07-09-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.reopen",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Ahmed Raza\"",
+                "reopen_reason": "Closed by mistake.",
+                "new_follow_up_date": "2026-09-11",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The enquiry returns to Contacted, the status it held before closing, and reappears on the follow-up list for Friday. The closure stays in its history, so it does not look as though it was never closed."
+        },
+        {
+          "request": {
+            "text": "wo family jo mana kar chuki thi, unhone wapas call kiya hai — inquiry khol do, kal baat karunga",
+            "lang": "ur-Latn",
+            "gloss": "the family who had said no called back — open the enquiry, I'll speak to them tomorrow"
+          },
+          "context": "Staff, Johar Town branch. Today is 07-09-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.reopen",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "reopen_reason": "Family called back and is interested again.",
+                "new_follow_up_date": "2026-09-08",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason carries what actually happened, in the actor's own terms. reopen_count moves to 1, which is how a lead closed and re-opened repeatedly stays visible (BR-6)."
+            }
+          ],
+          "outcome": "The enquiry is live again with tomorrow's follow-up. Both the original closure under Fee too high and this re-opening are in the history."
+        },
+        {
+          "request": "re-open the Sana Malik enquiry, we closed it after a rejection",
+          "context": "Staff, Johar Town branch, on an enquiry closed by a Principal's rejection.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.reopen",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Sana Malik\"",
+                "reopen_reason": "Asked to reconsider.",
+                "new_follow_up_date": "2026-09-11",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged — the plan does not test for the rejection beforehand. The API returns CLOSED_BY_REJECTION (E8)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that the enquiry was closed by a rejection at approval and cannot be re-opened, and that reconsidering an admission decision is a decision the Principal takes, not a re-opening."
+        }
+      ]
+    }
+  ]
+}

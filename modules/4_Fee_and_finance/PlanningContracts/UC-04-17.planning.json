@@ -1,0 +1,1174 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-17",
+    "name": "Deduct, record and remit withholding tax on fees, with every parameter configurable",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-17.json",
+    "featureRef": "4.17 Withholding tax on fees"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-17-PC-1",
+      "intent": {
+        "name": "fee.tax.config.create",
+        "summary": "Enter a withholding tax configuration — the rate, the household threshold, which fee types count and what the tax is calculated on. One step, and it deducts nothing.",
+        "routesHere": [
+          "set up withholding tax at 5% over a 200,000 household threshold",
+          {
+            "text": "withholding tax ki configuration daal do — rate 5%, threshold 200,000",
+            "lang": "ur-Latn",
+            "gloss": "enter the withholding tax configuration — rate 5%, threshold 200,000"
+          },
+          {
+            "text": "tax ka rate change hua hai, nayi configuration banao",
+            "lang": "ur-Latn",
+            "gloss": "the tax rate has changed, build a new configuration"
+          },
+          {
+            "text": "sirf tuition par tax lagana hai",
+            "lang": "ur-Latn",
+            "gloss": "tax should apply on tuition only"
+          },
+          "configure the tax on the gross fee rather than after concession"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "configuration approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the configuration"
+            },
+            "goesTo": "fee.tax.config.approve — UC-04-17-PC-2",
+            "note": "A setting with legal consequence is not one person's decision (BR-9)."
+          },
+          {
+            "request": {
+              "text": "is family ka tax kaat do",
+              "lang": "ur-Latn",
+              "gloss": "deduct this family's tax"
+            },
+            "goesTo": "Not offered.",
+            "note": "The deduction is calculated from the approved configuration as invoices are raised (BR-3). Nobody types a tax amount."
+          },
+          {
+            "request": {
+              "text": "sales tax bhi laga do",
+              "lang": "ur-Latn",
+              "gloss": "add sales tax too"
+            },
+            "goesTo": "Not offered.",
+            "note": "Sales tax is a different mechanism and is not handled here (BR-12)."
+          },
+          {
+            "request": {
+              "text": "certificate jaari karo",
+              "lang": "ur-Latn",
+              "gloss": "issue the certificate"
+            },
+            "goesTo": "fee.tax.certificate.issue — UC-04-17-PC-3"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.tax.config.create",
+            "inputs": {
+              "rate": "$request.rate",
+              "annual_threshold": "$request.annual_threshold",
+              "fee_type_ids": "$request.fee_types_phrase",
+              "basis": "$request.basis",
+              "tax_year": "$request.tax_year",
+              "effective_from": "$request.effective_from",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, producing a Draft. No tax is deducted without an approved configuration in force — a configuration in draft or awaiting approval deducts nothing (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. A rate outside a sensible range and no fee type selected are enforced by the API and arrive as errors.",
+        "atomicity": "One write: the configuration and the audit entry together or not at all. It is a Draft and deducts nothing (BR-2). Once approved it takes effect from its own date and does not recalculate invoices already issued (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "fee.tax.config.create",
+          "method": "POST",
+          "path": "/api/v1/tax-configurations",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "effective_from + tax_year + branch_id, since one configuration version takes effect per date",
+          "purpose": "Create a draft withholding tax configuration with every parameter the law requires.",
+          "parameters": [
+            {
+              "name": "rate",
+              "source": "request",
+              "sourceRef": "$request.rate",
+              "required": true,
+              "type": "decimal",
+              "notes": "The percentage deducted. Between 0 and 100 (E3). Configurable because the legal position has changed over the years (BR-1) — never carried forward from the previous configuration without the actor saying so."
+            },
+            {
+              "name": "annual_threshold",
+              "source": "request",
+              "sourceRef": "$request.annual_threshold",
+              "required": true,
+              "type": "money",
+              "notes": "The household's fees for the tax year above which tax applies. Assessed on the household across the year, not per invoice and not per student (BR-4)."
+            },
+            {
+              "name": "fee_type_ids",
+              "source": "resolved",
+              "sourceRef": "$request.fee_types_phrase",
+              "required": true,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "fee_type",
+                "fromPhrase": "$request.fee_types_phrase",
+                "onNoMatch": "Refuse. No such fee type.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Which fee types count towards the threshold and are taxed. Not every charge a school raises is a fee for this purpose (BR-5, E4)."
+            },
+            {
+              "name": "basis",
+              "source": "request",
+              "sourceRef": "$request.basis",
+              "required": true,
+              "type": "enum: Gross fee | After concession",
+              "notes": "Whether the tax is calculated on the gross fee or after a concession. The two differ materially for a family holding a large reduction (BR-6), so it is never assumed."
+            },
+            {
+              "name": "tax_year",
+              "source": "request",
+              "sourceRef": "$request.tax_year",
+              "required": true,
+              "type": "string",
+              "notes": "The year the threshold is assessed across, as the tax authority sets it."
+            },
+            {
+              "name": "effective_from",
+              "source": "request",
+              "sourceRef": "$request.effective_from",
+              "required": true,
+              "type": "date",
+              "notes": "When the configuration takes effect. It does not recalculate invoices already issued (BR-8)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The draft as entered.",
+            "fields": [
+              {
+                "name": "configuration_id",
+                "type": "string",
+                "description": "The configuration."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. It deducts nothing (BR-2)."
+              },
+              {
+                "name": "version",
+                "type": "integer",
+                "description": "Incremented from any earlier approved configuration."
+              },
+              {
+                "name": "rate",
+                "type": "string",
+                "description": "The percentage."
+              },
+              {
+                "name": "annual_threshold",
+                "type": "string",
+                "description": "The household figure."
+              },
+              {
+                "name": "basis",
+                "type": "string",
+                "description": "Gross fee or After concession (BR-6)."
+              },
+              {
+                "name": "fee_types_counted",
+                "type": "object[]",
+                "description": "Which charges count and are taxed (BR-5)."
+              },
+              {
+                "name": "households_above_threshold",
+                "type": "integer",
+                "description": "How many households would already be over it, so the effect is visible before it is agreed."
+              },
+              {
+                "name": "supersedes_version",
+                "type": "integer",
+                "description": "The configuration this would close."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RATE_OUT_OF_RANGE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The rate is outside a sensible range.",
+              "written": "Nothing.",
+              "notWritten": "No configuration created.",
+              "note": "Message: \"Enter a rate between 0 and 100 percent.\""
+            },
+            {
+              "code": "NO_FEE_TYPE_SELECTED",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No fee type was selected as counting.",
+              "written": "Nothing.",
+              "notWritten": "No configuration created.",
+              "note": "Not every charge a school raises is a fee for this purpose (BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the rate, the threshold or the tax year. Every parameter is configurable because the legal position has changed over the years (BR-1), and a figure a planner carried forward from last year is a legal position nobody checked.",
+          "derivedFrom": [
+            "BR-1",
+            "E3",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never assume the basis. Gross fee and After concession differ materially for a family holding a large reduction (BR-6), and choosing one silently changes what every such household is deducted.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never widen the fee types counted. Not every charge a school raises is a fee for this purpose (BR-5), and counting transport or examination towards the threshold pushes households over it that should not be.",
+          "derivedFrom": [
+            "BR-5",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report how many households are already above the threshold. It makes the effect concrete before the configuration is agreed, and BR-4 means it is a household figure rather than a per-student one.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never describe a draft as in force. No tax is deducted without an approved configuration (BR-2), and a school that thinks it is deducting is not.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never chain the approval. A setting with legal consequence is not one person's decision (BR-9).",
+          "derivedFrom": [
+            "BR-9",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A draft is not deleted — the lifecycle runs Draft, Awaiting approval, Approved, Returned, Superseded. An unwanted draft is simply not submitted, and a configuration that changes is superseded by a new version with its own effective date (BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "withholding tax ki configuration daal do — 5%, threshold 200,000, sirf tuition, gross par",
+            "lang": "ur-Latn",
+            "gloss": "enter the withholding tax configuration — 5%, threshold 200,000, tuition only, on the gross"
+          },
+          "context": "Accounts, Johar Town branch, tax year 2026-27.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.config.create",
+              "inputs": {
+                "rate": 5,
+                "annual_threshold": 200000,
+                "fee_type_ids": "$request.fee_types_phrase → Tuition",
+                "basis": "Gross fee",
+                "tax_year": "2026-27",
+                "effective_from": "$request.effective_from",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Every parameter comes from the request — none is carried forward from an earlier configuration (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "A Draft. Nothing is deducted until it is approved (BR-2). Report how many households are already above PKR 200,000 for the year — that is who will start being deducted."
+        },
+        {
+          "request": {
+            "text": "tax ka rate 4% ho gaya hai, nayi configuration banao",
+            "lang": "ur-Latn",
+            "gloss": "the tax rate has become 4%, build a new configuration"
+          },
+          "context": "Accounts, Johar Town branch, with only the rate stated.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.config.create",
+              "inputs": {
+                "rate": 4,
+                "annual_threshold": "$request.annual_threshold",
+                "fee_type_ids": "$request.fee_types_phrase",
+                "basis": "$request.basis",
+                "tax_year": "$request.tax_year",
+                "effective_from": "$request.effective_from",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted: the threshold, the fee types, the basis and the effective date are all required and none is carried forward from the current configuration (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is created. Report what the current configuration holds and ask which parameters change with the rate — a new version restates all of them, and assuming the rest are unchanged is assuming a legal position."
+        },
+        {
+          "request": {
+            "text": "configuration banao, tax har cheez par lagega",
+            "lang": "ur-Latn",
+            "gloss": "build the configuration, tax applies to everything"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.config.create",
+              "inputs": {
+                "rate": "$request.rate",
+                "annual_threshold": "$request.annual_threshold",
+                "fee_type_ids": "$request.fee_types_phrase → every fee type",
+                "basis": "$request.basis",
+                "tax_year": "$request.tax_year",
+                "effective_from": "$request.effective_from",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "\"Everything\" is passed as stated, not narrowed — but PR-3 says to check it first."
+            }
+          ],
+          "outcome": "Report which fee types that covers before emitting. Counting transport and examination towards the threshold pushes households over it that tuition alone would not (BR-5), and \"everything\" is rarely what the law means."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-17-PC-2",
+      "intent": {
+        "name": "fee.tax.config.approve",
+        "summary": "Approve a withholding tax configuration so deductions begin from its effective date. School Admin or Principal, one step.",
+        "routesHere": [
+          "approve the tax configuration",
+          {
+            "text": "tax configuration approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the tax configuration"
+          },
+          {
+            "text": "nayi tax setting manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the new tax setting"
+          },
+          "sign off the withholding tax rate Accounts entered"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "configuration wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the configuration back"
+            },
+            "goesTo": "fee.tax.config.return — UC-04-17-PC-3"
+          },
+          {
+            "request": {
+              "text": "configuration banao",
+              "lang": "ur-Latn",
+              "gloss": "build a configuration"
+            },
+            "goesTo": "fee.tax.config.create — UC-04-17-PC-1"
+          },
+          {
+            "request": {
+              "text": "purane invoice pe bhi tax lagao",
+              "lang": "ur-Latn",
+              "gloss": "apply the tax to earlier invoices too"
+            },
+            "goesTo": "Not offered.",
+            "note": "A change takes effect from its own date and does not recalculate invoices already issued (BR-8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.tax.config.approve",
+            "inputs": {
+              "configuration_id": "$request.configuration_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. From the effective date, tax is deducted automatically as invoices are raised against households that have crossed the threshold (BR-3, BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the acting user entered the configuration themselves is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the approval, the status change and the audit entry together or not at all. From the effective date the amount deducted is held in its own ledger account as money owed onward — never school income and never a school expense, because the school is collecting on somebody else's behalf (BR-7). It does not recalculate invoices already issued (BR-8). Any earlier configuration is superseded."
+      },
+      "operations": [
+        {
+          "name": "fee.tax.config.approve",
+          "method": "POST",
+          "path": "/api/v1/tax-configurations/{configuration_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "configuration_id, since a configuration carries one approval",
+          "purpose": "Approve a tax configuration, bringing it into force from its effective date.",
+          "parameters": [
+            {
+              "name": "configuration_id",
+              "source": "resolved",
+              "sourceRef": "$request.configuration_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "tax_configuration",
+                "fromPhrase": "$request.configuration_phrase",
+                "onNoMatch": "Refuse. No configuration matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with version, rate, threshold, status and effective date."
+              },
+              "notes": "The tax configuration, resolved from how the actor named it — the version, or simply the current one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The configuration as approved.",
+            "fields": [
+              {
+                "name": "configuration_id",
+                "type": "string",
+                "description": "The configuration."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved and in force from its effective date."
+              },
+              {
+                "name": "rate",
+                "type": "string",
+                "description": "The percentage now deducted."
+              },
+              {
+                "name": "annual_threshold",
+                "type": "string",
+                "description": "The household figure now assessed against."
+              },
+              {
+                "name": "basis",
+                "type": "string",
+                "description": "Gross fee or After concession (BR-6)."
+              },
+              {
+                "name": "effective_from",
+                "type": "date",
+                "description": "When deductions begin."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The School Admin or Principal, who may not be the person who entered it (BR-9)."
+              },
+              {
+                "name": "superseded_version",
+                "type": "integer",
+                "description": "The configuration this one closes."
+              },
+              {
+                "name": "households_affected",
+                "type": "integer",
+                "description": "How many are already above the threshold and will be deducted from the next invoice."
+              },
+              {
+                "name": "holding_account",
+                "type": "string",
+                "description": "Where the deduction is held as money owed onward (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to approve their own configuration.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "A setting with legal consequence is not one person's decision (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a configuration the acting user entered. E5 is BR-9 working — a setting with legal consequence is not one person's decision.",
+          "derivedFrom": [
+            "BR-9",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report how many households will be deducted from. The threshold is assessed on the household across the tax year (BR-4), so a family with three children reaches it where one child would not — and the number makes that concrete.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the deduction is held, not earned. It sits in its own ledger account as money owed onward, never school income and never an expense (BR-7), and describing it as income misstates the school's position.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never offer to apply the configuration to earlier invoices. It takes effect from its own date and does not recalculate what has been issued (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approved configuration is not withdrawn. It is superseded by a new version with its own effective date, and the earlier one is kept so a deduction made under it stays explicable. Deductions already made are adjusted only where the underlying invoice is cancelled or credited (BR-13). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "tax configuration approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the tax configuration"
+          },
+          "context": "School Admin, Johar Town branch, on a 5% / 200,000 configuration effective 01-07-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.config.approve",
+              "inputs": {
+                "configuration_id": "$request.configuration_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "In force from 01-07-2026. Report how many households are already above the threshold — they will be deducted from on their next invoice. The amount goes to the holding account as money owed onward, not to income (PR-3)."
+        },
+        {
+          "request": {
+            "text": "main ne daali thi, khud approve kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I entered it, I'll approve it myself"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.config.approve",
+              "inputs": {
+                "configuration_id": "$request.configuration_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "In practice approve is absent from an Accounts allow-list. The API returns CANNOT_APPROVE_OWN (E5)."
+            }
+          ],
+          "outcome": "Nothing is approved. Report that a School Admin or the Principal must — a setting with legal consequence is deliberately not one person's decision (PR-1)."
+        },
+        {
+          "request": {
+            "text": "naya rate approve kar do aur purane invoice bhi theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the new rate and fix the earlier invoices too"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.config.approve",
+              "inputs": {
+                "configuration_id": "$request.configuration_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the approval is planned. Recalculating issued invoices is not offered (PR-4)."
+            }
+          ],
+          "outcome": "The configuration is in force from its effective date. Report plainly that invoices already issued are not recalculated (BR-8) — where a specific one was wrong, that is a cancellation or a credit with its own approval."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-17-PC-3",
+      "intent": {
+        "name": "fee.tax.config.return",
+        "summary": "Send a tax configuration back to Accounts with why it was not approved. One step.",
+        "routesHere": [
+          "return this configuration, the threshold is wrong",
+          {
+            "text": "configuration wapas bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the configuration back"
+          },
+          {
+            "text": "rate galat hai, wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "the rate is wrong, send it back"
+          },
+          "send it back — it should be calculated after concession, not on the gross"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "configuration approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the configuration"
+            },
+            "goesTo": "fee.tax.config.approve — UC-04-17-PC-2"
+          },
+          {
+            "request": {
+              "text": "rate theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix the rate"
+            },
+            "goesTo": "Returning says so.",
+            "note": "Changing a parameter is Accounts' work in their own session."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.tax.config.return",
+            "inputs": {
+              "configuration_id": "$request.configuration_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing comes into force and nothing is deducted."
+          }
+        ],
+        "onFailure": "Stop and report. The reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the status change, the reason and the audit entry together or not at all. No configuration is in force from this, and whatever was in force before continues unchanged."
+      },
+      "operations": [
+        {
+          "name": "fee.tax.config.return",
+          "method": "POST",
+          "path": "/api/v1/tax-configurations/{configuration_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "configuration_id + return_reason",
+          "purpose": "Send a tax configuration back to Accounts with the reason it was not approved.",
+          "parameters": [
+            {
+              "name": "configuration_id",
+              "source": "resolved",
+              "sourceRef": "$request.configuration_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "tax_configuration",
+                "fromPhrase": "$request.configuration_phrase",
+                "onNoMatch": "Refuse. No configuration matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with version, rate, threshold, status and effective date."
+              },
+              "notes": "The tax configuration, resolved from how the actor named it — the version, or simply the current one."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required. The approver's own words — a legal setting returned without a stated objection tells Accounts nothing."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The configuration as returned.",
+            "fields": [
+              {
+                "name": "configuration_id",
+                "type": "string",
+                "description": "The configuration."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. Nothing is in force from it."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "As given, shown to Accounts."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The approver."
+              },
+              {
+                "name": "current_configuration",
+                "type": "object",
+                "description": "What remains in force meanwhile, if anything."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": null,
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned.",
+              "note": "UC-04-17 defines no E-id for it — see OPEN-QUESTIONS."
+            },
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "The acting user entered it themselves.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the return reason. A legal setting returned without a stated objection tells Accounts nothing, and the objection is usually specific — the rate, the threshold, the basis or which fee types count.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report what remains in force. Where no configuration has ever been approved, nothing is being deducted at all (BR-2) — which the school may not realise, and which has legal consequence.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never adjust a parameter on the approver's behalf. Changing the rate or the basis is Accounts' work in their own session (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not undone. Accounts change the configuration and submit it again, which is a fresh decision."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "configuration wapas bhej do — concession ke baad hisab hona chahiye, gross par nahi",
+            "lang": "ur-Latn",
+            "gloss": "send the configuration back — it should be calculated after concession, not on the gross"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.config.return",
+              "inputs": {
+                "configuration_id": "$request.configuration_phrase",
+                "return_reason": "The basis should be After concession, not Gross fee. The two differ materially for families holding large reductions.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned with the objection named. Whatever was in force before continues; report what that is (PR-2)."
+        },
+        {
+          "request": {
+            "text": "threshold bohat kam hai, wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "the threshold is too low, send it back"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.config.return",
+              "inputs": {
+                "configuration_id": "$request.configuration_phrase",
+                "return_reason": "The annual threshold is below the figure set by the tax authority for this year.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned. Nothing changes about what is being deducted today."
+        },
+        {
+          "request": {
+            "text": "configuration wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "send the configuration back"
+          },
+          "context": "School Admin, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.config.return",
+              "inputs": {
+                "configuration_id": "$request.configuration_phrase",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask which parameter is wrong."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-17-PC-4",
+      "intent": {
+        "name": "fee.tax.certificate.issue",
+        "summary": "Issue a household its certificate of tax deducted for the year, which the parent needs to claim the amount against their own return. One step.",
+        "routesHere": [
+          "issue the tax certificate for this household",
+          {
+            "text": "is family ka tax certificate jaari karo",
+            "lang": "ur-Latn",
+            "gloss": "issue this family's tax certificate"
+          },
+          {
+            "text": "walid ko tax katauti ka certificate chahiye",
+            "lang": "ur-Latn",
+            "gloss": "the father needs the tax deduction certificate"
+          },
+          {
+            "text": "saal ka certificate bana do",
+            "lang": "ur-Latn",
+            "gloss": "produce the certificate for the year"
+          },
+          "reissue the certificate, the invoice was credited"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tax jama karwana hai",
+              "lang": "ur-Latn",
+              "gloss": "we need to deposit the tax"
+            },
+            "goesTo": "The statutory return path, BR-10.",
+            "note": "Preparing the return and recording the deposit are steps 8 of the flow; no capability is written for them. See OPEN-QUESTIONS."
+          },
+          {
+            "request": {
+              "text": "tax ki raqam badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the tax amount"
+            },
+            "goesTo": "Not offered.",
+            "note": "The deduction is calculated from the approved configuration (BR-3). Nobody types a tax amount."
+          },
+          {
+            "request": {
+              "text": "invoice credit kar do",
+              "lang": "ur-Latn",
+              "gloss": "credit the invoice"
+            },
+            "goesTo": "fee.credit.raise — UC-04-10",
+            "note": "Where an invoice on which tax was deducted is credited, the deduction is adjusted and the certificate reissued (BR-13) — the credit comes first."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.tax.certificate.issue",
+            "inputs": {
+              "family_code": "$request.family_phrase",
+              "tax_year": "$request.tax_year",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The figures come from the deductions actually made — nothing on the certificate is typed (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. A household with no deduction for the year is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the certificate with its unique number, and the audit entry. No ledger entry is made and no money moves — the deduction happened when the invoices were raised. Where the household's position has since been corrected, the certificate is reissued with the adjusted figure (BR-13)."
+      },
+      "operations": [
+        {
+          "name": "fee.tax.certificate.issue",
+          "method": "POST",
+          "path": "/api/v1/tax-certificates",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "family_code + tax_year, so a repeat returns the existing certificate rather than issuing a second number for the same year",
+          "purpose": "Issue or reissue a household's certificate of tax deducted for a tax year.",
+          "parameters": [
+            {
+              "name": "family_code",
+              "source": "resolved",
+              "sourceRef": "$request.family_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "family",
+                "fromPhrase": "$request.family_phrase",
+                "onNoMatch": "Refuse. No household matches.",
+                "onAmbiguous": "Ask, naming the candidates with the guardian and the children."
+              },
+              "notes": "The household. The threshold and the deduction are both assessed at household level, not per student (BR-4)."
+            },
+            {
+              "name": "tax_year",
+              "source": "request",
+              "sourceRef": "$request.tax_year",
+              "required": true,
+              "type": "string",
+              "notes": "The tax year the certificate covers."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The certificate.",
+            "fields": [
+              {
+                "name": "certificate_number",
+                "type": "string",
+                "description": "Unique per household per tax year."
+              },
+              {
+                "name": "family_code",
+                "type": "string",
+                "description": "The household."
+              },
+              {
+                "name": "fees_counted",
+                "type": "string",
+                "description": "The household's counted fees for the year (BR-5)."
+              },
+              {
+                "name": "tax_deducted",
+                "type": "string",
+                "description": "What was actually deducted. Never typed (BR-3)."
+              },
+              {
+                "name": "deductions",
+                "type": "object[]",
+                "description": "Invoice by invoice, so the parent can reconcile it."
+              },
+              {
+                "name": "reissued",
+                "type": "boolean",
+                "description": "True where a correction has changed the figure since a certificate was last issued (BR-13)."
+              },
+              {
+                "name": "previous_certificate_number",
+                "type": "string",
+                "description": "Superseded by this one, where reissued."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_DEDUCTION",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "No tax has been deducted from this household this year.",
+              "written": "Nothing.",
+              "notWritten": "No certificate.",
+              "note": "Message: \"No tax has been deducted from this household this year.\" Either they did not cross the threshold, or no configuration was in force."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never type a figure onto a certificate. Every amount comes from the deductions actually made (BR-3), and the parent uses it to claim against their own return — a wrong figure is a wrong tax claim.",
+          "derivedFrom": [
+            "BR-3",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Issue against the household, never the student. The threshold and the deduction are both household figures (BR-4), and a certificate per child would understate what the family may claim.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never treat NO_DEDUCTION as a failure to work around. It means the household did not cross the threshold, or no configuration was in force — both are answers, and the second is worth escalating (BR-2).",
+          "derivedFrom": [
+            "BR-2",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report a reissue as a reissue. Where a correction has changed the figure, the certificate supersedes an earlier one (BR-13), and a parent holding the old one needs telling.",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never describe the deduction as school income. It is held as money owed onward (BR-7), and the certificate exists so the parent can reclaim it (BR-11).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A certificate is not withdrawn. Where the household's position changes, a fresh certificate is issued that supersedes it (BR-13), and both stay on the record. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is family ka tax certificate jaari karo, 2026-27 ka",
+            "lang": "ur-Latn",
+            "gloss": "issue this family's tax certificate for 2026-27"
+          },
+          "context": "Accounts, Johar Town branch, on a household that crossed the threshold in November.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.certificate.issue",
+              "inputs": {
+                "family_code": "$request.family_phrase → \"FAM-000412\"",
+                "tax_year": "2026-27",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "A certificate with its unique number, the household's counted fees and the tax deducted, itemised invoice by invoice. The parent needs it to claim the amount against their own return (BR-11)."
+        },
+        {
+          "request": {
+            "text": "certificate dobara banao, ek invoice credit ho gayi thi",
+            "lang": "ur-Latn",
+            "gloss": "reissue the certificate, one invoice was credited"
+          },
+          "context": "Accounts, Johar Town branch, after a credit adjusted the household's position.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.certificate.issue",
+              "inputs": {
+                "family_code": "$request.family_phrase",
+                "tax_year": "2026-27",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The same call. The API reissues with the adjusted figure and supersedes the previous number (BR-13)."
+            }
+          ],
+          "outcome": "A new certificate superseding the old one. Report it as a reissue and name the previous number — the parent may already have filed with it (PR-4)."
+        },
+        {
+          "request": {
+            "text": "in ka certificate nikaal do",
+            "lang": "ur-Latn",
+            "gloss": "produce their certificate"
+          },
+          "context": "Accounts, Johar Town branch, on a household that never crossed the threshold.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.tax.certificate.issue",
+              "inputs": {
+                "family_code": "$request.family_phrase",
+                "tax_year": "$request.tax_year",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NO_DEDUCTION (E9)."
+            }
+          ],
+          "outcome": "No certificate. Report that the household did not cross the threshold this year, so nothing was deducted and there is nothing to certify — and check that a configuration is actually in force, because the other reason for a nil deduction is that none is (PR-3)."
+        }
+      ]
+    }
+  ]
+}

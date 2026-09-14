@@ -1,0 +1,1057 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-05-06",
+  "featureRef": "5.6 Barcode, ID-card or QR attendance scanning",
+  "name": "Mark staff attendance by card scan, with a code-verified route when the card is not to hand",
+  "module": "Attendance",
+  "alsoAffectsModules": [
+    "Staff / HR",
+    "Card"
+  ],
+  "priority": "MVP",
+  "priorityReason": "It removes the daily manual marking that determines pay, and closes the gap where somebody is marked present in their absence.",
+  "goal": {
+    "actor": "a staff member",
+    "capability": "to mark my own arrival by scanning my card, and to be marked by code when I have forgotten it",
+    "outcome": "my attendance is recorded by my own act, and nobody can record it for me while I am not there"
+  },
+  "primaryActor": "Staff",
+  "secondaryActors": [
+    {
+      "actor": "Teacher / Coordinator",
+      "involvement": "Scan their own cards on the same terms."
+    },
+    {
+      "actor": "School Admin",
+      "involvement": "Marks a staff member manually when the card is forgotten, and can only do so against a verified code."
+    },
+    {
+      "actor": "Accounts",
+      "involvement": "Uses the resulting attendance for payroll and cannot amend it."
+    }
+  ],
+  "externalActors": [
+    {
+      "actor": "SMS provider",
+      "involvement": "Delivers the one-time code to the number on the staff record."
+    }
+  ],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "inbound",
+        "description": "A card is scanned at the reader on arrival.",
+        "source": "Card reader"
+      },
+      {
+        "type": "event",
+        "description": "A staff member has no scan by the configured time and the office begins a manual mark.",
+        "source": "UC-05-03"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "The staff member holds a card or code linked to their record (BR-2).",
+      "establishedBy": {
+        "id": "UC-13-02",
+        "name": "Staff ID card generation",
+        "link": "UC-13-02.json"
+      }
+    },
+    {
+      "condition": "The staff record carries a contact number, since the code is sent to it (BR-5).",
+      "establishedBy": {
+        "id": "UC-12-01",
+        "name": "Staff records and profiles",
+        "link": "UC-12-01.json"
+      }
+    },
+    {
+      "condition": "For a manual mark, an authenticated session exists and the acting user is School Admin.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "The date is a working day.",
+      "establishedBy": {
+        "id": "UC-05-04",
+        "name": "Off-day and holiday calendar",
+        "link": "UC-05-04.json"
+      }
+    }
+  ],
+  "postConditions": [
+    "The staff member's attendance is recorded with the time of the scan, and the record shows it was scanned.",
+    "Where the card was forgotten, the record shows it was marked manually and verified by code rather than scanned, so the two are never confused.",
+    "No manual mark exists without a matching code, so nobody has been marked present in their absence.",
+    "The code that was used is spent and cannot mark a second day.",
+    "The attendance flows into the staff attendance record and from there into payroll.",
+    "A scan on a day the school is closed was refused, so a closed day carries no attendance.",
+    "Where the code never arrived, the resend was logged, so a pattern of resends against one person is visible.",
+    "This route was used for staff only. No student attendance was marked by scanning."
+  ],
+  "screens": [
+    {
+      "name": "Scan point",
+      "route": "/attendance/scan",
+      "sidebar": "None — a fixed device at the entrance",
+      "actions": [
+        "Scan card"
+      ],
+      "visibleTo": [
+        "Staff",
+        "Teacher",
+        "Coordinator"
+      ]
+    },
+    {
+      "name": "Today's scans",
+      "route": "/attendance/staff/scans",
+      "sidebar": "Attendance",
+      "columns": [
+        "Staff ID",
+        "Name",
+        "Department",
+        "Time",
+        "Source",
+        "Verified by"
+      ],
+      "defaultSort": "Time ascending",
+      "filters": [
+        "Date",
+        "Department",
+        "Source",
+        "No scan today"
+      ],
+      "actions": [
+        "Start manual mark",
+        "Export"
+      ],
+      "visibleTo": [
+        "School Admin",
+        "Principal / Director",
+        "Accounts"
+      ]
+    },
+    {
+      "name": "Manual mark by code",
+      "route": "/attendance/staff/{id}/manual",
+      "sidebar": "Attendance",
+      "actions": [
+        "Send code",
+        "Enter code",
+        "Resend code",
+        "Confirm mark"
+      ],
+      "visibleTo": [
+        "School Admin"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Card or code",
+      "type": "text",
+      "required": "yes",
+      "validation": "The identifier on the staff member's card, linked to their record. Not the staff ID itself (BR-2).",
+      "example": "CRD-0117-8842"
+    },
+    {
+      "name": "Scan time",
+      "type": "generated",
+      "required": "no",
+      "validation": "When the card was scanned. Recorded from the reader, never typed (BR-3).",
+      "example": "28-09-2026 07:52"
+    },
+    {
+      "name": "Source",
+      "type": "generated",
+      "required": "no",
+      "validation": "How the attendance arose. A scan and a code-verified manual mark are distinguishable for good (BR-8).",
+      "example": "Scanned",
+      "enumValues": [
+        "Scanned",
+        "Manual, verified by code"
+      ]
+    },
+    {
+      "name": "Staff member",
+      "type": "lookup",
+      "required": "conditional",
+      "validation": "The person being marked manually.",
+      "example": "STF-2024-0117 — Imran Sultan",
+      "requiredWhen": "A manual mark is being started",
+      "lookupSource": "Active staff with no scan today"
+    },
+    {
+      "name": "One-time code",
+      "type": "text",
+      "required": "conditional",
+      "validation": "6 digits, sent to the number on the staff record and valid for a configured period (BR-5, BR-6).",
+      "example": "418203",
+      "requiredWhen": "A manual mark is being made"
+    },
+    {
+      "name": "Code sent to",
+      "type": "generated",
+      "required": "no",
+      "validation": "The number the code went to, taken from the staff record and never entered by the admin (BR-5).",
+      "example": "03001234567"
+    },
+    {
+      "name": "Resend count",
+      "type": "generated",
+      "required": "no",
+      "validation": "How many times the code was resent, which makes a pattern visible (BR-10).",
+      "default": 0,
+      "example": 1
+    },
+    {
+      "name": "Verified by",
+      "type": "generated",
+      "required": "no",
+      "validation": "The School Admin who entered the matching code.",
+      "example": "Sana Iqbal"
+    },
+    {
+      "name": "Marked at",
+      "type": "generated",
+      "required": "no",
+      "validation": "When the manual mark was confirmed.",
+      "example": "28-09-2026 08:14"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Staff card",
+      "operations": [
+        "read"
+      ],
+      "notes": "The card or code linked to the staff record. Issued elsewhere, not here (BR-2)."
+    },
+    {
+      "entity": "Scan event",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "One per scan, with its time and the card used. Never edited (BR-3)."
+    },
+    {
+      "entity": "Manual mark verification",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "The code sent, its resends and the successful match. Append only (BR-10)."
+    },
+    {
+      "entity": "Staff attendance record",
+      "operations": [
+        "create",
+        "update"
+      ],
+      "notes": "Created or updated from the scan or the verified manual mark (BR-11)."
+    },
+    {
+      "entity": "Staff",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read for the card link and the contact number the code is sent to."
+    },
+    {
+      "entity": "Off-day calendar",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read to refuse a scan on a closed day."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Every scan, every code sent, every resend and every manual mark."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Staff, Teacher, Coordinator",
+      "actions": [
+        "create"
+      ],
+      "rowScope": "Their own card only.",
+      "notes": "Scan on arrival. Cannot scan for anybody else, and cannot mark themselves manually (BR-4)."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "create"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Starts a manual mark and confirms it against a code they cannot see in advance (BR-7)."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches.",
+      "notes": "Reviews scans and manual marks."
+    },
+    {
+      "actor": "Accounts",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Uses the attendance for payroll and cannot amend it."
+    },
+    {
+      "actor": "Super Admin",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No authority over attendance records."
+    },
+    {
+      "actor": "Parent / Guardian, Student",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "This route is for staff only. Student attendance is never marked by scanning, whatever the card can do."
+    },
+    {
+      "id": "BR-2",
+      "rule": "Each staff member holds a card or code linked to their record. The card carries its own identifier rather than the staff ID, so a card can be replaced without changing the person."
+    },
+    {
+      "id": "BR-3",
+      "rule": "The scan time comes from the reader and is never typed. A time somebody entered is not evidence of when they arrived."
+    },
+    {
+      "id": "BR-4",
+      "rule": "A staff member scans their own card. Scanning somebody else's card is the failure this whole design exists to prevent."
+    },
+    {
+      "id": "BR-5",
+      "rule": "Where the card is forgotten, the School Admin starts a manual mark and the system sends a one-time code to the number held on that staff record. The admin does not choose the number."
+    },
+    {
+      "id": "BR-6",
+      "rule": "The code is valid for a configured period and can be used once. A code from yesterday cannot mark today."
+    },
+    {
+      "id": "BR-7",
+      "rule": "A manual mark cannot be made without a matching code. This is the rule that stops anybody being marked present in their absence, and there is no override to it."
+    },
+    {
+      "id": "BR-8",
+      "rule": "The record shows whether the attendance was scanned or marked manually and verified by code. The two are distinguishable for good, so a pattern of manual marks is visible."
+    },
+    {
+      "id": "BR-9",
+      "rule": "Where the code does not arrive the admin may resend it. The staff member is still the only person who can supply it."
+    },
+    {
+      "id": "BR-10",
+      "rule": "Every code sent and every resend is logged, so repeated resends against one person can be seen rather than inferred."
+    },
+    {
+      "id": "BR-11",
+      "rule": "The attendance produced here is the same staff attendance record as a manual entry. It carries the same codes and feeds the same payroll calculation."
+    },
+    {
+      "id": "BR-12",
+      "rule": "No attendance is recorded on a day the school is closed, whether scanned or marked manually."
+    },
+    {
+      "id": "BR-13",
+      "rule": "A lost or replaced card is deactivated so the old identifier stops working. A card that keeps working after it is lost is a card anybody can use."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Manual mark verification",
+      "states": [
+        "Code sent",
+        "Code resent",
+        "Verified",
+        "Expired",
+        "Abandoned"
+      ],
+      "initial": "Code sent",
+      "terminal": [
+        "Verified",
+        "Expired",
+        "Abandoned"
+      ],
+      "transitions": [
+        {
+          "from": "Code sent",
+          "to": "Code resent",
+          "triggeredBy": "School Admin",
+          "condition": "The code did not arrive (BR-9)."
+        },
+        {
+          "from": "Code resent",
+          "to": "Code resent",
+          "triggeredBy": "School Admin",
+          "condition": "A further resend, each logged."
+        },
+        {
+          "from": "Code sent",
+          "to": "Verified",
+          "triggeredBy": "School Admin",
+          "condition": "The staff member supplies the code and it matches (BR-7)."
+        },
+        {
+          "from": "Code resent",
+          "to": "Verified",
+          "triggeredBy": "School Admin",
+          "condition": "A resent code matches."
+        },
+        {
+          "from": "Code sent",
+          "to": "Expired",
+          "triggeredBy": "System",
+          "condition": "The validity period passes (BR-6)."
+        },
+        {
+          "from": "Code sent",
+          "to": "Abandoned",
+          "triggeredBy": "School Admin",
+          "condition": "The mark is not completed."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "School Admin",
+      "navigation": "Login → Card → Issue staff card",
+      "userAction": "Issues each staff member a card or code linked to their record.",
+      "function": "issueStaffCard(staffId)",
+      "systemResponse": "Links the card identifier to the staff record without exposing the staff ID on it.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "Staff / Teacher / Coordinator",
+      "navigation": "Arrives at the entrance → Scan point",
+      "userAction": "Scans their card on arrival.",
+      "function": "recordScan(cardIdentifier)",
+      "systemResponse": "Resolves the card to the staff member, records the attendance and the time from the reader, and marks the source as Scanned.",
+      "rules": [
+        "BR-3",
+        "BR-4",
+        "BR-11",
+        "BR-12"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "School Admin",
+      "navigation": "Login → Attendance → Today's scans → Start manual mark",
+      "userAction": "Opens the record of a staff member who has forgotten their card.",
+      "function": "startManualMark(staffId, date)",
+      "systemResponse": "Confirms no scan exists for the day and prepares the verification.",
+      "rules": [
+        "BR-5"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "sendOneTimeCode(staffId)",
+      "systemResponse": "Sends a one-time code to the number held on that staff record, not to a number the admin supplies.",
+      "rules": [
+        "BR-5",
+        "BR-6"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "Staff / Teacher / Coordinator",
+      "navigation": "Gives the code to the admin",
+      "userAction": "Reads the code from their own phone and gives it to the admin.",
+      "function": "—",
+      "systemResponse": "—",
+      "rules": [
+        "BR-7"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "School Admin",
+      "navigation": "Manual mark by code → Enter code → Confirm mark",
+      "userAction": "Enters the code the staff member gave them.",
+      "function": "verifyCodeAndMark(staffId, date, code)",
+      "systemResponse": "Marks the attendance only where the code matches, and records the source as marked manually and verified by code.",
+      "rules": [
+        "BR-7",
+        "BR-8"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "writeStaffAttendance(staffId, date, time, source)",
+      "systemResponse": "Writes the attendance into the staff attendance record, which feeds payroll in the ordinary way.",
+      "rules": [
+        "BR-11"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 4,
+      "condition": "The code does not arrive",
+      "actor": "School Admin",
+      "navigation": "Manual mark by code → Resend code",
+      "behaviour": "The admin resends it. The staff member is still the only person who can supply it, and every resend is logged so a pattern is visible (BR-9, BR-10).",
+      "function": "sendOneTimeCode(staffId)",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 2,
+      "condition": "The card is lost or damaged",
+      "actor": "School Admin",
+      "navigation": "Login → Card → Deactivate card → Issue staff card",
+      "behaviour": "The old identifier is deactivated so it stops working, and a new card is issued. A card that keeps working after it is lost is a card anybody can use (BR-13).",
+      "function": "deactivateStaffCard(cardId); issueStaffCard(staffId)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 2,
+      "condition": "A staff member scans a second time on leaving",
+      "actor": "Staff",
+      "navigation": "Scan point",
+      "behaviour": "The second scan records the time out on the same day's record rather than creating a second attendance.",
+      "function": "recordScan(cardIdentifier)",
+      "resumesAtStep": 7
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 6,
+      "condition": "The staff member is not actually present",
+      "actor": "School Admin",
+      "navigation": "Manual mark by code",
+      "behaviour": "They cannot supply the code, so the mark cannot be made. This is the case the verification exists for (BR-7).",
+      "function": "verifyCodeAndMark(staffId, date, wrongCode)"
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 2,
+      "condition": "The reader is out of service",
+      "actor": "School Admin",
+      "navigation": "Login → Attendance → Today's scans → Start manual mark",
+      "behaviour": "Every staff member is marked by the code route. It is slower, and the record shows each mark as manual and verified rather than scanned (BR-8).",
+      "function": "startManualMark(staffId, date)",
+      "resumesAtStep": 4
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 6,
+      "condition": "The code has expired before it is entered",
+      "actor": "School Admin",
+      "navigation": "Manual mark by code → Resend code",
+      "behaviour": "A fresh code is sent. An expired code cannot mark the day (BR-6).",
+      "function": "sendOneTimeCode(staffId)",
+      "resumesAtStep": 5
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 2,
+      "condition": "The card is not recognised",
+      "systemResponse": "No attendance is recorded.",
+      "messageShown": "Card not recognised. See the office.",
+      "messageStyle": "page"
+    },
+    {
+      "id": "E2",
+      "atStep": 2,
+      "condition": "The card has been deactivated",
+      "systemResponse": "No attendance is recorded (BR-13).",
+      "messageShown": "This card is no longer valid. See the office.",
+      "messageStyle": "page"
+    },
+    {
+      "id": "E3",
+      "atStep": 2,
+      "condition": "The school is closed on that date",
+      "systemResponse": "The scan is refused (BR-12).",
+      "messageShown": "The school is closed today.",
+      "messageStyle": "page"
+    },
+    {
+      "id": "E4",
+      "atStep": 2,
+      "condition": "The same card is scanned twice within a few seconds",
+      "systemResponse": "The second is ignored rather than recorded as a time out.",
+      "messageShown": "Already recorded.",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E5",
+      "atStep": 6,
+      "condition": "The code entered does not match",
+      "systemResponse": "No mark is made (BR-7).",
+      "messageShown": "That code does not match. Ask for the code sent to their registered number.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E6",
+      "atStep": 4,
+      "condition": "The staff record carries no contact number",
+      "systemResponse": "No code can be sent and no manual mark is possible (BR-5).",
+      "messageShown": "This staff member has no contact number on file. Add one before marking them manually.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 6,
+      "condition": "The School Admin attempts to mark without sending a code",
+      "systemResponse": "There is no such route (BR-7).",
+      "messageShown": "A manual mark needs a verified code.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E8",
+      "atStep": 3,
+      "condition": "A scan already exists for the day",
+      "systemResponse": "No manual mark is started.",
+      "messageShown": "This staff member scanned in at 07:52.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E9",
+      "atStep": 4,
+      "condition": "The code cannot be sent because the provider is unreachable",
+      "systemResponse": "No mark is made and the failure is shown rather than the mark being allowed through.",
+      "messageShown": "The code could not be sent. Try again, or mark this attendance through the staff attendance screen with a correction.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "One-time code for a manual mark",
+      "recipient": "The staff member being marked",
+      "channels": [
+        "sms"
+      ],
+      "template": "ATTENDANCE_MANUAL_CODE",
+      "contents": [
+        "One-time code",
+        "That it is for marking today's attendance",
+        "Its validity period"
+      ],
+      "retry": "Resend on request; every resend is logged.",
+      "blocking": true
+    },
+    {
+      "event": "Repeated manual marks for one staff member",
+      "recipient": "Principal / Director",
+      "channels": [
+        "inApp"
+      ],
+      "template": "MANUAL_MARKS_PATTERN",
+      "contents": [
+        "Staff member",
+        "Manual marks in the period",
+        "Scans in the period"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "The attendance is written into the staff attendance record with its source.",
+      "affects": {
+        "id": "UC-05-03",
+        "name": "Staff attendance tracking",
+        "link": "UC-05-03.json"
+      }
+    },
+    {
+      "effect": "The record feeds the payroll calculation for the month.",
+      "affects": {
+        "id": "UC-12-04",
+        "name": "Payroll processing",
+        "link": "UC-12-04.json"
+      }
+    },
+    {
+      "effect": "A deactivated card stops opening anything else the card is used for.",
+      "affects": {
+        "id": "UC-13-02",
+        "name": "Staff ID card generation",
+        "link": "UC-13-02.json"
+      }
+    }
+  ],
+  "integrations": [
+    {
+      "system": "SMS provider",
+      "direction": "outbound",
+      "sends": "The one-time code to the number held on the staff record",
+      "expects": "Delivery acknowledgement",
+      "timeout": "10 seconds to accept",
+      "retry": "Resend on the admin's request; each resend is logged",
+      "onFailure": "No manual mark is made. The verification is the control, and a failed message is not a reason to bypass it."
+    }
+  ],
+  "reports": [
+    {
+      "name": "Today's scans",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Staff ID",
+        "Name",
+        "Department",
+        "Time in",
+        "Time out",
+        "Source",
+        "Verified by"
+      ],
+      "grouping": "By department",
+      "totals": "Scanned, marked manually, and not marked at all"
+    },
+    {
+      "name": "Manual mark log",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Date",
+        "Staff member",
+        "Codes sent",
+        "Resends",
+        "Verified by",
+        "Marked at"
+      ],
+      "grouping": "By staff member",
+      "totals": "Manual marks per person in the period, against their scans"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "A staff member with a valid card",
+      "when": "they scan it on arrival",
+      "then": "their attendance is recorded with the reader's time and the source reads Scanned"
+    },
+    {
+      "id": "AC-2",
+      "given": "A staff member who has forgotten their card",
+      "when": "the School Admin starts a manual mark",
+      "then": "a one-time code is sent to the number on that staff record, and not to a number the admin typed"
+    },
+    {
+      "id": "AC-3",
+      "given": "The same manual mark",
+      "when": "the admin enters a code that does not match",
+      "then": "no attendance is marked"
+    },
+    {
+      "id": "AC-4",
+      "given": "The same manual mark",
+      "when": "the admin attempts to mark without any code",
+      "then": "there is no route to do so"
+    },
+    {
+      "id": "AC-5",
+      "given": "A staff member who is not at the school",
+      "when": "a manual mark is attempted for them",
+      "then": "they cannot supply the code and the mark cannot be made"
+    },
+    {
+      "id": "AC-6",
+      "given": "A code that did not arrive",
+      "when": "the admin resends it",
+      "then": "a fresh code is sent and both the original and the resend are logged"
+    },
+    {
+      "id": "AC-7",
+      "given": "An attendance marked by the code route",
+      "when": "the record is opened",
+      "then": "it reads as marked manually and verified by code, distinguishable from a scan"
+    },
+    {
+      "id": "AC-8",
+      "given": "A lost card that has been deactivated",
+      "when": "it is scanned",
+      "then": "no attendance is recorded"
+    },
+    {
+      "id": "AC-9",
+      "given": "A public holiday",
+      "when": "a card is scanned",
+      "then": "the scan is refused and no attendance is recorded"
+    },
+    {
+      "id": "AC-10",
+      "given": "A student card",
+      "when": "it is presented at the staff scan point",
+      "then": "no attendance is recorded, since this route is for staff only"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-05-03",
+        "name": "Staff attendance tracking",
+        "link": "UC-05-03.json",
+        "why": "Receives the attendance this produces."
+      },
+      {
+        "id": "UC-12-01",
+        "name": "Staff records and profiles",
+        "link": "UC-12-01.json",
+        "why": "Supplies the contact number the code is sent to."
+      },
+      {
+        "id": "UC-13-02",
+        "name": "Staff ID card generation",
+        "link": "UC-13-02.json",
+        "why": "Issues and deactivates the cards."
+      },
+      {
+        "id": "UC-05-04",
+        "name": "Off-day and holiday calendar",
+        "link": "UC-05-04.json",
+        "why": "Decides which days a scan is accepted on."
+      },
+      {
+        "id": "UC-12-04",
+        "name": "Payroll processing",
+        "link": "UC-12-04.json",
+        "why": "Reads the resulting attendance."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Restricts the manual route to School Admin."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session for the manual route."
+      }
+    ],
+    "masterData": [
+      "Staff cards and their identifiers",
+      "Staff contact numbers",
+      "Code validity period",
+      "Off-day calendar"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Student attendance, which is never marked by scanning",
+      "handledBy": {
+        "id": "UC-05-01",
+        "name": "Manual and session-based attendance marking",
+        "link": "UC-05-01.json"
+      }
+    },
+    {
+      "item": "The staff attendance record and its corrections",
+      "handledBy": {
+        "id": "UC-05-03",
+        "name": "Staff attendance tracking",
+        "link": "UC-05-03.json"
+      }
+    },
+    {
+      "item": "Issuing and printing the cards",
+      "handledBy": {
+        "id": "UC-13-02",
+        "name": "Staff ID card generation",
+        "link": "UC-13-02.json"
+      }
+    },
+    {
+      "item": "Self check-in by location",
+      "handledBy": {
+        "id": "UC-05-07",
+        "name": "GPS and geofence self check-in",
+        "link": "UC-05-07.json"
+      }
+    },
+    {
+      "item": "Biometric marking",
+      "handledBy": {
+        "id": "UC-05-05",
+        "name": "Biometric attendance",
+        "link": "UC-05-05.json"
+      }
+    },
+    {
+      "item": "Calculating pay from the attendance",
+      "handledBy": {
+        "id": "UC-12-04",
+        "name": "Payroll processing",
+        "link": "UC-12-04.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Scan speed",
+        "requirement": "A scan is acknowledged within 2 seconds, because a queue at the entrance at eight in the morning is why people stop using it."
+      },
+      {
+        "aspect": "No override",
+        "requirement": "There is no route anywhere that marks a staff member manually without a matching code. The absence of an override is the control."
+      },
+      {
+        "aspect": "Source integrity",
+        "requirement": "Whether attendance was scanned or code-verified is recorded permanently and cannot be changed afterwards."
+      },
+      {
+        "aspect": "Reader failure",
+        "requirement": "Where the reader is out of service the code route carries the whole school, so a hardware failure slows the morning rather than stopping it."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Scans, codes and manual marks are retained 7 years, matching payroll records."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "How long is the one-time code valid?",
+      "assumption": "Not specified.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Is there a limit on resends before the attempt is abandoned?",
+      "assumption": "Not specified. At present a code can be resent indefinitely.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Does a second scan record the time out, or is the time out always entered by the office?",
+      "assumption": "Modelled as a second scan. Not confirmed.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "How many manual marks in a month should raise a flag against a staff member?",
+      "assumption": "Not specified, though the report shows the count.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    },
+    {
+      "question": "Where is the scan point, and is there more than one at a large campus?",
+      "assumption": "Not specified.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    }
+  ]
+}

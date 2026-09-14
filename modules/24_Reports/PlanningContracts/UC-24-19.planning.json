@@ -1,0 +1,572 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-24-19",
+    "name": "Take a report away in print or as a file, carrying exactly what was on screen and nothing further",
+    "module": "Reporting",
+    "file": "../UseCases/UC-24-19.json",
+    "featureRef": "24.19 Report output, export and printing"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-24-19-PC-1",
+      "intent": {
+        "name": "report.export",
+        "summary": "Take a report you have run away as a file — a spreadsheet for a list, a PDF for anything — carrying exactly what was on screen and nothing further. Every export is recorded.",
+        "routesHere": [
+          {
+            "text": "isko PDF mein de do",
+            "lang": "ur-Latn",
+            "gloss": "give it to me as a PDF"
+          },
+          "download this report as a spreadsheet",
+          {
+            "text": "receipt register excel mein chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I need the receipt register in excel"
+          },
+          {
+            "text": "jo report abhi chalayi uski file bana do",
+            "lang": "ur-Latn",
+            "gloss": "make a file of the report I just ran"
+          },
+          "export the defaulter list"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "print kar do",
+              "lang": "ur-Latn",
+              "gloss": "print it"
+            },
+            "goesTo": "Printed from the screen.",
+            "note": "Any report may be printed (BR-1), but printing happens on the reader's own device. A plan hands back a PDF, which prints the same way."
+          },
+          {
+            "request": {
+              "text": "salary column bhi export mein daal do",
+              "lang": "ur-Latn",
+              "gloss": "put the salary column in the export too"
+            },
+            "goesTo": "Refused.",
+            "note": "An export carries exactly the rows and columns the reader could see on screen and nothing further — the salary rule applies to the file as to the screen (BR-2, E1)."
+          },
+          {
+            "request": {
+              "text": "mujhe download ki permission de do",
+              "lang": "ur-Latn",
+              "gloss": "give me download permission"
+            },
+            "goesTo": "Not needed.",
+            "note": "Downloading is not a permission of its own. Whoever may read a report may take it away (BR-4, E8)."
+          },
+          {
+            "request": {
+              "text": "har mahine khud ba khud bhej diya kare",
+              "lang": "ur-Latn",
+              "gloss": "send it automatically every month"
+            },
+            "goesTo": "Not offered.",
+            "note": "Scheduling a report to be produced and sent is not modelled."
+          },
+          {
+            "request": {
+              "text": "kis ne kaun si report export ki?",
+              "lang": "ur-Latn",
+              "gloss": "who exported which report?"
+            },
+            "goesTo": "audit.trail.read — UC-25-06.",
+            "note": "Every export is written to the audit log (BR-3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "report.export",
+            "inputs": {
+              "result_id": "$request.result_phrase",
+              "format": "$request.format",
+              "staff_id": "$session.staff_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The file is built from the result the reader saw, never from the underlying query (BR-2), and the export is recorded (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. A spreadsheet for a report that is not a list is refused, and an export that cannot be recorded is not produced.",
+        "atomicity": "The file and its audit entry together, or neither — an export that cannot be recorded does not complete (BR-3, E4). No record is changed."
+      },
+      "operations": [
+        {
+          "name": "report.export",
+          "method": "POST",
+          "path": "/api/v1/report-results/{result_id}/export",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Produce a file from a report result, carrying exactly what was shown.",
+          "parameters": [
+            {
+              "name": "result_id",
+              "source": "resolved",
+              "sourceRef": "$request.result_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "report_result",
+                "fromPhrase": "$request.result_phrase",
+                "onNoMatch": "Refuse. No report this reader has run matches — a report is exported from its result, so it is run first.",
+                "onAmbiguous": "Ask, naming the reader's recent report runs with their parameters."
+              },
+              "notes": "The report as the reader ran it — its rows, its columns, its parameters (BR-2). Usually the one just run."
+            },
+            {
+              "name": "format",
+              "source": "request",
+              "sourceRef": "$request.format",
+              "required": true,
+              "type": "enum: Spreadsheet|PDF",
+              "notes": "A spreadsheet for a list somebody will filter and sort; a PDF for anything signed, filed or sent unaltered (BR-1). Print is done from the screen."
+            },
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The reader. Every run is recorded against them. Never from the request."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The file.",
+            "fields": [
+              {
+                "name": "file_id",
+                "type": "string",
+                "description": "The file."
+              },
+              {
+                "name": "format",
+                "type": "string",
+                "description": "Spreadsheet or PDF."
+              },
+              {
+                "name": "rows_exported",
+                "type": "integer",
+                "description": "How many rows left the system — recorded on the audit entry (BR-3)."
+              },
+              {
+                "name": "columns_omitted",
+                "type": "object[]",
+                "description": "Columns withheld because the reader could not see them on screen — the salary section among them (BR-2)."
+              },
+              {
+                "name": "header",
+                "type": "object",
+                "description": "The school and branch, the report, its parameters, the date and time, and the user — on every file (BR-5)."
+              },
+              {
+                "name": "in_parts",
+                "type": "boolean",
+                "description": "True where the result was too large for one file and was produced in parts (E9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_A_LIST",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A spreadsheet was asked for a report that is not a list.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is produced.",
+              "note": "Take it as a PDF (A3)."
+            },
+            {
+              "code": "EXPORT_NOT_RECORDED",
+              "mapsTo": "E4",
+              "httpStatus": 503,
+              "meaning": "The export could not be written to the audit log.",
+              "written": "Nothing.",
+              "notWritten": "The file is not produced.",
+              "note": "A file that leaves unrecorded is not seen again (BR-3)."
+            },
+            {
+              "code": "PRODUCED_IN_PARTS",
+              "mapsTo": "E9",
+              "httpStatus": 200,
+              "meaning": "The result was too large for one file.",
+              "written": "The files and the audit entry.",
+              "treatedAsSuccess": true,
+              "note": "Produced in parts rather than truncated silently."
+            }
+          ],
+          "writesOnRead": "An audit entry: the user, the report, its parameters, the format and the row count (BR-3). The file leaves the system and is not seen again."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Export only what the reader saw. The file carries exactly the rows and columns shown on screen — never the underlying query, which would return restricted columns (BR-2, A2, AC-5).",
+          "derivedFrom": [
+            "BR-2",
+            "A2",
+            "AC-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never add a column the reader could not see, and never a row from another branch. A salary the reader may not see stays out of the file as it stayed off the screen (BR-2, E1, E2, A1, AC-4, AC-9).",
+          "derivedFrom": [
+            "BR-2",
+            "E1",
+            "E2",
+            "A1",
+            "AC-4",
+            "AC-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never ask for or grant a download permission. There is none — whoever may read a report may take it away, and what limits exposure is who may open the report and the field restrictions (BR-4, A5, E8, AC-1).",
+          "derivedFrom": [
+            "BR-4",
+            "A5",
+            "E8",
+            "AC-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Offer a spreadsheet only for a list. Anything else goes as a PDF (BR-1, A3, E3, AC-2, AC-3).",
+          "derivedFrom": [
+            "BR-1",
+            "A3",
+            "E3",
+            "AC-2",
+            "AC-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that the export is recorded — the user, the report, its parameters, the format and the row count — and that an export that cannot be recorded is not produced (BR-3, E4, AC-6, AC-7).",
+          "derivedFrom": [
+            "BR-3",
+            "E4",
+            "AC-6",
+            "AC-7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Where the file holds guardians' numbers or identity numbers — the student directory above all — say what is leaving. Nothing refuses a large export; it is only recorded (BR-3, OQ-2).",
+          "derivedFrom": [
+            "BR-3",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "staff_id and branch_id come from $session. A file never crosses into a branch the reader cannot open (BR-6).",
+          "derivedFrom": [
+            "BR-6",
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Nothing is written to any record. The file exists once produced, and the audit entry stands (BR-3)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "jo receipt register abhi chalaya uska excel bana do",
+            "lang": "ur-Latn",
+            "gloss": "make an excel of the receipt register I just ran"
+          },
+          "context": "Accounts, Johar Town. The November receipt register was run a minute ago.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "report.export",
+              "inputs": {
+                "result_id": "$request.result_phrase → the November receipt register run",
+                "format": "$request.format → Spreadsheet",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-1)."
+            }
+          ],
+          "outcome": "A spreadsheet of exactly the rows and columns on screen, headed with the school, the branch, the report, its parameters, the time and their name. Say that the export is recorded."
+        },
+        {
+          "request": {
+            "text": "payroll register ki file bana do",
+            "lang": "ur-Latn",
+            "gloss": "make a file of the payroll register"
+          },
+          "context": "School Admin, Johar Town. The payroll register was run with the salary column omitted.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "report.export",
+              "inputs": {
+                "result_id": "$request.result_phrase → the payroll register run",
+                "format": "asked — a spreadsheet or a PDF",
+                "staff_id": "$session.staff_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their format (PR-2)."
+            }
+          ],
+          "outcome": "Asks which format. The file omits the salary column exactly as the screen did."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-24-19-PC-2",
+      "intent": {
+        "name": "report.combined.run",
+        "summary": "Run a report across all branches at once, as one combined set of figures. The Super Admin alone — nobody else can run it, open it or be given it.",
+        "routesHere": [
+          "run the collection summary across all campuses for October",
+          {
+            "text": "saari branches ka combined trial balance nikaalo",
+            "lang": "ur-Latn",
+            "gloss": "pull out the combined trial balance of all branches"
+          },
+          {
+            "text": "poore group ka outstanding ek report mein",
+            "lang": "ur-Latn",
+            "gloss": "the whole group's outstanding in one report"
+          },
+          "combined income and expenditure for the year"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "Principal ko combined report ka access de do",
+              "lang": "ur-Latn",
+              "gloss": "give the Principal access to the combined report"
+            },
+            "goesTo": "No route.",
+            "note": "A combined report cannot be granted to anybody (BR-9, E7). The branch use case lets the Super Admin grant a consolidated view (branch.consolidatedview.grant, UC-23-01); for reports this use case says no, and the two are unreconciled (OQ-1)."
+          },
+          {
+            "request": {
+              "text": "main Principal hoon, saari branches ki report chahiye",
+              "lang": "ur-Latn",
+              "gloss": "I am the Principal, I need the report of all branches"
+            },
+            "goesTo": "Refused.",
+            "note": "A Principal asks the Super Admin for the figure; they cannot produce it themselves (BR-9, A4, E6)."
+          },
+          {
+            "request": {
+              "text": "Model Town branch ki report alag se",
+              "lang": "ur-Latn",
+              "gloss": "Model Town branch's report on its own"
+            },
+            "goesTo": "The branch's own report, after switching branch in the header.",
+            "note": "The Super Admin also reads each branch on its own (BR-7, A6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "report.combined.run",
+            "inputs": {
+              "report_id": "$request.report_phrase",
+              "parameters": "$request.parameters"
+            },
+            "note": "One step. One set of figures for the whole group, offered to nobody else (BR-8, BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. Anybody but the Super Admin is refused.",
+        "atomicity": "A read. It changes nothing; the run is recorded as every report run is."
+      },
+      "operations": [
+        {
+          "name": "report.combined.run",
+          "method": "GET",
+          "path": "/api/v1/reports/combined",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Run a catalogue report across all branches as one combined set of figures.",
+          "parameters": [
+            {
+              "name": "report_id",
+              "source": "resolved",
+              "sourceRef": "$request.report_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "report",
+                "fromPhrase": "$request.report_phrase",
+                "onNoMatch": "Refuse. No report in the catalogue matches.",
+                "onAmbiguous": "Ask, naming the matching reports with their groups."
+              },
+              "notes": "Any report in the catalogue (BR-8). It matters most for finance: collection, the cash book, outstanding and defaulters, invoices and receipts, concessions and write-offs, the general ledger, the trial balance, income and expenditure, and budget against actual."
+            },
+            {
+              "name": "parameters",
+              "source": "request",
+              "sourceRef": "$request.parameters",
+              "required": true,
+              "type": "object",
+              "notes": "The period and scope the report takes when run for one branch — never a branch, since it covers them all."
+            }
+          ],
+          "returns": {
+            "description": "The combined report.",
+            "fields": [
+              {
+                "name": "result_id",
+                "type": "string",
+                "description": "The run. It is taken away with report.export."
+              },
+              {
+                "name": "report",
+                "type": "string",
+                "description": "The report run."
+              },
+              {
+                "name": "branches_covered",
+                "type": "object[]",
+                "description": "Every branch whose figures are in it."
+              },
+              {
+                "name": "rows",
+                "type": "object[]",
+                "description": "One set of figures for the whole group (BR-8)."
+              },
+              {
+                "name": "run_at",
+                "type": "datetime",
+                "description": "When it ran."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_SUPER_ADMIN",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "Somebody other than the Super Admin tried to run it.",
+              "written": "Nothing.",
+              "notWritten": "It is refused.",
+              "note": "A Principal or School Admin asks the Super Admin for the figure (BR-9, A4)."
+            }
+          ],
+          "writesOnRead": "The run is recorded, as every report run is — the reports' own use cases say so; this one does not restate it."
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "The Super Admin alone. A Principal or School Admin asking is refused and told to ask the Super Admin — they cannot produce a group figure or be granted the right to (BR-9, A4, E6, AC-10).",
+          "derivedFrom": [
+            "BR-9",
+            "A4",
+            "E6",
+            "AC-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never offer to grant it. There is no such control (BR-9, E7, AC-11).",
+          "derivedFrom": [
+            "BR-9",
+            "E7",
+            "AC-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that it is one set of figures for the group, not branch reports added up by hand (BR-8, AC-12).",
+          "derivedFrom": [
+            "BR-8",
+            "AC-12"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that the specification points the other way elsewhere — the branch use case lets the Super Admin grant a consolidated view, and this use case forbids it for reports (OQ-1).",
+          "derivedFrom": [
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Take it away through report.export, like any report (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A report changes nothing a plan can take back. The record of the run stands."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "saari branches ka October ka collection summary ek report mein",
+            "lang": "ur-Latn",
+            "gloss": "October's collection summary for all branches in one report"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "report.combined.run",
+              "inputs": {
+                "report_id": "$request.report_phrase → Daily collection summary",
+                "parameters": "$request.parameters → the period 01-10-2026 to 31-10-2026"
+              },
+              "note": "One step (PR-3)."
+            }
+          ],
+          "outcome": "One collection summary for the whole group for October, with every branch it covers named."
+        },
+        {
+          "request": {
+            "text": "main Principal hoon, saari branches ka outstanding chahiye",
+            "lang": "ur-Latn",
+            "gloss": "I'm the Principal, I need outstanding for all branches"
+          },
+          "context": "Principal, Johar Town.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "report.combined.run",
+              "inputs": {
+                "report_id": "$request.report_phrase → Outstanding by family",
+                "parameters": "$request.parameters → as they state it"
+              },
+              "note": "Refused (PR-1)."
+            }
+          ],
+          "outcome": "Refused — a report across branches is run by the Super Admin alone, and cannot be given to anybody. They can ask the Super Admin for the figure, or run their own branch's report."
+        }
+      ]
+    }
+  ]
+}

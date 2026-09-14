@@ -1,0 +1,2445 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-12-17",
+    "name": "Resign, serve the notice period, hand over everything held, and close the record cleanly on the leaving date",
+    "module": "HR and payroll",
+    "file": "../UseCases/UC-12-17.json",
+    "featureRef": "12.17 Staff resignation, handover and exit"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-12-17-PC-1",
+      "intent": {
+        "name": "resignation.submit",
+        "summary": "Resign from your own portal, with the reason and the date you wish to leave. One step, and nobody resigns on somebody else's behalf.",
+        "routesHere": [
+          "I am resigning, I would like to leave at the end of next month",
+          {
+            "text": "main istifa dena chahta hoon, agle mahine ke aakhir tak",
+            "lang": "ur-Latn",
+            "gloss": "I want to resign, by the end of next month"
+          },
+          {
+            "text": "apna istifa jama karana hai",
+            "lang": "ur-Latn",
+            "gloss": "I want to submit my resignation"
+          },
+          {
+            "text": "naukri chhorh raha hoon, tareekh likh dein",
+            "lang": "ur-Latn",
+            "gloss": "I am leaving the job, please record the date"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "kisi aur ka istifa daal do",
+              "lang": "ur-Latn",
+              "gloss": "submit somebody else's resignation"
+            },
+            "goesTo": "Not offered.",
+            "note": "The employee submits their own resignation from their own portal. Nobody resigns on somebody else's behalf (BR-1, E1)."
+          },
+          {
+            "request": {
+              "text": "is mulazim ko nikalna hai",
+              "lang": "ur-Latn",
+              "gloss": "we need to dismiss this employee"
+            },
+            "goesTo": "termination.open — UC-12-18",
+            "note": "Ending employment on the school's decision is a termination, with its own reason, supporting record and approval."
+          },
+          {
+            "request": {
+              "text": "apna istifa wapas lena hai",
+              "lang": "ur-Latn",
+              "gloss": "I want to withdraw my resignation"
+            },
+            "goesTo": "resignation.cancel — UC-12-17-PC-5",
+            "note": "Whether an employee may cancel their own after approval is not decided. The School Admin cancels the notice period instead (BR-9, E7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "resignation.submit",
+            "inputs": {
+              "staff_id": "$session.staff_id",
+              "reason": "$request.reason",
+              "requested_leaving_date": "$request.requested_leaving_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It goes to the School Admin; whether the Principal must approve as well is a configuration the Super Admin sets (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. A requested date earlier than the notice period allows is accepted as a request — the leaving date is set by the notice period the School Admin starts (E2).",
+        "atomicity": "One write: the resignation and the audit entry together or not at all. Nothing changes about the employee's status — they stay active on the roster and continue to appear in attendance, leave and payroll until the leaving date (BR-10). The date they asked for is a request, not the leaving date (BR-3, E2)."
+      },
+      "operations": [
+        {
+          "name": "resignation.submit",
+          "method": "POST",
+          "path": "/api/v1/resignations",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff_id, since an employee carries one open resignation",
+          "purpose": "Record an employee's own resignation.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The resigning employee's own record. There is no route that submits one for somebody else (BR-1, E1)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 1000 characters, written by the employee. Their own account of why they are leaving — never composed for them."
+            },
+            {
+              "name": "requested_leaving_date",
+              "source": "request",
+              "sourceRef": "$request.requested_leaving_date",
+              "required": true,
+              "type": "date",
+              "notes": "The date the employee wishes to leave. A request: the leaving date follows from the notice period the School Admin starts (BR-3, E2)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The resignation as submitted.",
+            "fields": [
+              {
+                "name": "resignation_id",
+                "type": "string",
+                "description": "The resignation."
+              },
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The employee."
+              },
+              {
+                "name": "requested_leaving_date",
+                "type": "date",
+                "description": "As asked for."
+              },
+              {
+                "name": "notice_period_on_record",
+                "type": "string",
+                "description": "The notice period carried from the appointment letter, which the leaving date will follow from (BR-3, UC-12-01 BR-2)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Submitted."
+              },
+              {
+                "name": "goes_to",
+                "type": "string",
+                "description": "The School Admin, and the Principal as well where the configuration requires it (BR-2)."
+              },
+              {
+                "name": "record_state",
+                "type": "string",
+                "description": "Active. The employee stays on the roster and in payroll until the leaving date (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_OWN_RESIGNATION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The resignation names another employee.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "Nobody resigns on somebody else's behalf (BR-1)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. It is the employee's own account of why they are leaving, and it stays on their record.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never submit a resignation for anybody else. staff_id comes from the session, and a phrase naming another person is refused rather than resolved (BR-1, E1).",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never present the requested date as the leaving date. The leaving date follows from the notice period the School Admin starts (BR-3), and an employee planning around the wrong day is the commonest way a handover fails.",
+          "derivedFrom": [
+            "BR-3",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that nothing changes yet. The employee stays active on the roster and in attendance, leave and payroll through the notice period (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A resignation is not withdrawn by the employee once approved — whether they may is not decided (E7). The School Admin cancels the notice period instead, which returns the employee to normal status (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "main istifa de raha hoon, agle mahine ke aakhir tak jana chahta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I am resigning, I would like to leave by the end of next month"
+          },
+          "context": "Teacher, Johar Town branch, signed in, notice period one month on the record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.submit",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "reason": "as the employee wrote it",
+                "requested_leaving_date": "the end of next month, as stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is theirs (PR-1); staff_id comes from the session (PR-2)."
+            }
+          ],
+          "outcome": "Submitted to the School Admin. Report the notice period on the record, and that the actual leaving date follows from the notice the School Admin starts rather than from the date requested (PR-3). Nothing changes meanwhile — they stay on the roster and in payroll (PR-4)."
+        },
+        {
+          "request": {
+            "text": "mera sathi naukri chhorh raha hai, us ka istifa daal do",
+            "lang": "ur-Latn",
+            "gloss": "my colleague is leaving, submit their resignation"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.submit",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "reason": "$request.reason",
+                "requested_leaving_date": "$request.requested_leaving_date",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the acting employee's own resignation could be planned, which is not what was asked (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is submitted. Report that an employee resigns from their own portal — a resignation entered for somebody else is a person recorded as leaving on nobody's word but a colleague's."
+        },
+        {
+          "request": {
+            "text": "kal se hi chhorna chahta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I want to leave from tomorrow"
+          },
+          "context": "Teacher, Johar Town branch, with a one-month notice period on the record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.submit",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "reason": "$request.reason",
+                "requested_leaving_date": "tomorrow's date, as requested",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The date is recorded as asked. It is a request, not the leaving date (PR-3)."
+            }
+          ],
+          "outcome": "Submitted with tomorrow as the requested date. Report that the leaving date follows from the notice period the School Admin starts — the record carries one month, and the handover checklist has to be cleared before whatever date is set."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-17-PC-2",
+      "intent": {
+        "name": "resignation.approve",
+        "summary": "Approve a resignation, which starts the notice period and produces the handover checklist. One step.",
+        "routesHere": [
+          "approve this resignation",
+          {
+            "text": "ye istifa manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this resignation"
+          },
+          {
+            "text": "istifa manzoor hai, notice period shuru karo",
+            "lang": "ur-Latn",
+            "gloss": "the resignation is accepted, start the notice period"
+          },
+          {
+            "text": "manzoori de do aur handover list bana do",
+            "lang": "ur-Latn",
+            "gloss": "approve it and produce the handover list"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "istifa rad kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject the resignation"
+            },
+            "goesTo": "resignation.reject — UC-12-17-PC-3"
+          },
+          {
+            "request": {
+              "text": "notice period ki muddat badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the length of the notice period"
+            },
+            "goesTo": "resignation.notice.start — UC-12-17-PC-4",
+            "note": "The School Admin may change its length at any point before it ends (BR-9)."
+          },
+          {
+            "request": {
+              "text": "mulazim ka access abhi band kar do",
+              "lang": "ur-Latn",
+              "gloss": "revoke the employee's access now"
+            },
+            "goesTo": "Not offered.",
+            "note": "Through the notice period the employee stays active. The login is revoked on the last working day (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "resignation.approve",
+            "inputs": {
+              "resignation_id": "$request.resignation_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it does three things: the notice period starts, the leaving date follows from it, and the handover checklist is produced (BR-3, BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. A notice period with no derivable leaving date cannot be started.",
+        "atomicity": "One write, atomic in itself: the approval, the notice period, the leaving date and the handover checklist together or not at all. The employee is told the resignation is approved, the notice period and the leaving date it produces — a leaver who does not know their own last day cannot plan a handover (BR-4). The checklist lists everything assigned to that person, because none of it releases itself (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "resignation.approve",
+          "method": "POST",
+          "path": "/api/v1/resignations/{resignation_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "resignation_id, since a resignation is approved once",
+          "purpose": "Approve the resignation, start the notice period and build the handover checklist.",
+          "parameters": [
+            {
+              "name": "resignation_id",
+              "source": "resolved",
+              "sourceRef": "$request.resignation_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "resignation",
+                "fromPhrase": "$request.resignation_phrase",
+                "onNoMatch": "Refuse. No resignation matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the requested leaving date and the status."
+              },
+              "notes": "The resignation, resolved from the employee and its state."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval and what it produced.",
+            "fields": [
+              {
+                "name": "resignation_id",
+                "type": "string",
+                "description": "The resignation."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Notice running."
+              },
+              {
+                "name": "notice_period",
+                "type": "string",
+                "description": "Defaulted from the staff record and changeable (BR-3, BR-9)."
+              },
+              {
+                "name": "leaving_date",
+                "type": "date",
+                "description": "Produced by the notice period. The date access is revoked and the settlement is calculated to (BR-3)."
+              },
+              {
+                "name": "handover_items",
+                "type": "object[]",
+                "description": "Everything assigned to that person — timetable slots, sections in charge, exam subjects with marks outstanding, activities. None of it releases itself (BR-5)."
+              },
+              {
+                "name": "marks_outstanding",
+                "type": "object[]",
+                "description": "Exam subjects with marks not entered. They are entered before the leaving date or transferred to whoever takes the subject over (BR-6)."
+              },
+              {
+                "name": "employee_notified",
+                "type": "string",
+                "description": "Delivery status. They are told the approval, the notice period and the leaving date (BR-4)."
+              },
+              {
+                "name": "approver_role",
+                "type": "string",
+                "description": "The School Admin, and the Principal as well where the configuration requires it (BR-2)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_LEAVING_DATE",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "No leaving date is derivable from the notice period.",
+              "written": "Nothing.",
+              "notWritten": "The notice period cannot be started."
+            },
+            {
+              "code": "NOT_SUBMITTED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The resignation is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report the leaving date and the notice period to the employee's own account of it. A leaver who does not know their own last day cannot plan a handover (BR-4).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the handover checklist in full. Every timetable slot, section in charge, exam subject and activity has to be reassigned before the leaving date, and none of it releases itself (BR-5, BR-7).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the outstanding marks separately. The subject stays open and the exam cannot be locked until they are entered or transferred (BR-6, E6) — it is the item most likely to be missed.",
+          "derivedFrom": [
+            "BR-6",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never revoke access at approval. Through the notice period the employee stays active and continues to appear in attendance, leave and payroll; the login goes on the last working day (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never reassign anything as part of the approval. Each item is handed to a named person who can actually take it, and a slot handed to a teacher already teaching then leaves it unstaffed (E5).",
+          "derivedFrom": [
+            "BR-5",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "resignation.cancel",
+        "statement": "Cancelling the notice period, which withdraws the resignation and returns the employee to normal status (BR-9). It is the School Admin's act and is never chained."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye istifa manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this resignation"
+          },
+          "context": "School Admin, Johar Town branch, notice period one month on the record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.approve",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved, the notice period runs and the leaving date follows from it. Report the date to the employee (PR-1), the full handover list (PR-2), and the exam subjects with marks outstanding (PR-3) — that last one keeps an exam locked if it is missed."
+        },
+        {
+          "request": {
+            "text": "istifa manzoor kar do aur is ka login abhi band kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the resignation and close their login now"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.approve",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only. Access is not revoked (PR-4)."
+            }
+          ],
+          "outcome": "Approved. Report that the employee stays active through the notice period and continues to appear in attendance, leave and payroll — the login, the ID card and the biometric enrolment go on the last working day, and closing them now would stop them teaching the classes they still hold."
+        },
+        {
+          "request": {
+            "text": "manzoor kar do aur sab kuch kisi aur ko de do",
+            "lang": "ur-Latn",
+            "gloss": "approve it and hand everything over to somebody else"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.approve",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only. No reassignment is chained (PR-5)."
+            }
+          ],
+          "outcome": "Approved and the checklist is produced. Report it item by item — each is handed to a named person who can actually take it, and a timetable slot given to a teacher already teaching in that period leaves the class unstaffed."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-17-PC-3",
+      "intent": {
+        "name": "resignation.reject",
+        "summary": "Reject a resignation with the reason. One step.",
+        "routesHere": [
+          "reject this resignation",
+          {
+            "text": "ye istifa rad kar do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "reject this resignation with the reason"
+          },
+          {
+            "text": "istifa manzoor nahi",
+            "lang": "ur-Latn",
+            "gloss": "the resignation is not accepted"
+          },
+          {
+            "text": "abhi nahi ja sakte",
+            "lang": "ur-Latn",
+            "gloss": "they cannot leave now"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "istifa manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the resignation"
+            },
+            "goesTo": "resignation.approve — UC-12-17-PC-2"
+          },
+          {
+            "request": {
+              "text": "notice period barha do",
+              "lang": "ur-Latn",
+              "gloss": "extend the notice period"
+            },
+            "goesTo": "resignation.notice.start — UC-12-17-PC-4",
+            "note": "Where the school wants longer, the notice period is set rather than the resignation refused (BR-3, BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "resignation.reject",
+            "inputs": {
+              "resignation_id": "$request.resignation_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. No notice period starts and no handover checklist is produced."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the rejection, its reason and the audit entry together or not at all. The employee stays on the roster unchanged. They are told, and the record of the resignation and its refusal stays."
+      },
+      "operations": [
+        {
+          "name": "resignation.reject",
+          "method": "POST",
+          "path": "/api/v1/resignations/{resignation_id}/reject",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "resignation_id, since a resignation carries one decision",
+          "purpose": "Reject a resignation with the reason.",
+          "parameters": [
+            {
+              "name": "resignation_id",
+              "source": "resolved",
+              "sourceRef": "$request.resignation_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "resignation",
+                "fromPhrase": "$request.resignation_phrase",
+                "onNoMatch": "Refuse. No resignation matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the requested leaving date and the status."
+              },
+              "notes": "The resignation, resolved from the employee and its state."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required to reject a resignation. The employee is told it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The rejection.",
+            "fields": [
+              {
+                "name": "resignation_id",
+                "type": "string",
+                "description": "The resignation."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Rejected."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given, and told to the employee."
+              },
+              {
+                "name": "rejected_by",
+                "type": "string",
+                "description": "The approver."
+              },
+              {
+                "name": "record_state",
+                "type": "string",
+                "description": "Active. Nothing about the employee's status changes."
+              },
+              {
+                "name": "employee_notified",
+                "type": "string",
+                "description": "Delivery status."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A resignation was rejected with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            },
+            {
+              "code": "NOT_SUBMITTED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The resignation is not awaiting a decision.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. Somebody has said they are leaving and is being told they are not going yet, and the school's own words are the least it owes them.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never reject a resignation to buy time. Where the school wants longer, the notice period is what is set (BR-3, BR-9) — refusing the resignation itself says something different.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that nothing about the employee's status changes. No notice runs, no checklist exists, and they stay on the roster as they were.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A rejection is not withdrawn. An employee still intending to leave submits a fresh resignation."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye istifa rad kar do — imtihan ke beech mein nahi ja sakte",
+            "lang": "ur-Latn",
+            "gloss": "reject this resignation — they cannot leave in the middle of the exams"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.reject",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "reason": "The examinations run through the requested date and the marks for two subjects are outstanding.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the School Admin's own (PR-1)."
+            }
+          ],
+          "outcome": "Rejected and the employee is told. Report that nothing about their status changes (PR-3). Worth adding that a longer notice period would meet the same concern while accepting the resignation (PR-2) — the marks would then transfer through the handover."
+        },
+        {
+          "request": {
+            "text": "istifa rad kar do",
+            "lang": "ur-Latn",
+            "gloss": "reject the resignation"
+          },
+          "context": "School Admin, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.reject",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the employee should be told — they have said they are leaving, and a refusal with no explanation leaves them with nothing to respond to."
+        },
+        {
+          "request": {
+            "text": "abhi rad kar do, do mahine baad dobara dekhenge",
+            "lang": "ur-Latn",
+            "gloss": "reject it for now, we will look at it again in two months"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.reject",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The rejection is planned as asked, but PR-2 applies to the reply."
+            }
+          ],
+          "outcome": "Report first that a longer notice period is the tool for this — the resignation is accepted, the leaving date moves out, and the handover runs across it. Rejecting tells the employee they are not leaving at all, which is a different answer and one they may respond to differently."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-17-PC-4",
+      "intent": {
+        "name": "resignation.notice.start",
+        "summary": "Set or change the length of the notice period, which sets the leaving date. School Admin, one step.",
+        "routesHere": [
+          "set the notice period to two months",
+          {
+            "text": "notice period do mahine ka rakh do",
+            "lang": "ur-Latn",
+            "gloss": "set the notice period to two months"
+          },
+          {
+            "text": "notice period barha do",
+            "lang": "ur-Latn",
+            "gloss": "extend the notice period"
+          },
+          {
+            "text": "chhorne ki tareekh tay kar do",
+            "lang": "ur-Latn",
+            "gloss": "fix the leaving date"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "notice period khatam kar do",
+              "lang": "ur-Latn",
+              "gloss": "end the notice period"
+            },
+            "goesTo": "resignation.cancel — UC-12-17-PC-5",
+            "note": "Cancelling withdraws the resignation and returns the employee to normal status (BR-9)."
+          },
+          {
+            "request": {
+              "text": "handover ke kaam bant do",
+              "lang": "ur-Latn",
+              "gloss": "distribute the handover items"
+            },
+            "goesTo": "handover.item.reassign — UC-12-17-PC-6"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "resignation.notice.start",
+            "inputs": {
+              "resignation_id": "$request.resignation_phrase",
+              "notice_period": "$request.notice_period",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It defaults to the notice period on the staff record and can be changed, and the leaving date follows from it (BR-3, BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the notice period, the leaving date it produces and the audit entry together or not at all. The employee is told the new leaving date (BR-4) — everything on the handover checklist has to be cleared before it, and the leaving date cannot pass with items still unassigned (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "resignation.notice.start",
+          "method": "PUT",
+          "path": "/api/v1/resignations/{resignation_id}/notice-period",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "resignation_id + notice_period, since a resignation carries one notice period at a time",
+          "purpose": "Set or change the notice period, producing the leaving date.",
+          "parameters": [
+            {
+              "name": "resignation_id",
+              "source": "resolved",
+              "sourceRef": "$request.resignation_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "resignation",
+                "fromPhrase": "$request.resignation_phrase",
+                "onNoMatch": "Refuse. No resignation matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the requested leaving date and the status."
+              },
+              "notes": "The resignation, resolved from the employee and its state."
+            },
+            {
+              "name": "notice_period",
+              "source": "request",
+              "sourceRef": "$request.notice_period",
+              "required": true,
+              "type": "string",
+              "notes": "The length of notice. Defaults to the notice period on the staff record and can be changed at any point before it ends (BR-3, BR-9). The School Admin's — it decides somebody's last day."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The notice period and the leaving date.",
+            "fields": [
+              {
+                "name": "resignation_id",
+                "type": "string",
+                "description": "The resignation."
+              },
+              {
+                "name": "notice_period",
+                "type": "string",
+                "description": "As set."
+              },
+              {
+                "name": "leaving_date",
+                "type": "date",
+                "description": "Produced by it. The date access is revoked and the settlement is calculated to (BR-3)."
+              },
+              {
+                "name": "previous_leaving_date",
+                "type": "date",
+                "description": "What it was, where the notice period changed (BR-9)."
+              },
+              {
+                "name": "notice_period_on_record",
+                "type": "string",
+                "description": "The default carried from the appointment letter."
+              },
+              {
+                "name": "handover_items_outstanding",
+                "type": "integer",
+                "description": "Items still unassigned. The leaving date cannot pass with any of them left (BR-7)."
+              },
+              {
+                "name": "employee_notified",
+                "type": "string",
+                "description": "Delivery status. They are told the leaving date (BR-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_LEAVING_DATE",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "No leaving date is derivable.",
+              "written": "Nothing.",
+              "notWritten": "The notice period cannot be started."
+            },
+            {
+              "code": "NOTICE_ENDED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The notice period has already ended.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "It may be changed at any point before it ends (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the notice period. It sets somebody's last day and the date their access ends (BR-3), and the record's default is a starting point rather than an answer.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the leaving date, and the previous one where it moved. The employee plans a handover around it and is told it directly (BR-4).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the items still outstanding on the checklist. The leaving date cannot pass with any of them unassigned (BR-7), and a shortened notice period leaves less time to clear them.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A notice period is set again rather than reversed, at any point before it ends (BR-9). Cancelling it altogether withdraws the resignation."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "notice period do mahine ka rakh do",
+            "lang": "ur-Latn",
+            "gloss": "set the notice period to two months"
+          },
+          "context": "School Admin, Johar Town branch, on an approved resignation with one month on the record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.notice.start",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "notice_period": "two months",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The length is the School Admin's (PR-1)."
+            }
+          ],
+          "outcome": "Set, and the leaving date moves out accordingly. Report both dates and that the employee is told (PR-2), and how many handover items are still unassigned (PR-3)."
+        },
+        {
+          "request": {
+            "text": "record ke hisab se notice period laga do",
+            "lang": "ur-Latn",
+            "gloss": "set the notice period as per the record"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.notice.start",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "notice_period": "the period carried on the staff record, confirmed with the actor",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The record's value is used because the actor named it (PR-1)."
+            }
+          ],
+          "outcome": "Set from the record. Report the leaving date it produces — that is the day the login, the ID card and the biometric enrolment go, and the day the settlement is calculated to."
+        },
+        {
+          "request": {
+            "text": "notice period chhota kar do, agle hafte hi ja sakte hain",
+            "lang": "ur-Latn",
+            "gloss": "shorten the notice period, they can leave next week"
+          },
+          "context": "School Admin, Johar Town branch, with nine items outstanding on the checklist.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.notice.start",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "notice_period": "one week, as stated",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Set, and the leaving date moves in. Report the nine items still unassigned (PR-3) — the leaving date cannot pass with any of them outstanding, and a week is now the whole window to reassign nine timetable slots, sections and exam subjects."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-17-PC-5",
+      "intent": {
+        "name": "resignation.cancel",
+        "summary": "Cancel the notice period, which withdraws the resignation and returns the employee to normal. School Admin, one step.",
+        "routesHere": [
+          "cancel the notice — she has agreed to stay",
+          {
+            "text": "notice period cancel kar do, mulazim ruk gaye hain",
+            "lang": "ur-Latn",
+            "gloss": "cancel the notice period, the employee has agreed to stay"
+          },
+          {
+            "text": "istifa wapas ho gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "the resignation has been withdrawn"
+          },
+          {
+            "text": "wo ja nahi rahe, sab wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "they are not leaving, put everything back"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mulazim khud istifa wapas lena chahte hain",
+              "lang": "ur-Latn",
+              "gloss": "the employee wants to withdraw it themselves"
+            },
+            "goesTo": "resignation.cancel — this capability",
+            "note": "Whether an employee may cancel their own after approval is not decided. The School Admin cancels the notice period instead (BR-9, E7)."
+          },
+          {
+            "request": {
+              "text": "notice period barha do",
+              "lang": "ur-Latn",
+              "gloss": "extend the notice period"
+            },
+            "goesTo": "resignation.notice.start — UC-12-17-PC-4",
+            "note": "Extending keeps the resignation; cancelling withdraws it."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "resignation.cancel",
+            "inputs": {
+              "resignation_id": "$request.resignation_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Cancelling withdraws the resignation and returns the employee to normal status, and the employee is told (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the cancellation, its reason and the audit entry together or not at all. The employee returns to normal status. Handover items already reassigned do not come back on their own — somebody has to decide what returns to them and what stays where it was put."
+      },
+      "operations": [
+        {
+          "name": "resignation.cancel",
+          "method": "POST",
+          "path": "/api/v1/resignations/{resignation_id}/cancel",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "resignation_id, since a resignation is cancelled once",
+          "purpose": "Cancel the notice period, withdrawing the resignation.",
+          "parameters": [
+            {
+              "name": "resignation_id",
+              "source": "resolved",
+              "sourceRef": "$request.resignation_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "resignation",
+                "fromPhrase": "$request.resignation_phrase",
+                "onNoMatch": "Refuse. No resignation matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the requested leaving date and the status."
+              },
+              "notes": "The resignation, resolved from the employee and its state."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required to cancel a notice period, which withdraws the resignation (BR-9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The cancellation.",
+            "fields": [
+              {
+                "name": "resignation_id",
+                "type": "string",
+                "description": "The resignation."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Cancelled. The employee returns to normal status (BR-9)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "cancelled_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "items_already_reassigned",
+                "type": "object[]",
+                "description": "Handover items handed to somebody else during the notice. They stay where they were put unless somebody moves them back."
+              },
+              {
+                "name": "employee_notified",
+                "type": "string",
+                "description": "Delivery status. The employee is told (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A notice period was cancelled with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            },
+            {
+              "code": "NOTICE_ENDED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The notice period has already ended and the employee has exited.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "A record deactivated on the leaving date is not undone here."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. Somebody's departure has been called off, and the record of why is what explains a reassigned timetable to whoever reads it later.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the items already reassigned. They stay where they were put — a teacher who agreed to stay may find their sections have gone to somebody else, and nothing puts them back automatically.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never cancel on the employee's request alone. Whether they may withdraw their own after approval is not decided (E7); the School Admin cancels the notice period, which is a decision the school takes.",
+          "derivedFrom": [
+            "BR-9",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A cancellation is not undone. An employee who decides to leave after all submits a fresh resignation, with a fresh notice period and a fresh checklist."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "notice period cancel kar do — wo ruk gayi hain",
+            "lang": "ur-Latn",
+            "gloss": "cancel the notice period — she has agreed to stay"
+          },
+          "context": "School Admin, Johar Town branch, four items already reassigned.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.cancel",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "reason": "The employee has agreed to stay and the resignation is withdrawn by agreement.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the School Admin's own (PR-1)."
+            }
+          ],
+          "outcome": "Cancelled and the employee returns to normal status. Report the four items already handed to somebody else (PR-2) — they stay where they are, and somebody has to decide which come back to her."
+        },
+        {
+          "request": {
+            "text": "mulazim keh rahe hain wo istifa wapas lena chahte hain, kar do",
+            "lang": "ur-Latn",
+            "gloss": "the employee says they want to withdraw the resignation, do it"
+          },
+          "context": "Teacher, Johar Town branch, on their own resignation.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.cancel",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted on the employee's own authority (PR-3)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that whether an employee may withdraw their own resignation after approval is not decided anywhere in this use case — the School Admin cancels the notice period, and that is a decision the school takes rather than one the employee makes."
+        },
+        {
+          "request": {
+            "text": "ye mulazim ja chuke hain, ab cancel kar do",
+            "lang": "ur-Latn",
+            "gloss": "this employee has already left, cancel it now"
+          },
+          "context": "School Admin, Johar Town branch, after the leaving date.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "resignation.cancel",
+              "inputs": {
+                "resignation_id": "$request.resignation_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOTICE_ENDED (E7)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the notice period has ended, the access was revoked and the record was deactivated on the leaving date — bringing somebody back is a fresh appointment rather than a cancelled resignation."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-17-PC-6",
+      "intent": {
+        "name": "handover.item.reassign",
+        "summary": "Hand one item a leaver holds to a named member of staff. One step, and the leaving date cannot pass with items unassigned.",
+        "routesHere": [
+          "give her Monday period 3 to Sir Ahmed",
+          {
+            "text": "ye timetable slot Ahmed sahib ko de do",
+            "lang": "ur-Latn",
+            "gloss": "hand this timetable slot to Sir Ahmed"
+          },
+          {
+            "text": "section ki incharge kisi aur ko bana do",
+            "lang": "ur-Latn",
+            "gloss": "make somebody else in charge of the section"
+          },
+          {
+            "text": "handover ki cheezein bant do",
+            "lang": "ur-Latn",
+            "gloss": "distribute the handover items"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "imtihan ke number kisi aur ko de do",
+              "lang": "ur-Latn",
+              "gloss": "hand the exam marks to somebody else"
+            },
+            "goesTo": "handover.marks.transfer — UC-12-17-PC-7",
+            "note": "Marks outstanding for an exam in progress are entered by the leaver or transferred to whoever takes the subject over (BR-6)."
+          },
+          {
+            "request": {
+              "text": "baad mein dekh lenge",
+              "lang": "ur-Latn",
+              "gloss": "we will deal with it later"
+            },
+            "goesTo": "Not offered.",
+            "note": "The leaving date cannot pass with items still unassigned on the checklist (BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "handover.item.reassign",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "staff_id": "$request.staff_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step per item. Each is handed to a named member of staff who can actually take it — a slot handed to a teacher already teaching then leaves it unstaffed (BR-5, E5)."
+          }
+        ],
+        "onFailure": "Stop and report. An item handed to somebody who cannot take it is refused, naming what stops them.",
+        "atomicity": "One write: the item reassigned and the audit entry together or not at all. The checklist shrinks by one. Anything still outstanding as the leaving date approaches is escalated to the Principal, so no period is left unstaffed (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "handover.item.reassign",
+          "method": "POST",
+          "path": "/api/v1/handover-items/{item_id}/reassign",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "item_id, since an item is handed to one person",
+          "purpose": "Reassign one handover item to a named member of staff.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "handover_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No handover item matches for that leaver.",
+                "onAmbiguous": "Ask, naming the outstanding items with what each is and when it falls."
+              },
+              "notes": "The item on the checklist — a timetable slot, a section in charge, an exam subject or an activity (BR-5)."
+            },
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their subjects and their load."
+              },
+              "notes": "Who takes it on. A named member of staff, required on every item — and one who can actually take it (BR-5, E5)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The item as reassigned.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "item_type",
+                "type": "string",
+                "description": "A timetable slot, a section in charge, an exam subject or an activity."
+              },
+              {
+                "name": "reassigned_to",
+                "type": "string",
+                "description": "Who now holds it."
+              },
+              {
+                "name": "items_outstanding",
+                "type": "integer",
+                "description": "Items still unassigned on this checklist. The leaving date cannot pass with any left (BR-7)."
+              },
+              {
+                "name": "leaving_date",
+                "type": "date",
+                "description": "When the checklist must be clear by."
+              },
+              {
+                "name": "escalated",
+                "type": "boolean",
+                "description": "True where items remain and the leaving date is close, which escalates to the Principal (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RECIPIENT_CANNOT_TAKE_IT",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The named member of staff cannot take the item.",
+              "written": "Nothing.",
+              "notWritten": "Nothing reassigned.",
+              "note": "A slot handed to a teacher already teaching then leaves it unstaffed. The message names the clash (E5)."
+            },
+            {
+              "code": "ITEM_ALREADY_REASSIGNED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The item is already assigned to somebody.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose who takes an item on. It is somebody's timetable, section or exam subject for the rest of the session, and a recipient a planner picked has been given work nobody asked them about.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never work around a clash. E5 is BR-5 working — a slot handed to a teacher already teaching in that period leaves the class unstaffed, which is exactly what the checklist exists to prevent.",
+          "derivedFrom": [
+            "BR-5",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the items still outstanding and the leaving date. The date cannot pass with any left (BR-7), and the count is the only measure of how much of the handover is done.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report an escalation as it happens. Anything still outstanding as the leaving date approaches goes to the Principal, so no period is left unstaffed (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An item is reassigned again rather than released. Nothing on the checklist releases itself (BR-5)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye timetable slot Ahmed sahib ko de do",
+            "lang": "ur-Latn",
+            "gloss": "hand this timetable slot to Sir Ahmed"
+          },
+          "context": "Coordinator, Johar Town branch, on a leaver's checklist.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "handover.item.reassign",
+              "inputs": {
+                "item_id": "$request.item_phrase",
+                "staff_id": "$request.staff_phrase → \"Ahmed\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The recipient is the Coordinator's choice (PR-1)."
+            }
+          ],
+          "outcome": "Reassigned. Report how many items are still outstanding and the leaving date they have to be clear by (PR-3)."
+        },
+        {
+          "request": {
+            "text": "baqi sab cheezein kisi khali ustad ko de do",
+            "lang": "ur-Latn",
+            "gloss": "hand everything else to whichever teacher is free"
+          },
+          "context": "School Admin, Johar Town branch, six items outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "handover.item.reassign",
+              "inputs": {
+                "item_id": "$request.item_phrase — one item at a time",
+                "staff_id": "$request.staff_phrase — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Each item goes to a named person (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is reassigned. List the six items with what each is and when it falls, and ask who takes each — these are somebody's periods and sections for the rest of the session, not a queue to be drained."
+        },
+        {
+          "request": {
+            "text": "ye slot bhi Ahmed sahib ko de do",
+            "lang": "ur-Latn",
+            "gloss": "give this slot to Sir Ahmed as well"
+          },
+          "context": "Coordinator, Johar Town branch, where Sir Ahmed already teaches in that period.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "handover.item.reassign",
+              "inputs": {
+                "item_id": "$request.item_phrase",
+                "staff_id": "$request.staff_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns RECIPIENT_CANNOT_TAKE_IT (E5)."
+            }
+          ],
+          "outcome": "Nothing is reassigned. Report which section Sir Ahmed is teaching in that period — handing him the slot would leave one of the two classes unstaffed, which is the thing the checklist exists to prevent."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-17-PC-7",
+      "intent": {
+        "name": "handover.marks.transfer",
+        "summary": "Transfer responsibility for an exam subject's outstanding marks to whoever takes it over. One step.",
+        "routesHere": [
+          "transfer the physics marks to whoever takes the subject",
+          {
+            "text": "physics ke baqi number kisi aur ke zimme kar do",
+            "lang": "ur-Latn",
+            "gloss": "transfer the remaining physics marks to somebody else"
+          },
+          {
+            "text": "imtihan ke number ki zimmedari kisi aur ko de do",
+            "lang": "ur-Latn",
+            "gloss": "hand responsibility for the exam marks to somebody else"
+          },
+          {
+            "text": "mulazim ja raha hai, number kaun daalega",
+            "lang": "ur-Latn",
+            "gloss": "the employee is leaving, who will enter the marks"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mulazim khud number daal de",
+              "lang": "ur-Latn",
+              "gloss": "let the employee enter them before they go"
+            },
+            "goesTo": "exam.marks.submit — UC-06-02",
+            "note": "Marks outstanding are either entered by the leaving employee before the leaving date, or transferred (BR-6)."
+          },
+          {
+            "request": {
+              "text": "imtihan band kar do",
+              "lang": "ur-Latn",
+              "gloss": "lock the exam"
+            },
+            "goesTo": "Not offered.",
+            "note": "The subject stays open and the exam cannot be locked while marks are outstanding and nobody has taken it over (BR-6, E6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "handover.marks.transfer",
+            "inputs": {
+              "subject_id": "$request.subject_phrase",
+              "staff_id": "$request.staff_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The subject stays open and the exam cannot be locked until somebody holds it (BR-6, E6)."
+          }
+        ],
+        "onFailure": "Stop and report. A subject transferred to somebody who does not teach it is refused.",
+        "atomicity": "One step, one write: the responsibility and the audit entry together or not at all. Whoever takes it over enters the marks under their own name, which is the point — a mark entered by somebody who did not mark the paper is not evidence of anything (UC-06-02 BR-1), so the transfer is of responsibility rather than of the marks themselves."
+      },
+      "operations": [
+        {
+          "name": "handover.marks.transfer",
+          "method": "POST",
+          "path": "/api/v1/handover/marks-responsibility",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "subject_id, since a subject's responsibility rests with one person",
+          "purpose": "Transfer responsibility for an exam subject's outstanding marks.",
+          "parameters": [
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. No exam subject with outstanding marks matches for that leaver.",
+                "onAmbiguous": "Ask, naming the subjects with their exam, class and how many marks are outstanding."
+              },
+              "notes": "The exam subject with marks outstanding."
+            },
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates who teach that subject."
+              },
+              "notes": "Who takes the subject over. They will enter the marks under their own name."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The transfer.",
+            "fields": [
+              {
+                "name": "subject_id",
+                "type": "string",
+                "description": "The subject."
+              },
+              {
+                "name": "exam",
+                "type": "string",
+                "description": "The exam it belongs to."
+              },
+              {
+                "name": "transferred_to",
+                "type": "string",
+                "description": "Who now holds it."
+              },
+              {
+                "name": "marks_outstanding",
+                "type": "integer",
+                "description": "Students still carrying neither a score nor the Absent state."
+              },
+              {
+                "name": "marks_deadline",
+                "type": "date",
+                "description": "The subject's upload deadline, set when the exam was created."
+              },
+              {
+                "name": "exam_lockable",
+                "type": "boolean",
+                "description": "False while any mark is outstanding. The exam cannot be locked (BR-6, E6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DOES_NOT_TEACH_SUBJECT",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The named member of staff does not teach that subject.",
+              "written": "Nothing.",
+              "notWritten": "Nothing transferred.",
+              "note": "They could not enter the marks (UC-06-02 BR-1)."
+            },
+            {
+              "code": "NO_MARKS_OUTSTANDING",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "No marks are outstanding for that subject.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose who takes the subject over. They will enter marks for a class they may not have taught, and that is a decision about a child's result as much as about a workload.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never transfer the marks themselves. Responsibility moves; the marks are entered by whoever now holds it, under their own name (UC-06-02 BR-1).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report how many marks are outstanding and the deadline. The exam cannot be locked while any remains (BR-6, E6), and the person taking it over is inheriting a deadline somebody else was given.",
+          "derivedFrom": [
+            "BR-6",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never treat leaving as a reason to close the subject. It stays open until the marks exist, and a locked exam missing a subject is a result nobody can publish.",
+          "derivedFrom": [
+            "BR-6",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Responsibility is transferred again rather than released. The subject stays open until the marks are entered (BR-6)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "physics ke baqi number Ahmed sahib ke zimme kar do",
+            "lang": "ur-Latn",
+            "gloss": "transfer the remaining physics marks to Sir Ahmed"
+          },
+          "context": "School Admin, Johar Town branch, on a leaver's checklist.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "handover.marks.transfer",
+              "inputs": {
+                "subject_id": "$request.subject_phrase → \"physics\"",
+                "staff_id": "$request.staff_phrase → \"Ahmed\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The recipient is the School Admin's choice (PR-1)."
+            }
+          ],
+          "outcome": "Transferred. Report how many students still carry no mark and the subject's upload deadline (PR-3) — Sir Ahmed is taking on a deadline that was set for somebody else."
+        },
+        {
+          "request": {
+            "text": "mulazim ja raha hai, physics ke number kisi ko de do",
+            "lang": "ur-Latn",
+            "gloss": "the employee is leaving, hand the physics marks to somebody"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "handover.marks.transfer",
+              "inputs": {
+                "subject_id": "$request.subject_phrase",
+                "staff_id": "$request.staff_phrase — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is transferred. Report the teachers who teach physics for that class and ask which takes it — whoever does will enter marks under their own name for a class they may not have taught, which is worth choosing deliberately."
+        },
+        {
+          "request": {
+            "text": "number ab bhi baqi hain, imtihan band kar do taake natija nikal sake",
+            "lang": "ur-Latn",
+            "gloss": "marks are still outstanding, lock the exam so the result can be produced"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "handover.marks.transfer",
+              "inputs": {
+                "subject_id": "$request.subject_phrase",
+                "staff_id": "$request.staff_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The transfer is planned; the lock is not (PR-4)."
+            }
+          ],
+          "outcome": "Report that the exam cannot be locked while marks are outstanding and nobody holds the subject. Transferring it gives somebody the job of entering them — the result follows from that rather than from closing the subject with marks missing."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-17-PC-8",
+      "intent": {
+        "name": "staff.settlement.calculate",
+        "summary": "Calculate a leaver's final settlement. Accounts, one step, and it pays nothing.",
+        "routesHere": [
+          "calculate the final settlement for this leaver",
+          {
+            "text": "jaate hue mulazim ka hisab lagao",
+            "lang": "ur-Latn",
+            "gloss": "calculate the leaving employee's settlement"
+          },
+          {
+            "text": "final settlement nikal do",
+            "lang": "ur-Latn",
+            "gloss": "produce the final settlement"
+          },
+          {
+            "text": "aakhri tankhwah aur baqaya hisab karo",
+            "lang": "ur-Latn",
+            "gloss": "calculate the final salary and what is left"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "paisay de do",
+              "lang": "ur-Latn",
+              "gloss": "pay it out"
+            },
+            "goesTo": "staff.settlement.release — UC-12-17-PC-9",
+            "note": "The settlement is refused if released before the handover is clear, since the school has no hold left afterwards (E9)."
+          },
+          {
+            "request": {
+              "text": "advance maaf kar do",
+              "lang": "ur-Latn",
+              "gloss": "write off the advance"
+            },
+            "goesTo": "Not offered here.",
+            "note": "An outstanding advance is recovered from the settlement, or written off with approval (BR-11, UC-12-05 BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.settlement.calculate",
+            "inputs": {
+              "exit_id": "$request.exit_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Salary to the leaving date, any unused leave entitlement, and any advance still outstanding — which is recovered from the settlement or written off with approval (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. Nothing is paid by calculating it.",
+        "atomicity": "One write: the settlement figures and the audit entry together or not at all. **No money moves.** The settlement is released separately, and not before the handover is clear (E9) — the school has no hold left afterwards."
+      },
+      "operations": [
+        {
+          "name": "staff.settlement.calculate",
+          "method": "POST",
+          "path": "/api/v1/staff-exits/{exit_id}/settlement",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "exit_id, since an exit carries one settlement",
+          "purpose": "Calculate the final settlement for a leaver.",
+          "parameters": [
+            {
+              "name": "exit_id",
+              "source": "resolved",
+              "sourceRef": "$request.exit_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff_exit",
+                "fromPhrase": "$request.exit_phrase",
+                "onNoMatch": "Refuse. No resignation or termination matches for that employee.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the leaving date and whether it is a resignation or a termination."
+              },
+              "notes": "The resignation or termination the settlement belongs to."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The settlement as calculated.",
+            "fields": [
+              {
+                "name": "settlement_id",
+                "type": "string",
+                "description": "The settlement."
+              },
+              {
+                "name": "leaving_date",
+                "type": "date",
+                "description": "What the salary is calculated to (BR-11)."
+              },
+              {
+                "name": "salary_to_leaving_date",
+                "type": "money",
+                "description": "For the days worked to that date."
+              },
+              {
+                "name": "unused_leave_entitlement",
+                "type": "money",
+                "description": "Any entitlement not taken (BR-11)."
+              },
+              {
+                "name": "advance_outstanding",
+                "type": "money",
+                "description": "Any advance still outstanding, recovered here or written off with approval (BR-11, UC-12-05 BR-10)."
+              },
+              {
+                "name": "net_settlement",
+                "type": "money",
+                "description": "What the employee is finally paid."
+              },
+              {
+                "name": "handover_items_outstanding",
+                "type": "integer",
+                "description": "Items still unassigned. The settlement cannot be released while any remains (E9)."
+              },
+              {
+                "name": "figures_visible_to",
+                "type": "string[]",
+                "description": "The roles the visibility rule names (UC-12-15 BR-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "HANDOVER_NOT_CLEAR",
+              "mapsTo": "E9",
+              "httpStatus": 200,
+              "meaning": "Handover items are still unassigned.",
+              "written": "The settlement is calculated.",
+              "notWritten": "Nothing is released.",
+              "treatedAsSuccess": true,
+              "note": "Not a refusal for the calculation. Report the outstanding items — the release is refused while any remains (E9)."
+            },
+            {
+              "code": "NO_LEAVING_DATE",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "No leaving date is set.",
+              "written": "Nothing.",
+              "notWritten": "Nothing calculated.",
+              "note": "The settlement is calculated to the leaving date."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply or adjust a figure. Every line is calculated — the salary to the leaving date, the unused entitlement and the advance outstanding (BR-11) — and a number in a plan is a payment nobody can trace.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the advance outstanding plainly. It is recovered from the settlement or written off with approval, and it does not lapse because somebody is leaving (UC-12-05 BR-10).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the handover items still outstanding. The settlement cannot be released while any remains, and the school has no hold left afterwards (E9).",
+          "derivedFrom": [
+            "BR-7",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never describe a calculated settlement as paid. It is released separately (E9), and a leaver told they have been paid will be looking for the money.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never state the figures to an actor who may not see them (UC-12-15 BR-1).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A settlement is calculated again rather than withdrawn — for instance where an advance is written off, or the leaving date moves."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "jaate hue mulazim ka final settlement nikal do",
+            "lang": "ur-Latn",
+            "gloss": "produce the leaving employee's final settlement"
+          },
+          "context": "Accounts, Johar Town branch, handover clear.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.settlement.calculate",
+              "inputs": {
+                "exit_id": "$request.exit_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Calculated. Report the salary to the leaving date, the unused entitlement, the advance outstanding (PR-2) and the net figure — and that nothing has been paid yet (PR-4)."
+        },
+        {
+          "request": {
+            "text": "hisab nikal kar paisay bhi de do",
+            "lang": "ur-Latn",
+            "gloss": "calculate it and pay it out"
+          },
+          "context": "Accounts, Johar Town branch, with three handover items outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.settlement.calculate",
+              "inputs": {
+                "exit_id": "$request.exit_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The calculation only. The release is refused while the handover is open (PR-3)."
+            }
+          ],
+          "outcome": "Calculated, and three items are still unassigned. Report them (PR-3) — the settlement cannot be released until the checklist is clear, because once the money is paid the school has no hold left."
+        },
+        {
+          "request": {
+            "text": "advance chhorh do, baqi hisab kar do",
+            "lang": "ur-Latn",
+            "gloss": "drop the advance and settle the rest"
+          },
+          "context": "Accounts, Johar Town branch, with 12,000 outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.settlement.calculate",
+              "inputs": {
+                "exit_id": "$request.exit_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The calculation includes the advance as outstanding. Nothing is written off (PR-2)."
+            }
+          ],
+          "outcome": "Calculated with the 12,000 shown against the settlement. Report that it is recovered from the settlement or written off with approval — dropping it here would be the school losing 12,000 without anybody deciding to."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-17-PC-9",
+      "intent": {
+        "name": "staff.settlement.release",
+        "summary": "Release a leaver's settlement once the handover is clear. Accounts, one step, and the money goes.",
+        "routesHere": [
+          "release the settlement — the handover is complete",
+          {
+            "text": "handover mukammal hai, settlement jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "the handover is complete, release the settlement"
+          },
+          {
+            "text": "aakhri hisab ada kar do",
+            "lang": "ur-Latn",
+            "gloss": "pay the final settlement"
+          },
+          {
+            "text": "paisay de do",
+            "lang": "ur-Latn",
+            "gloss": "hand over the money"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "pehle hisab nikalo",
+              "lang": "ur-Latn",
+              "gloss": "calculate it first"
+            },
+            "goesTo": "staff.settlement.calculate — UC-12-17-PC-8"
+          },
+          {
+            "request": {
+              "text": "handover baad mein karwa lenge",
+              "lang": "ur-Latn",
+              "gloss": "we will finish the handover later"
+            },
+            "goesTo": "Not offered.",
+            "note": "The settlement is refused if released before the handover is clear, since the school has no hold left afterwards (E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.settlement.release",
+            "inputs": {
+              "settlement_id": "$request.settlement_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it is the last one. Once the money is paid the school has no hold left over anything the leaver still holds (E9)."
+          }
+        ],
+        "onFailure": "Stop and report. A release before the handover is clear is refused by the API.",
+        "atomicity": "One write, atomic in itself: the payment, the ledger posting and the closure of any recovered advance together or not at all. The staff record is deactivated and never deleted, because payroll history, ledger entries and audit trails all reference it — the employee drops out of payroll runs and out of the timetable (BR-13). An experience or service letter is issued to the employee, though the certificate module currently issues for students only and has to be extended (BR-12, E10)."
+      },
+      "operations": [
+        {
+          "name": "staff.settlement.release",
+          "method": "POST",
+          "path": "/api/v1/settlements/{settlement_id}/release",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "settlement_id, since a settlement is released once and a repeat must not pay twice",
+          "purpose": "Release the final settlement to the leaver.",
+          "parameters": [
+            {
+              "name": "settlement_id",
+              "source": "resolved",
+              "sourceRef": "$request.settlement_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "final_settlement",
+                "fromPhrase": "$request.settlement_phrase",
+                "onNoMatch": "Refuse. No calculated settlement matches for that employee.",
+                "onAmbiguous": "Ask, naming the candidates with the employee and their leaving date."
+              },
+              "notes": "The calculated settlement."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The release.",
+            "fields": [
+              {
+                "name": "settlement_id",
+                "type": "string",
+                "description": "The settlement."
+              },
+              {
+                "name": "net_settlement",
+                "type": "money",
+                "description": "Paid."
+              },
+              {
+                "name": "advance_recovered",
+                "type": "money",
+                "description": "Recovered from it, where an advance was outstanding (BR-11)."
+              },
+              {
+                "name": "advance_remaining",
+                "type": "money",
+                "description": "What is still owed after the recovery. Written off with approval or pursued — it does not lapse (UC-12-05 BR-10)."
+              },
+              {
+                "name": "voucher_id",
+                "type": "string",
+                "description": "The ledger posting."
+              },
+              {
+                "name": "record_state",
+                "type": "string",
+                "description": "Inactive. Deactivated and never deleted (BR-13)."
+              },
+              {
+                "name": "access_revoked",
+                "type": "boolean",
+                "description": "Login, ID card and biometric enrolment, on the leaving date (BR-10)."
+              },
+              {
+                "name": "service_letter",
+                "type": "string",
+                "description": "Not issued. The certificate module issues for students only and has to be extended to cover staff (BR-12, E10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "HANDOVER_NOT_CLEAR",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The handover is not clear.",
+              "written": "Nothing.",
+              "notWritten": "Nothing released.",
+              "note": "The school has no hold left after the money is paid (E9)."
+            },
+            {
+              "code": "ACCESS_REVOCATION_FAILED",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "Access revocation failed on the leaving date.",
+              "written": "The settlement is released.",
+              "notWritten": "Access is not revoked.",
+              "treatedAsSuccess": true,
+              "note": "Flagged rather than passing silently — the person still has a login and a card (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never release before the handover is clear. E9 exists because the money is the school's last hold over anything the leaver still holds.",
+          "derivedFrom": [
+            "BR-7",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report a failed access revocation immediately. It is flagged rather than passing silently, and the person still has a login and a card after their last day (BR-10, E8).",
+          "derivedFrom": [
+            "BR-10",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report any advance still outstanding after the recovery. It does not lapse — it is written off with approval or pursued (UC-12-05 BR-10).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that the record is deactivated rather than deleted. Payroll history, ledger entries and audit trails reference it, and the employee simply drops out of payroll runs and the timetable (BR-13, E11).",
+          "derivedFrom": [
+            "BR-13",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report that no service letter is issued. The certificate module issues for students only and has to be extended to cover staff (BR-12, E10) — a leaver expecting one will not get it.",
+          "derivedFrom": [
+            "BR-12",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A release is not reversed. The money has gone, the record is deactivated and the access is revoked. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "handover mukammal hai, settlement jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "the handover is complete, release the settlement"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.settlement.release",
+              "inputs": {
+                "settlement_id": "$request.settlement_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Released and posted to the ledger. Report the net paid, any advance recovered and anything still owed (PR-3), that the record is now inactive rather than deleted (PR-4), and that no service letter is issued because the certificate module covers students only (PR-5)."
+        },
+        {
+          "request": {
+            "text": "paisay de do, handover ke do kaam baaqi hain",
+            "lang": "ur-Latn",
+            "gloss": "pay the money, two handover items are left"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.settlement.release",
+              "inputs": {
+                "settlement_id": "$request.settlement_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns HANDOVER_NOT_CLEAR (E9)."
+            }
+          ],
+          "outcome": "Nothing is released. Report the two outstanding items — once the settlement is paid the school has no hold left, and a timetable slot or an exam subject nobody has taken over stays that way."
+        },
+        {
+          "request": {
+            "text": "settlement jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "release the settlement"
+          },
+          "context": "Accounts, Johar Town branch, where the access revocation failed on the leaving date.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.settlement.release",
+              "inputs": {
+                "settlement_id": "$request.settlement_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns ACCESS_REVOCATION_FAILED (E8) on the success path."
+            }
+          ],
+          "outcome": "Released, and the revocation is flagged. Report it plainly (PR-2) — the person has been paid and has left, and still holds a working login, an ID card and a biometric enrolment until somebody clears them."
+        }
+      ]
+    }
+  ]
+}

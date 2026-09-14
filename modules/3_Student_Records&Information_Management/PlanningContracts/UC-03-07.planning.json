@@ -1,0 +1,1517 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-03-07",
+    "name": "Exclude a student from attending for a defined period while their enrolment continues",
+    "module": "Student records",
+    "file": "../UseCases/UC-03-07.json",
+    "featureRef": "3.7 Student suspension"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-03-07-PC-1",
+      "intent": {
+        "name": "suspension.recommend",
+        "summary": "Recommend a suspension from a recorded incident, with the reason and the days proposed. Coordinator, one step, and it excludes nobody yet.",
+        "routesHere": [
+          "recommend three days' suspension for this incident",
+          {
+            "text": "is waqiye par teen din ki suspension ki sifarish karo",
+            "lang": "ur-Latn",
+            "gloss": "recommend a three-day suspension for this incident"
+          },
+          {
+            "text": "bache ko kuch din ke liye school se bahar rakhna chahiye",
+            "lang": "ur-Latn",
+            "gloss": "the child should be kept out of school for a few days"
+          },
+          {
+            "text": "suspension ki sifarish bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the suspension recommendation"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "bache ka naam kaat do",
+              "lang": "ur-Latn",
+              "gloss": "remove the child from the school"
+            },
+            "goesTo": "expulsion.recommend — UC-03-08, or withdrawal.raise — UC-03-06",
+            "note": "A suspended student is not withdrawn. The place is held and the enrolment continues (BR-5, BR-8)."
+          },
+          {
+            "request": {
+              "text": "aaj hi ghar bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send them home today"
+            },
+            "goesTo": "Not offered.",
+            "note": "The Principal approves the suspension and sets the start date. Nothing excludes a child before that (BR-2)."
+          },
+          {
+            "request": {
+              "text": "sirf waqiya darj karo",
+              "lang": "ur-Latn",
+              "gloss": "just record the incident"
+            },
+            "goesTo": "Not offered here.",
+            "note": "A suspension is raised from an incident already recorded — a sanction with no recorded incident behind it cannot be defended (BR-1, E1)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "suspension.recommend",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "incident_id": "$request.incident_phrase",
+              "reason": "$request.reason",
+              "proposed_days": "$request.proposed_days",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It is a recommendation — the Principal approves it and sets the dates, and this approval is not configurable to a lower role (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. A recommendation with no incident, and one with zero or fewer days, are both refused.",
+        "atomicity": "One write: the recommendation and the audit entry together or not at all. **Nothing changes for the student.** They attend as normal until the Principal approves it and the start date arrives. A suspension is never deleted, and a recommendation that was returned or refused stays on the record (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "suspension.recommend",
+          "method": "POST",
+          "path": "/api/v1/suspensions",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "student_id + incident_id, since one incident produces one recommendation",
+          "purpose": "Recommend a suspension arising from a recorded incident.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No enrolled student matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their class and section."
+              },
+              "notes": "The student."
+            },
+            {
+              "name": "incident_id",
+              "source": "resolved",
+              "sourceRef": "$request.incident_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "incident",
+                "fromPhrase": "$request.incident_phrase",
+                "onNoMatch": "Refuse. No recorded incident matches for that student. A suspension is not raised from nothing (BR-1).",
+                "onAmbiguous": "Ask, naming the recorded incidents with their date and what was recorded."
+              },
+              "notes": "The recorded incident the suspension arises from (BR-1, E1). A sanction with no recorded incident behind it cannot be defended, so this is never created here."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 1000 characters. What the family is told and what the record carries. The Coordinator's own words — this is read back if the sanction is ever questioned."
+            },
+            {
+              "name": "proposed_days",
+              "source": "request",
+              "sourceRef": "$request.proposed_days",
+              "required": true,
+              "type": "number",
+              "notes": "Greater than zero (E2). What the Coordinator recommends (BR-1) — the Principal sets the actual dates at approval."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The recommendation.",
+            "fields": [
+              {
+                "name": "suspension_id",
+                "type": "string",
+                "description": "The recommendation."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student."
+              },
+              {
+                "name": "incident_id",
+                "type": "string",
+                "description": "The incident it arises from (BR-1)."
+              },
+              {
+                "name": "proposed_days",
+                "type": "number",
+                "description": "As recommended."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. The student attends as normal."
+              },
+              {
+                "name": "approver_role",
+                "type": "string",
+                "description": "The Principal. Not configurable to a lower role (BR-2)."
+              },
+              {
+                "name": "open_support_record",
+                "type": "boolean",
+                "description": "Whether the student has an open special educational need or safeguarding record. It is reviewed before the suspension is approved (BR-3, E5)."
+              },
+              {
+                "name": "previous_suspensions",
+                "type": "integer",
+                "description": "Earlier suspensions on this student's record. Repeated suspensions are visible together, since a pattern is what leads to an expulsion (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_INCIDENT",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "No incident is selected.",
+              "written": "Nothing.",
+              "notWritten": "The recommendation is not raised.",
+              "note": "A sanction with no recorded incident behind it cannot be defended (BR-1)."
+            },
+            {
+              "code": "DAYS_NOT_POSITIVE",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The proposed days are zero or fewer.",
+              "written": "Nothing.",
+              "notWritten": "Not raised."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never create or infer the incident. The suspension is raised from one already recorded (BR-1, E1), and a sanction resting on an incident a planner described is a sanction with nothing behind it.",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the reason. It is what the family is told and what the record carries (BR-1, BR-4), and it is read back if the sanction is questioned.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never choose the number of days. It is what the Coordinator recommends, and the Principal sets the actual dates — a figure a planner supplied is days of a child's schooling.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report an open support record. Where the student has one it is reviewed before approval, because behaviour is sometimes a symptom of something the school already knows about (BR-3, E5).",
+          "derivedFrom": [
+            "BR-3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report earlier suspensions. Repeated ones are visible together because a pattern is what leads to an expulsion (BR-11) — how many constitute that pattern is not decided anywhere in this use case.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Say plainly that nothing changes yet. The student attends as normal until the Principal approves it and the start date arrives (BR-2).",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A suspension is never deleted (BR-12, E11). A recommendation that is returned or refused stays on the record."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is waqiye par teen din ki suspension ki sifarish karo",
+            "lang": "ur-Latn",
+            "gloss": "recommend a three-day suspension for this incident"
+          },
+          "context": "Coordinator, Johar Town branch, the incident already recorded.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.recommend",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "incident_id": "$request.incident_phrase",
+                "reason": "as the Coordinator wrote it",
+                "proposed_days": "3",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The incident is named, not created (PR-1); the reason and the days are the Coordinator's (PR-2, PR-3)."
+            }
+          ],
+          "outcome": "Recommended. Report whether the student has an open support record for the Principal to review (PR-4), how many earlier suspensions are on the record (PR-5), and that the child attends as normal until the Principal approves it (PR-6)."
+        },
+        {
+          "request": {
+            "text": "kal jo hua us par suspension ki sifarish karo",
+            "lang": "ur-Latn",
+            "gloss": "recommend a suspension for what happened yesterday"
+          },
+          "context": "Coordinator, Johar Town branch, with nothing recorded as an incident.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.recommend",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "incident_id": "$request.incident_phrase — no recorded incident matches",
+                "reason": "$request.reason",
+                "proposed_days": "$request.proposed_days",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The incident is not created here (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is recommended. Report that the incident is recorded first — a suspension raised from an account nobody wrote down is a sanction the school cannot defend if the family disputes it."
+        },
+        {
+          "request": {
+            "text": "bache ko aaj hi ghar bhej do, sifarish baad mein bana denge",
+            "lang": "ur-Latn",
+            "gloss": "send the child home today, we will write the recommendation later"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.recommend",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "incident_id": "$request.incident_phrase",
+                "reason": "$request.reason",
+                "proposed_days": "$request.proposed_days",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The recommendation only. Nothing excludes the child (PR-6)."
+            }
+          ],
+          "outcome": "Recommended, and the child attends as normal meanwhile. Report that the Principal approves it and sets the start date — nothing in the system excludes a student before that, and a child sent home without it is simply marked absent, with the daily alert going to their guardian."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-07-PC-2",
+      "intent": {
+        "name": "student.supportrecord.review",
+        "summary": "Record that a student's open special educational need or safeguarding record has been reviewed. Principal, one step, and it must happen before a sanction is approved.",
+        "routesHere": [
+          "I have reviewed her safeguarding record",
+          {
+            "text": "bache ka support record dekh liya hai",
+            "lang": "ur-Latn",
+            "gloss": "I have looked at the child's support record"
+          },
+          {
+            "text": "safeguarding record ka jaiza le liya hai",
+            "lang": "ur-Latn",
+            "gloss": "the safeguarding record has been reviewed"
+          },
+          {
+            "text": "special needs record dekh kar aage barho",
+            "lang": "ur-Latn",
+            "gloss": "review the special needs record and proceed"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "suspension manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the suspension"
+            },
+            "goesTo": "suspension.approve — UC-03-07-PC-3",
+            "note": "The approval is refused while an open support record has not been reviewed (BR-3, E5)."
+          },
+          {
+            "request": {
+              "text": "expulsion ka case aage barhao",
+              "lang": "ur-Latn",
+              "gloss": "proceed with the expulsion case"
+            },
+            "goesTo": "UC-03-08",
+            "note": "The same review is required before an expulsion case proceeds (UC-03-08 BR-2, E3)."
+          },
+          {
+            "request": {
+              "text": "record ka mazmoon bata do",
+              "lang": "ur-Latn",
+              "gloss": "tell me what the record says"
+            },
+            "goesTo": "Not offered here.",
+            "note": "This records that it was reviewed. What it contains is read on the record itself, by whoever is entitled to."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.supportrecord.review",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Behaviour is sometimes a symptom of something the school already knows about, and approving a sanction without looking is how that gets missed (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the record of the review and the audit entry together or not at all. It records that the Principal looked, not what they concluded. The sanction still has to be approved or returned on its own."
+      },
+      "operations": [
+        {
+          "name": "student.supportrecord.review",
+          "method": "POST",
+          "path": "/api/v1/students/{student_id}/support-record/review",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "student_id + sanction, since a record is reviewed once per sanction",
+          "purpose": "Record that the student's open support record has been reviewed.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No enrolled student matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their class and section."
+              },
+              "notes": "The student."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The review as recorded.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student."
+              },
+              {
+                "name": "support_record_open",
+                "type": "boolean",
+                "description": "Whether one exists. Where none does, no review is required (BR-3)."
+              },
+              {
+                "name": "reviewed_by",
+                "type": "string",
+                "description": "The Principal."
+              },
+              {
+                "name": "reviewed_at",
+                "type": "datetime",
+                "description": "When."
+              },
+              {
+                "name": "blocks_cleared",
+                "type": "string[]",
+                "description": "The sanctions this unblocks — a suspension approval, an expulsion case proceeding (BR-3, UC-03-08 BR-2)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_SUPPORT_RECORD",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "The student has no open support record.",
+              "written": "The review is recorded as not required.",
+              "notWritten": "Nothing else.",
+              "treatedAsSuccess": true,
+              "note": "Where none exists there is nothing to review, and the sanction is not blocked (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never record the review on the Principal's behalf. It is a statement that a person read a child's safeguarding or special needs record before sanctioning them, and it is the one step BR-3 exists to force.",
+          "derivedFrom": [
+            "BR-3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never read the record's contents back into a reply. This capability records that it was reviewed; what it holds is read on the record itself by whoever is entitled to see it.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never treat the review as approval. The sanction is approved or returned on its own, and the review only clears the block (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A review is not withdrawn. It records that somebody looked, on a date, before a sanction was decided."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "bache ka safeguarding record dekh liya hai",
+            "lang": "ur-Latn",
+            "gloss": "I have reviewed the child's safeguarding record"
+          },
+          "context": "Principal, Johar Town branch, on a student with an open record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.supportrecord.review",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Recorded. Report that the suspension approval is no longer blocked (PR-3) — the review is a step taken, not a decision made, and the suspension is still approved or returned on its own merits."
+        },
+        {
+          "request": {
+            "text": "record dekhne ki zaroorat nahi, suspension manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "no need to look at the record, approve the suspension"
+          },
+          "context": "Principal, Johar Town branch, on a student with an open safeguarding record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.supportrecord.review",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted on the actor's behalf. The review is theirs to make (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is recorded and the approval stays blocked. Report that the student has an open safeguarding record and that it is reviewed before the suspension is approved — behaviour is sometimes a symptom of something the school already knows about, which is exactly what this step exists to catch."
+        },
+        {
+          "request": {
+            "text": "is bache ka support record dekh lo",
+            "lang": "ur-Latn",
+            "gloss": "review this student's support record"
+          },
+          "context": "Principal, Johar Town branch, on a student with no open record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.supportrecord.review",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns NO_SUPPORT_RECORD (E5) on the success path."
+            }
+          ],
+          "outcome": "Recorded as not required — the student has no open special educational need or safeguarding record, so nothing was blocking the approval in the first place."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-07-PC-3",
+      "intent": {
+        "name": "suspension.approve",
+        "summary": "Approve a suspension, setting the dates, whether an examination may be sat, and the conditions of return. Principal only, one step.",
+        "routesHere": [
+          "approve it — three days from Monday, and she may sit the physics paper",
+          {
+            "text": "suspension manzoor kar do — somwar se teen din",
+            "lang": "ur-Latn",
+            "gloss": "approve the suspension — three days from Monday"
+          },
+          {
+            "text": "manzoori de do, imtihan de sakta hai ya nahi wo bhi tay karo",
+            "lang": "ur-Latn",
+            "gloss": "approve it, and decide whether they may sit the exam"
+          },
+          {
+            "text": "wapas aane ki shartein bhi likh do",
+            "lang": "ur-Latn",
+            "gloss": "record the conditions of return as well"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "suspension manzoor nahi",
+              "lang": "ur-Latn",
+              "gloss": "the suspension is not approved"
+            },
+            "goesTo": "suspension.return — UC-03-07-PC-4"
+          },
+          {
+            "request": {
+              "text": "bache ko roster se hata do",
+              "lang": "ur-Latn",
+              "gloss": "take the child off the roster"
+            },
+            "goesTo": "Not offered.",
+            "note": "The place is held. The student stays on the section roster, stays in class counts and continues to be invoiced (BR-5)."
+          },
+          {
+            "request": {
+              "text": "un dinon ki hazri absent laga do",
+              "lang": "ur-Latn",
+              "gloss": "mark those days absent"
+            },
+            "goesTo": "Not offered.",
+            "note": "Attendance is coded suspended rather than absent, no absence alert is sent, and the days are not counted as unexplained absence (BR-6, E7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "suspension.approve",
+            "inputs": {
+              "suspension_id": "$request.suspension_phrase",
+              "start_date": "$request.start_date",
+              "return_date": "$request.return_date",
+              "may_sit_examination": "$request.may_sit_examination",
+              "conditions_of_return": "$request.conditions_of_return",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches attendance and the family. The Principal approves and sets the dates, and this approval is not configurable to a lower role (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. An unreviewed open support record, a return date before the start, and an approval by anybody below the Principal are all refused.",
+        "atomicity": "One write, atomic in itself: the suspended state across the period, the attendance coded suspended rather than absent, and the notification to the guardian together or not at all. The guardian is told the reason, the dates and what is required before the student returns — a family told only that the child is suspended cannot meet a condition nobody stated (BR-4). The place is held: the student stays on the roster, stays in class counts and continues to be invoiced, because the school is holding a place it is not letting the child occupy (BR-5). On the return date the state reverts by itself (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "suspension.approve",
+          "method": "POST",
+          "path": "/api/v1/suspensions/{suspension_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "suspension_id, since a suspension is approved once and a repeat must not notify the family twice",
+          "purpose": "Approve the suspension, setting its dates and terms.",
+          "parameters": [
+            {
+              "name": "suspension_id",
+              "source": "resolved",
+              "sourceRef": "$request.suspension_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "suspension",
+                "fromPhrase": "$request.suspension_phrase",
+                "onNoMatch": "Refuse. No suspension matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the incident, the proposed days and the status."
+              },
+              "notes": "The suspension, resolved from the student and its state."
+            },
+            {
+              "name": "start_date",
+              "source": "request",
+              "sourceRef": "$request.start_date",
+              "required": true,
+              "type": "date",
+              "notes": "When the exclusion begins. Set by the Principal at approval (BR-2)."
+            },
+            {
+              "name": "return_date",
+              "source": "request",
+              "sourceRef": "$request.return_date",
+              "required": true,
+              "type": "date",
+              "notes": "When the student returns. On or after the start date (E6). The state reverts by itself on it (BR-9)."
+            },
+            {
+              "name": "may_sit_examination",
+              "source": "request",
+              "sourceRef": "$request.may_sit_examination",
+              "required": false,
+              "type": "boolean",
+              "notes": "Whether the student may sit an examination falling within the period. Decided at approval and recorded (BR-7). Where they do not sit, the paper is recorded as an exam absence and classified there."
+            },
+            {
+              "name": "conditions_of_return",
+              "source": "request",
+              "sourceRef": "$request.conditions_of_return",
+              "required": false,
+              "type": "string",
+              "notes": "What is required before the student returns. The family is told it with the dates (BR-4) — a condition a planner wrote is the school requiring something nobody decided."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The suspension as approved.",
+            "fields": [
+              {
+                "name": "suspension_id",
+                "type": "string",
+                "description": "The suspension."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Active."
+              },
+              {
+                "name": "start_date",
+                "type": "date",
+                "description": "When it begins."
+              },
+              {
+                "name": "return_date",
+                "type": "date",
+                "description": "When the state reverts by itself (BR-9)."
+              },
+              {
+                "name": "days",
+                "type": "integer",
+                "description": "Working days excluded."
+              },
+              {
+                "name": "may_sit_examination",
+                "type": "boolean",
+                "description": "As decided (BR-7)."
+              },
+              {
+                "name": "examinations_in_period",
+                "type": "object[]",
+                "description": "Papers falling within the period. Where the student does not sit, each is recorded as an exam absence and classified there (BR-7)."
+              },
+              {
+                "name": "attendance_coded",
+                "type": "string",
+                "description": "Suspended, not absent. No absence alert is sent and the days are not counted as unexplained absence (BR-6)."
+              },
+              {
+                "name": "place_held",
+                "type": "boolean",
+                "description": "True. On the roster, in class counts, and invoiced as normal (BR-5)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status. Where the guardian cannot be reached the suspension stands and the failure is reported (E9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SUPPORT_RECORD_NOT_REVIEWED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The student has an open support record and it has not been reviewed.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Behaviour is sometimes a symptom of something the school already knows about (BR-3)."
+            },
+            {
+              "code": "RETURN_BEFORE_START",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "The return date is before the start date.",
+              "written": "Nothing.",
+              "notWritten": "Not approved."
+            },
+            {
+              "code": "NOT_PRINCIPAL",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "A Coordinator or School Admin attempted to approve.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "The Principal approves and it is not configurable to a lower role (BR-2)."
+            },
+            {
+              "code": "GUARDIAN_UNREACHABLE",
+              "mapsTo": "E9",
+              "httpStatus": 200,
+              "meaning": "The guardian could not be reached.",
+              "written": "The suspension stands.",
+              "notWritten": "The family was not told.",
+              "treatedAsSuccess": true,
+              "note": "Reported rather than silently passed. A family that does not know the dates or the conditions cannot act on them (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the dates. They are days a child is excluded from school, set by the Principal at approval (BR-2) — the recommended number of days is a recommendation, not the dates.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never write the conditions of return. The family is told them and has to meet them (BR-4), and a condition a planner composed is the school requiring something nobody decided.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never decide whether an examination may be sat. It is settled at approval and recorded (BR-7), and a paper missed is recorded as an exam absence with consequences for the result.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never approve below the Principal. E3 and E4 are BR-2 working, and the Super Admin configures the permission but cannot set it below the Principal.",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report that the place is held. The student stays on the roster, in class counts and invoiced (BR-5) — the school is holding a place it is not letting the child occupy, and the family is still paying for it.",
+          "derivedFrom": [
+            "BR-5",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report that attendance is coded suspended rather than absent. Without that state the guardian is alerted daily that their child did not arrive, at a school that sent them home (BR-6, E7).",
+          "derivedFrom": [
+            "BR-6",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Report a failed notification. The suspension stands, but a family that does not know the dates or the conditions cannot meet them (BR-4, E9).",
+          "derivedFrom": [
+            "BR-4",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "suspension.end.early",
+        "statement": "Ending the suspension early, with a reason, from which date the state reverts (BR-10). On the return date it reverts by itself (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "manzoor kar do — somwar se teen din, physics ka paper de sakti hai",
+            "lang": "ur-Latn",
+            "gloss": "approve it — three days from Monday, she may sit the physics paper"
+          },
+          "context": "Principal, Johar Town branch, support record reviewed, conditions given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.approve",
+              "inputs": {
+                "suspension_id": "$request.suspension_phrase",
+                "start_date": "the Monday named",
+                "return_date": "the Thursday it produces",
+                "may_sit_examination": "true",
+                "conditions_of_return": "as the Principal stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The dates, the examination decision and the conditions are all the Principal's (PR-1, PR-2, PR-3)."
+            }
+          ],
+          "outcome": "Approved. Report that the family is told the reason, the dates and the conditions (PR-7), that the place is held and still invoiced (PR-5), and that attendance reads suspended rather than absent so no daily alert goes out (PR-6)."
+        },
+        {
+          "request": {
+            "text": "teen din ki suspension manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the three-day suspension"
+          },
+          "context": "Principal, Johar Town branch, with no dates and no conditions given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.approve",
+              "inputs": {
+                "suspension_id": "$request.suspension_phrase",
+                "start_date": "$request.start_date — absent",
+                "return_date": "$request.return_date — absent",
+                "may_sit_examination": "omitted",
+                "conditions_of_return": "$request.conditions_of_return — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The dates have nothing to take them from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is approved. Ask for the start and return dates and what the family must do before the child comes back — three days from tomorrow and three days from Monday are different weeks for a family, and a condition nobody stated cannot be met."
+        },
+        {
+          "request": {
+            "text": "suspension manzoor kar do, is hafte imtihan bhi hai",
+            "lang": "ur-Latn",
+            "gloss": "approve the suspension, there is an exam this week too"
+          },
+          "context": "Principal, Johar Town branch, with a paper falling inside the period.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.approve",
+              "inputs": {
+                "suspension_id": "$request.suspension_phrase",
+                "start_date": "$request.start_date",
+                "return_date": "$request.return_date",
+                "may_sit_examination": "$request.may_sit_examination — not stated",
+                "conditions_of_return": "$request.conditions_of_return",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted until the examination question is answered (PR-3)."
+            }
+          ],
+          "outcome": "Nothing is approved yet. Name the paper falling in the period and ask whether the student may sit it — if they do not, it is recorded as an exam absence and classified there, which leaves the subject out of the percentage or counts it as zero. That is a decision about their result, not a detail of the sanction."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-07-PC-4",
+      "intent": {
+        "name": "suspension.return",
+        "summary": "Return a suspension recommendation unapproved, with the reason. Principal, one step, and the student attends as normal.",
+        "routesHere": [
+          "return this recommendation — the incident does not warrant it",
+          {
+            "text": "ye sifarish wapas bhej do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "return this recommendation with the reason"
+          },
+          {
+            "text": "suspension manzoor nahi kar sakta",
+            "lang": "ur-Latn",
+            "gloss": "I cannot approve this suspension"
+          },
+          {
+            "text": "dobara dekho, itni sakht sazaa nahi banti",
+            "lang": "ur-Latn",
+            "gloss": "look again, this is too harsh a sanction"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "suspension manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the suspension"
+            },
+            "goesTo": "suspension.approve — UC-03-07-PC-3"
+          },
+          {
+            "request": {
+              "text": "kam din ki suspension kar do",
+              "lang": "ur-Latn",
+              "gloss": "make it fewer days"
+            },
+            "goesTo": "suspension.approve — UC-03-07-PC-3",
+            "note": "The Principal sets the dates at approval (BR-2), so a shorter period is an approval rather than a return."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "suspension.return",
+            "inputs": {
+              "suspension_id": "$request.suspension_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The student attends as normal and nothing about their record changes."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. The student attends as normal — nothing is applied and nobody is told. The recommendation stays on the record: a suspension is never deleted, and one that was returned or refused stays readable (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "suspension.return",
+          "method": "POST",
+          "path": "/api/v1/suspensions/{suspension_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "suspension_id, since a recommendation carries one decision",
+          "purpose": "Return a suspension recommendation unapproved with the reason.",
+          "parameters": [
+            {
+              "name": "suspension_id",
+              "source": "resolved",
+              "sourceRef": "$request.suspension_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "suspension",
+                "fromPhrase": "$request.suspension_phrase",
+                "onNoMatch": "Refuse. No suspension matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the incident, the proposed days and the status."
+              },
+              "notes": "The suspension, resolved from the student and its state."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required to return a recommendation unapproved. The Coordinator works from it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "suspension_id",
+                "type": "string",
+                "description": "The recommendation."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It stays on the record (BR-12)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The Principal."
+              },
+              {
+                "name": "student_state",
+                "type": "string",
+                "description": "Attending as normal. Nothing was applied."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "boolean",
+                "description": "False. The family is told when a suspension is approved, not when one is not (BR-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E10",
+              "httpStatus": 400,
+              "meaning": "A recommendation was returned with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The recommendation is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. The Coordinator works from it, and it forms part of the record of a sanction the school considered and did not apply.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never notify the guardian of a returned recommendation. The family is told when a suspension is approved (BR-4) — telling them one was considered and refused would be the first they had heard of it.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never return a recommendation in order to shorten it. The Principal sets the dates at approval (BR-2), so fewer days is an approval with different dates.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report that the recommendation stays on the record. A suspension is never deleted, and a returned one stays readable (BR-12) — which matters where a pattern is later argued.",
+          "derivedFrom": [
+            "BR-11",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. The Coordinator recommends again from the reason, or the matter is left where it is — and the record stays either way (BR-12)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye sifarish wapas bhej do — waqiya itni sakht sazaa ka nahi banta",
+            "lang": "ur-Latn",
+            "gloss": "return this recommendation — the incident does not warrant a sanction this severe"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.return",
+              "inputs": {
+                "suspension_id": "$request.suspension_phrase",
+                "reason": "The incident as recorded does not warrant exclusion. Address it under the behaviour route instead.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Principal's own (PR-1)."
+            }
+          ],
+          "outcome": "Returned. The student attends as normal and the family is told nothing (PR-2). The recommendation stays on the record with the reason (PR-4)."
+        },
+        {
+          "request": {
+            "text": "teen din zyada hain, ek din kar do",
+            "lang": "ur-Latn",
+            "gloss": "three days is too many, make it one"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.return",
+              "inputs": {
+                "suspension_id": "$request.suspension_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No return is planned. Setting the dates is what approval does (PR-3)."
+            }
+          ],
+          "outcome": "Report that the Principal sets the start and return dates at approval — approving with one day's dates is the act being described, and returning it would send the whole recommendation back instead."
+        },
+        {
+          "request": {
+            "text": "sifarish wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return the recommendation"
+          },
+          "context": "Principal, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.return",
+              "inputs": {
+                "suspension_id": "$request.suspension_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why — the Coordinator recommended a sanction against a child, and the record of why it was not applied is part of what makes the school's handling of the incident readable later."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-03-07-PC-5",
+      "intent": {
+        "name": "suspension.end.early",
+        "summary": "End an active suspension before its return date, with the reason. Principal, one step, and the state reverts from that date.",
+        "routesHere": [
+          "end the suspension early — the conditions have been met",
+          {
+            "text": "suspension jaldi khatam kar do, shartein poori ho gayi hain",
+            "lang": "ur-Latn",
+            "gloss": "end the suspension early, the conditions have been met"
+          },
+          {
+            "text": "bacha kal se wapas aa sakta hai",
+            "lang": "ur-Latn",
+            "gloss": "the child can come back from tomorrow"
+          },
+          {
+            "text": "wajah ke sath suspension khatam karo",
+            "lang": "ur-Latn",
+            "gloss": "end the suspension with a reason"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "suspension barha do",
+              "lang": "ur-Latn",
+              "gloss": "extend the suspension"
+            },
+            "goesTo": "Not offered.",
+            "note": "The return date is set at approval (BR-2). There is no capability that extends one."
+          },
+          {
+            "request": {
+              "text": "return date par khud khatam ho jayegi?",
+              "lang": "ur-Latn",
+              "gloss": "will it end by itself on the return date?"
+            },
+            "goesTo": "It does.",
+            "note": "On the return date the state reverts automatically and attendance is expected again. A suspension that has to be ended by hand is one that will occasionally run on (BR-9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "suspension.end.early",
+            "inputs": {
+              "suspension_id": "$request.suspension_phrase",
+              "ended_on": "$request.ended_on",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The state reverts from the date given and the guardian is notified (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. An early ending with no reason is not saved.",
+        "atomicity": "One write: the early ending, its reason, the reverted state and the notification to the guardian together or not at all. From that date attendance is expected again and is marked normally — the days before it stay coded suspended (BR-6). Nothing else about the record changes; the enrolment, the placement and the fee position were never affected (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "suspension.end.early",
+          "method": "POST",
+          "path": "/api/v1/suspensions/{suspension_id}/end-early",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "suspension_id, since a suspension is ended early once",
+          "purpose": "End an active suspension before its return date.",
+          "parameters": [
+            {
+              "name": "suspension_id",
+              "source": "resolved",
+              "sourceRef": "$request.suspension_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "suspension",
+                "fromPhrase": "$request.suspension_phrase",
+                "onNoMatch": "Refuse. No suspension matches for that student at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the student, the incident, the dates and the status."
+              },
+              "notes": "The suspension, resolved from the student and its state."
+            },
+            {
+              "name": "ended_on",
+              "source": "request",
+              "sourceRef": "$request.ended_on",
+              "required": true,
+              "type": "date",
+              "notes": "The date the state reverts from (BR-10). Before the return date set at approval — the student is expected in school from it."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required to end early (BR-10, E10). Why the sanction is being cut short."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The early ending.",
+            "fields": [
+              {
+                "name": "suspension_id",
+                "type": "string",
+                "description": "The suspension."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Ended early. Terminal."
+              },
+              {
+                "name": "ended_on",
+                "type": "date",
+                "description": "The state reverts from this date (BR-10)."
+              },
+              {
+                "name": "original_return_date",
+                "type": "date",
+                "description": "What it would have been."
+              },
+              {
+                "name": "days_served",
+                "type": "integer",
+                "description": "Days actually excluded, coded suspended (BR-6)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "string",
+                "description": "Delivery status. The guardian is notified (BR-10)."
+              },
+              {
+                "name": "attendance_expected_from",
+                "type": "date",
+                "description": "When the student is expected in school again (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E10",
+              "httpStatus": 400,
+              "meaning": "An early ending was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not saved."
+            },
+            {
+              "code": "NOT_ACTIVE",
+              "mapsTo": "E11",
+              "httpStatus": 409,
+              "meaning": "The suspension is not active.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "One that has already completed reverted by itself on the return date (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. Cutting a sanction short is a decision the Principal takes, and the record of why is what makes the school's handling readable afterwards.",
+          "derivedFrom": [
+            "BR-10",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never choose the date it ends from. The student is expected in school from it, and the family has to be told in time to send them.",
+          "derivedFrom": [
+            "BR-9",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report when attendance is expected again. From that date the student is marked normally, and a family that does not know will keep the child at home into an unexplained absence (BR-6, BR-9).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never end a suspension early to correct a wrong one. A recommendation refused and a sanction cut short are different records, and the second says the sanction was right and is now over.",
+          "derivedFrom": [
+            "BR-10",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An early ending is not undone. A further exclusion is a fresh recommendation from a fresh incident (BR-1, BR-12)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "suspension kal se khatam kar do — wapas aane ki shartein poori ho gayi hain",
+            "lang": "ur-Latn",
+            "gloss": "end the suspension from tomorrow — the conditions of return have been met"
+          },
+          "context": "Principal, Johar Town branch, on an active suspension.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.end.early",
+              "inputs": {
+                "suspension_id": "$request.suspension_phrase",
+                "ended_on": "tomorrow's date, as stated",
+                "reason": "The conditions of return have been met and the family has met with the Coordinator.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Both the date and the reason are the Principal's (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Ended early. Report that attendance is expected from tomorrow and the guardian has been told (PR-3) — a family that does not know will keep the child at home, and those days would then be unexplained absence."
+        },
+        {
+          "request": {
+            "text": "suspension khatam kar do",
+            "lang": "ur-Latn",
+            "gloss": "end the suspension"
+          },
+          "context": "Principal, Johar Town branch, with no date and no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.end.early",
+              "inputs": {
+                "suspension_id": "$request.suspension_phrase",
+                "ended_on": "$request.ended_on — absent",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask from which date the student is expected back and why the suspension is being cut short — and note that on the return date it ends by itself, so nothing needs doing if that is what was meant."
+        },
+        {
+          "request": {
+            "text": "suspension ghalat lagi thi, khatam kar do",
+            "lang": "ur-Latn",
+            "gloss": "the suspension was wrong, end it"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "suspension.end.early",
+              "inputs": {
+                "suspension_id": "$request.suspension_phrase",
+                "ended_on": "$request.ended_on",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The early ending is planned with the Principal's own reason (PR-4 governs the reply)."
+            }
+          ],
+          "outcome": "Report the distinction before recording it: ending early says the sanction stood and is now over, and the days already served stay coded suspended on the child's record. There is nothing here that unmakes a suspension — if the record should say it was wrongly applied, the reason is where that has to be said."
+        }
+      ]
+    }
+  ]
+}

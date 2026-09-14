@@ -1,0 +1,1462 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-25-01",
+    "name": "Define what each role may reach, and enforce it on every request rather than by hiding menu items",
+    "module": "Security",
+    "file": "../UseCases/UC-25-01.json",
+    "featureRef": "25.1 Role-based access control"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-25-01-PC-1",
+      "intent": {
+        "name": "role.create",
+        "summary": "Create a role and choose the permissions it holds, module by module.",
+        "routesHere": [
+          "create a Coordinator role that can approve results and see attendance",
+          {
+            "text": "naya role banana hai — Coordinator, results approve kar sake",
+            "lang": "ur-Latn",
+            "gloss": "we want a new role — Coordinator, able to approve results"
+          },
+          {
+            "text": "Accounts ka role bana dein fee module ki permissions ke saath",
+            "lang": "ur-Latn",
+            "gloss": "create an Accounts role with the fee module permissions"
+          },
+          {
+            "text": "ek role chahiye jo sirf dekh sake, kuch badal na sake",
+            "lang": "ur-Latn",
+            "gloss": "we want a role that can only view and change nothing"
+          },
+          "set up a role for the exam office"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye role bilkul mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete this role completely"
+            },
+            "goesTo": "role.deactivate — this use case.",
+            "note": "There is no delete. The audit trail references the role, and every entry recording what somebody did under it would point at nothing (BR-8, E9)."
+          },
+          {
+            "request": {
+              "text": "is user ko ye role de dein",
+              "lang": "ur-Latn",
+              "gloss": "give this user this role"
+            },
+            "goesTo": "branch.user.assign — UC-23-02, or branch.user.role.change where they are already assigned there.",
+            "note": "The role a user holds is held on their **branch assignment**, not on the user, so one person may hold different roles at different branches (BR-7). Assigning is done at the branch — by the Super Admin, or by the School Admin of that branch where the permission is delegated, and then only within their own branch, only to roles at or below their own, and only to permissions released to that branch (BR-2, BR-3, E2, E3, E4)."
+          },
+          {
+            "request": {
+              "text": "ek nayi permission bana dein",
+              "lang": "ur-Latn",
+              "gloss": "create a new permission"
+            },
+            "goesTo": "Not offered.",
+            "note": "Permissions are defined by the system and are not created by anybody — not by the Super Admin either. A role holds a set of the permissions that exist (BR-1)."
+          },
+          {
+            "request": {
+              "text": "menu se ye option chhupa dein",
+              "lang": "ur-Latn",
+              "gloss": "hide this option from the menu"
+            },
+            "goesTo": "Not access control.",
+            "note": "Hiding a menu item is decoration over an address anybody can type. The check runs on the server on every request, and a request without permission is refused whether it came from the menu or from a typed address (BR-4, BR-5, E5, A3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "role.create",
+            "inputs": {
+              "name": "$request.name",
+              "permission_ids": "$request.permissions_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The role and its permission set are recorded, and nobody holds it until a user is assigned to it at a branch (BR-2, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A duplicate name refuses the role, and a permission that does not exist is asked about rather than invented.",
+        "atomicity": "One write. **The role does nothing until somebody holds it**, and holding it happens on a branch assignment rather than here (BR-2, BR-7)."
+      },
+      "operations": [
+        {
+          "name": "role.create",
+          "method": "POST",
+          "path": "/api/v1/roles",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "role name, since a role name is unique and a double press must not leave two roles the school cannot tell apart",
+          "purpose": "Create a role with its permission set.",
+          "parameters": [
+            {
+              "name": "name",
+              "source": "request",
+              "sourceRef": "$request.name",
+              "required": true,
+              "type": "string",
+              "notes": "2 to 100 characters, unique (E1). The school's own name for the role — and whether roles are defined once across the group or separately per branch is an open question this use case raises and does not answer (OQ-2)."
+            },
+            {
+              "name": "permission_ids",
+              "source": "resolved",
+              "sourceRef": "$request.permissions_phrase",
+              "required": true,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "permission",
+                "fromPhrase": "$request.permissions_phrase",
+                "onNoMatch": "Refuse. No such permission exists. Permissions are defined by the system and are not created (BR-1).",
+                "onAmbiguous": "Ask, naming the permissions that match with the module each belongs to — two permissions in different modules often read almost the same."
+              },
+              "notes": "The permissions, chosen module by module. **Permissions themselves are defined by the system and are not created by anybody** — a permission that does not exist cannot be invented to fit a request (BR-1)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The role and what it can reach.",
+            "fields": [
+              {
+                "name": "role_id",
+                "type": "string",
+                "description": "The role."
+              },
+              {
+                "name": "permissions",
+                "type": "object[]",
+                "description": "What it holds, by module (BR-1)."
+              },
+              {
+                "name": "users_holding_it",
+                "type": "integer",
+                "description": "Zero. A role does nothing until a user is assigned to it at a branch (BR-2, BR-7)."
+              },
+              {
+                "name": "released_to_branches",
+                "type": "object[]",
+                "description": "None yet. Until a permission is released to a branch, a School Admin there cannot grant it (BR-3)."
+              },
+              {
+                "name": "assignable_by",
+                "type": "string[]",
+                "description": "The Super Admin always, and a School Admin where delegated — then only within their own branch and only to roles at or below their own (BR-2, BR-3)."
+              },
+              {
+                "name": "enforced_where",
+                "type": "string",
+                "description": "On the server, on every request, without exception. Not by hiding menu items (BR-4, BR-5, E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DUPLICATE_NAME",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "A role of the same name exists.",
+              "written": "Nothing.",
+              "notWritten": "The role is not created."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never invent a permission. They are defined by the system and created by nobody, so a request for something the permission list does not contain is answered by saying so rather than by picking the nearest thing (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never widen the permission set. Each permission added is something everybody who ever holds this role can reach, and it is far easier to grant than to take back (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the role does nothing yet. It is held on a branch assignment, and until somebody is assigned to it at a branch it grants nothing to anybody (BR-2, BR-7).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never describe hiding a menu item as restricting access. The check runs on the server on every request, and what is hidden is still reachable by typing the address — that is the distinction the whole use case turns on (BR-4, BR-5, E5).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that nothing has been released to any branch. Until the Super Admin releases a permission to a branch, no School Admin there can grant it to anybody (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "role.deactivate",
+        "statement": "A role created in error is deactivated once nobody holds it — and refused while anybody does, since a user with no role can do nothing (BR-8, E8, A5). It is never deleted, because the audit trail references it (E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Coordinator ka role bana dein jo results approve kar sake aur attendance dekh sake",
+            "lang": "ur-Latn",
+            "gloss": "create a Coordinator role that can approve results and see attendance"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "role.create",
+              "inputs": {
+                "name": "Coordinator",
+                "permission_ids": "$request.permissions_phrase → the two named, confirmed against the permission list",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the two they named (PR-2)."
+            }
+          ],
+          "outcome": "Confirm the exact permissions before creating — \"see attendance\" matches more than one permission in the attendance module and they are not the same thing. After: report that the role holds two permissions, that nobody holds it yet, and that no School Admin can grant it at any branch until the Super Admin releases those permissions to that branch."
+        },
+        {
+          "request": {
+            "text": "ek role bana dein jo sab kuch dekh sake lekin kuch badal na sake",
+            "lang": "ur-Latn",
+            "gloss": "create a role that can see everything and change nothing"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "role.create",
+              "inputs": {
+                "name": "asked",
+                "permission_ids": "$request.permissions_phrase → every view permission, listed back for confirmation",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The set is read back rather than assembled quietly (PR-2)."
+            }
+          ],
+          "outcome": "List what \"everything\" would include before creating it — every view permission across every module, including salaries, safeguarding notes and the audit trail, each of which is a permission in its own right. A read-only role that can see everything is still a role that can see everything, and it is easier to grant than to take back."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-25-01-PC-2",
+      "intent": {
+        "name": "role.permissions.update",
+        "summary": "Add or remove permissions on a role. Everybody holding it is affected at once.",
+        "routesHere": [
+          "give the Coordinator role permission to see the fee ledger",
+          {
+            "text": "Coordinator role mein fee ledger ki permission bhi daal dein",
+            "lang": "ur-Latn",
+            "gloss": "add the fee ledger permission to the Coordinator role too"
+          },
+          {
+            "text": "is role se salary dekhne ki permission hata dein",
+            "lang": "ur-Latn",
+            "gloss": "remove the salary viewing permission from this role"
+          },
+          {
+            "text": "is role ki permissions kam kar dein",
+            "lang": "ur-Latn",
+            "gloss": "cut back this role's permissions"
+          },
+          "trim the permissions on the exam office role"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "sirf ek user ke liye permission barha dein",
+              "lang": "ur-Latn",
+              "gloss": "increase the permission for one user only"
+            },
+            "goesTo": "Not offered.",
+            "note": "Permissions are held by the role, not by the person. Changing them here changes what **everybody** holding the role can reach — a single person needing something different needs a different role (BR-1, BR-7)."
+          },
+          {
+            "request": {
+              "text": "nayi permission bana dein",
+              "lang": "ur-Latn",
+              "gloss": "create a new permission"
+            },
+            "goesTo": "Not offered.",
+            "note": "Permissions are defined by the system and created by nobody (BR-1)."
+          },
+          {
+            "request": {
+              "text": "apni khud ki role administration hata dein",
+              "lang": "ur-Latn",
+              "gloss": "remove your own role administration"
+            },
+            "goesTo": "Refused.",
+            "note": "The Super Admin cannot revoke their own ability to administer roles, since nobody could then restore it (BR-9, E10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "role.permissions.update",
+            "inputs": {
+              "role_id": "$request.role_phrase",
+              "add_permission_ids": "$request.add_permissions_phrase",
+              "remove_permission_ids": "$request.remove_permissions_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it takes effect on the next request every holder makes — the check runs on the server on every request (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. A permission that does not exist is asked about rather than invented, and an attempt to remove the Super Admin's own role administration refuses the whole change (E10).",
+        "atomicity": "One write, and it changes what every user holding the role can reach from their next request onward (BR-4). Nobody is signed out and nothing warns them."
+      },
+      "operations": [
+        {
+          "name": "role.permissions.update",
+          "method": "PATCH",
+          "path": "/api/v1/roles/{role_id}/permissions",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "role_id + the permissions added and removed, so a double press does not record the same change twice",
+          "purpose": "Add or remove permissions on a role.",
+          "parameters": [
+            {
+              "name": "role_id",
+              "source": "resolved",
+              "sourceRef": "$request.role_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "role",
+                "fromPhrase": "$request.role_phrase",
+                "onNoMatch": "Refuse. No role of that name exists.",
+                "onAmbiguous": "Ask, naming the roles that match with how many users hold each and how many permissions each carries."
+              },
+              "notes": "The role, named the way the school names it."
+            },
+            {
+              "name": "add_permission_ids",
+              "source": "resolved",
+              "sourceRef": "$request.add_permissions_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "permission",
+                "fromPhrase": "$request.add_permissions_phrase",
+                "onNoMatch": "Refuse. No such permission exists. Permissions are defined by the system (BR-1).",
+                "onAmbiguous": "Ask, naming the permissions that match with the module each belongs to."
+              },
+              "notes": "Permissions being added. Each one is something **everybody** holding this role can now reach (BR-1)."
+            },
+            {
+              "name": "remove_permission_ids",
+              "source": "resolved",
+              "sourceRef": "$request.remove_permissions_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "permission",
+                "fromPhrase": "$request.remove_permissions_phrase",
+                "onNoMatch": "Refuse. No such permission exists.",
+                "onAmbiguous": "Ask, naming the permissions the role currently holds."
+              },
+              "notes": "Permissions being removed. Each one is something everybody holding this role will stop being able to reach on their next request (BR-4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What changed and who it changes it for.",
+            "fields": [
+              {
+                "name": "role_id",
+                "type": "string",
+                "description": "The role."
+              },
+              {
+                "name": "added",
+                "type": "object[]",
+                "description": "Permissions now held."
+              },
+              {
+                "name": "removed",
+                "type": "object[]",
+                "description": "Permissions no longer held."
+              },
+              {
+                "name": "users_affected",
+                "type": "integer",
+                "description": "**Everybody holding this role**, at every branch. They are not signed out and nothing tells them (BR-2, BR-7)."
+              },
+              {
+                "name": "takes_effect",
+                "type": "string",
+                "description": "On each holder's next request. The check runs on the server on every request, so there is no cached permission to wait out (BR-4)."
+              },
+              {
+                "name": "released_permissions_now_grantable",
+                "type": "object[]",
+                "description": "Added permissions already released to a branch, which a School Admin there can now grant to others (BR-3)."
+              },
+              {
+                "name": "permissions_now_held",
+                "type": "integer",
+                "description": "What the role carries in total after the change. Nothing here removes a permission that is no longer needed unless somebody names it (BR-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SUPER_ADMIN_SELF_REVOKE",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The Super Admin attempted to revoke their own role administration.",
+              "written": "Nothing.",
+              "notWritten": "The role is unchanged.",
+              "note": "Nobody could then restore it (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say how many people this changes it for. A permission added to a role is added to everybody holding it at every branch at once, and the request usually comes from one person's problem (BR-2, BR-7).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that a removal bites immediately and silently. The check runs on the server on every request, so somebody mid-task loses access on their next click with no warning and no sign-out (BR-4, BR-5).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never invent a permission to fit the request. They are defined by the system, and the nearest-sounding one in another module is a different permission (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say what the role now carries in total. Nothing takes a permission back on its own, so a role only ever grows unless somebody names what should come off (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never remove the Super Admin's own role administration. Nobody could restore it, and the refusal is the last safeguard rather than an obstacle (BR-9, E10).",
+          "derivedFrom": [
+            "BR-9",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no undo. Removing a permission again is another change and both are on the audit trail — and anything anybody reached in between, they reached (BR-4)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Coordinator role mein fee ledger dekhne ki permission daal dein",
+            "lang": "ur-Latn",
+            "gloss": "add the fee ledger viewing permission to the Coordinator role"
+          },
+          "context": "Super Admin, 14 users hold the Coordinator role across two branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "role.permissions.update",
+              "inputs": {
+                "role_id": "$request.role_phrase → Coordinator",
+                "add_permission_ids": "$request.add_permissions_phrase → Finance — read the ledger",
+                "remove_permission_ids": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One permission, to everybody who holds the role (PR-1)."
+            }
+          ],
+          "outcome": "Before adding: this gives the fee ledger to all 14 coordinators at both campuses, not to the one who asked. If only one person needs it, a different role is the route. After: it takes effect on each of their next requests — nobody is signed out and nobody is told — and the role now carries 12 permissions in total."
+        },
+        {
+          "request": {
+            "text": "is role se salary dekhne ki permission hata dein, foran",
+            "lang": "ur-Latn",
+            "gloss": "remove the salary viewing permission from this role, immediately"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "role.permissions.update",
+              "inputs": {
+                "role_id": "$request.role_phrase → the role named",
+                "add_permission_ids": "omitted",
+                "remove_permission_ids": "$request.remove_permissions_phrase → HR — view salary",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Removal bites on the next request (PR-2)."
+            }
+          ],
+          "outcome": "Removed. It takes effect on the next request each holder makes — there is no cached permission to wait out, and somebody with a salary screen open right now will be refused the moment they touch it. Nothing warns them, and nothing takes back what has already been seen."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-25-01-PC-3",
+      "intent": {
+        "name": "permission.branch.release",
+        "summary": "Release a permission to a branch, so that branch's School Admin may grant it.",
+        "routesHere": [
+          "release the fee ledger permission to the Johar Town branch",
+          {
+            "text": "ye permission Johar Town branch ko release kar dein",
+            "lang": "ur-Latn",
+            "gloss": "release this permission to the Johar Town branch"
+          },
+          {
+            "text": "School Admin ko ye permission dene ki ijazat de dein",
+            "lang": "ur-Latn",
+            "gloss": "let the School Admin be able to grant this permission"
+          },
+          "let the branch grant the attendance permissions themselves"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "School Admin khud release kar lein",
+              "lang": "ur-Latn",
+              "gloss": "let the School Admin release it themselves"
+            },
+            "goesTo": "Refused.",
+            "note": "A School Admin cannot grant themselves or anybody else a permission the Super Admin has not released to that branch. Releasing is the Super Admin's (BR-3, E4)."
+          },
+          {
+            "request": {
+              "text": "sab branches ko de dein",
+              "lang": "ur-Latn",
+              "gloss": "release it to all the branches"
+            },
+            "goesTo": "Possible, and say what it means.",
+            "note": "Each branch it is released to is a branch whose School Admin can hand this permission to anybody at or below their own role, without asking anybody (BR-2, BR-3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "permission.branch.release",
+            "inputs": {
+              "role_id": "$request.role_phrase",
+              "permission_id": "$request.permission_phrase",
+              "release_branch_id": "$request.branch_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It does not grant the permission to anybody — it makes it grantable at that branch by its own School Admin (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. A permission the role does not hold cannot be released for it, and a branch nobody matches is asked about rather than assumed.",
+        "atomicity": "One write. **Nobody gains anything by this** — it changes who may hand the permission out, not who holds it (BR-3)."
+      },
+      "operations": [
+        {
+          "name": "permission.branch.release",
+          "method": "POST",
+          "path": "/api/v1/roles/{role_id}/released-permissions",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "role + permission + branch, since a permission is released to a branch once",
+          "purpose": "Release a permission to a branch so its School Admin may grant it.",
+          "parameters": [
+            {
+              "name": "role_id",
+              "source": "resolved",
+              "sourceRef": "$request.role_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "role",
+                "fromPhrase": "$request.role_phrase",
+                "onNoMatch": "Refuse. No role of that name exists.",
+                "onAmbiguous": "Ask, naming the roles that match with how many users hold each and how many permissions each carries."
+              },
+              "notes": "The role the permission belongs to."
+            },
+            {
+              "name": "permission_id",
+              "source": "resolved",
+              "sourceRef": "$request.permission_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "permission",
+                "fromPhrase": "$request.permission_phrase",
+                "onNoMatch": "Refuse. No such permission, or the role does not hold it.",
+                "onAmbiguous": "Ask, naming the permissions this role holds with the module each belongs to."
+              },
+              "notes": "The permission being released. It must be one the role holds (BR-1)."
+            },
+            {
+              "name": "release_branch_id",
+              "source": "resolved",
+              "sourceRef": "$request.branch_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "branch",
+                "fromPhrase": "$request.branch_phrase",
+                "onNoMatch": "Refuse. No active branch matches.",
+                "onAmbiguous": "Ask, naming the branches with their codes."
+              },
+              "notes": "The branch it is released to. A School Admin there may then grant it, within their own branch and to roles at or below their own (BR-3)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who can now hand this out, and to whom.",
+            "fields": [
+              {
+                "name": "release_id",
+                "type": "string",
+                "description": "The release."
+              },
+              {
+                "name": "permission",
+                "type": "string",
+                "description": "What was released."
+              },
+              {
+                "name": "branch",
+                "type": "string",
+                "description": "Where it was released to."
+              },
+              {
+                "name": "grantable_by",
+                "type": "string",
+                "description": "That branch's School Admin, within their own branch and only to roles at or below their own (BR-3, E2, E3)."
+              },
+              {
+                "name": "nobody_gained_it",
+                "type": "boolean",
+                "description": "True. Releasing makes a permission grantable, not granted (BR-3)."
+              },
+              {
+                "name": "role_hierarchy",
+                "type": "string",
+                "description": "Which roles count as at or below a School Admin's own is **not defined anywhere** — the delegation rule depends on it and the use case raises it unanswered (BR-3, OQ-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_RELEASED_ELSEWHERE",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "A School Admin attempted to grant a permission not released to their branch.",
+              "written": "Nothing.",
+              "notWritten": "The permission is not granted.",
+              "note": "A School Admin cannot grant what the Super Admin has not released (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say that nobody has gained anything. Releasing makes a permission grantable at that branch; it does not give it to a single person (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say who can now hand it out and to whom. That branch's School Admin may grant it to anybody at or below their own role, without asking the Super Admin again — which is the point and also the exposure (BR-2, BR-3).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the hierarchy this depends on is undefined. \"Roles at or below their own\" is the whole limit on delegation and nothing in the system defines the ordering (BR-3, OQ-1).",
+          "derivedFrom": [
+            "BR-3",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never release to more branches than were asked for. Each is a campus where a School Admin can hand this out unsupervised (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "The use case describes releasing a permission to a branch and describes no withdrawal of a release. Anything a School Admin granted while it was released stays granted, so this is a decision worth making once carefully (BR-3)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "fee ledger ki permission Johar Town ko release kar dein",
+            "lang": "ur-Latn",
+            "gloss": "release the fee ledger permission to Johar Town"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "permission.branch.release",
+              "inputs": {
+                "role_id": "$request.role_phrase → Coordinator",
+                "permission_id": "$request.permission_phrase → Finance — read the ledger",
+                "release_branch_id": "$request.branch_phrase → Lahore — Johar Town campus",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One branch, one permission (PR-4)."
+            }
+          ],
+          "outcome": "Released. Nobody has gained it — Johar Town's School Admin can now hand it to anybody at or below their own role there, without asking again. Two things worth saying: which roles count as at or below their own is defined nowhere in the system, and the use case describes releasing and describes no way to withdraw a release."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-25-01-PC-4",
+      "intent": {
+        "name": "role.deactivate",
+        "summary": "Retire a role nobody holds. It stays readable, because the audit trail references it.",
+        "routesHere": [
+          "deactivate the old exam office role, nobody holds it now",
+          {
+            "text": "ye purana role band kar dein, koi ise nahi rakhta",
+            "lang": "ur-Latn",
+            "gloss": "deactivate this old role, nobody holds it"
+          },
+          {
+            "text": "is role ki ab zaroorat nahi",
+            "lang": "ur-Latn",
+            "gloss": "this role is no longer needed"
+          },
+          "retire the role we replaced last term"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "role bilkul mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete the role entirely"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is no delete. The audit trail references the role, and every entry recording what somebody did under it would point at nothing (BR-8, E9)."
+          },
+          {
+            "request": {
+              "text": "users abhi bhi ise rakhte hain, phir bhi band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "users still hold it, deactivate it anyway"
+            },
+            "goesTo": "Refused.",
+            "note": "It is refused while any user holds it, since a user with no role can do nothing (BR-8, E8, A5). They are reassigned first."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "role.deactivate",
+            "inputs": {
+              "role_id": "$request.role_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, refused while anybody holds it. The role stays readable afterwards (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. Users still holding the role refuse the whole deactivation, and it stays exactly as it was (E8).",
+        "atomicity": "One state change. **Nothing is removed** — the audit trail references the role, and every entry recording what somebody did under it needs it to stay readable (BR-8, E9)."
+      },
+      "operations": [
+        {
+          "name": "role.deactivate",
+          "method": "POST",
+          "path": "/api/v1/roles/{role_id}/deactivate",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "role_id, since a role is deactivated once and a repeat is the same state",
+          "purpose": "Deactivate a role that no user holds.",
+          "parameters": [
+            {
+              "name": "role_id",
+              "source": "resolved",
+              "sourceRef": "$request.role_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "role",
+                "fromPhrase": "$request.role_phrase",
+                "onNoMatch": "Refuse. No active role of that name exists.",
+                "onAmbiguous": "Ask, naming the roles that match with how many users hold each and how many permissions each carries."
+              },
+              "notes": "The role, named the way the school names it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What stops and what stays.",
+            "fields": [
+              {
+                "name": "role_id",
+                "type": "string",
+                "description": "The role."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Deactivated. Never deleted (BR-8, E9)."
+              },
+              {
+                "name": "users_holding_it",
+                "type": "integer",
+                "description": "Must be zero. A user left with no role can do nothing, so they are reassigned first (BR-8, E8, A5)."
+              },
+              {
+                "name": "audit_entries_referencing_it",
+                "type": "integer",
+                "description": "Entries recording what people did while holding this role. They stay readable because the role does (BR-8)."
+              },
+              {
+                "name": "released_permissions",
+                "type": "object[]",
+                "description": "Branches this role's permissions were released to. Nothing here withdraws a release, and the use case describes none (BR-3)."
+              },
+              {
+                "name": "permissions",
+                "type": "object[]",
+                "description": "What it held, kept on the record."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "USERS_HOLD_IT",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "Users still hold the role.",
+              "written": "Nothing.",
+              "notWritten": "The role stays active.",
+              "note": "They are reassigned first — a user with no role can do nothing (BR-8)."
+            },
+            {
+              "code": "DELETE_ATTEMPTED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "Deletion was attempted rather than deactivation.",
+              "written": "Nothing.",
+              "notWritten": "There is no such control.",
+              "note": "The audit trail references the role (BR-8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say who still holds it before anything else. The deactivation is refused while a single user does, and each of them has to be moved to another role first — a user left with none can do nothing at all (BR-8, E8, A5).",
+          "derivedFrom": [
+            "BR-8",
+            "E8",
+            "A5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that nothing is removed. Every audit entry recording what somebody did while holding this role needs the role to stay readable (BR-8, E9).",
+          "derivedFrom": [
+            "BR-8",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name the branches its permissions were released to. Nothing withdraws a release and the use case describes no route for it, so those releases outlive the role (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "role.reactivate",
+        "statement": "It is brought back into use with its permission set intact. Nothing was lost (BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "purana exam office ka role band kar dein",
+            "lang": "ur-Latn",
+            "gloss": "deactivate the old exam office role"
+          },
+          "context": "Super Admin, 3 users still hold it.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "role.deactivate",
+              "inputs": {
+                "role_id": "$request.role_phrase → Exam office",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused on the users holding it (PR-1)."
+            }
+          ],
+          "outcome": "It cannot be deactivated: three people still hold it, and taking it away would leave them with no role and able to do nothing. Move all three to another role first. Note also that this role's permissions were released to two branches and nothing withdraws a release — those outlive the role."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-25-01-PC-5",
+      "intent": {
+        "name": "role.reactivate",
+        "summary": "Bring a deactivated role back into use, with its permission set intact.",
+        "routesHere": [
+          "bring back the exam office role, we need it again",
+          {
+            "text": "wo role dobara chalu kar dein",
+            "lang": "ur-Latn",
+            "gloss": "reactivate that role"
+          },
+          {
+            "text": "galti se band kar diya tha, wapas laa dein",
+            "lang": "ur-Latn",
+            "gloss": "it was deactivated by mistake, bring it back"
+          },
+          "reactivate the retired coordinator role"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "naya role bana dein isi naam se",
+              "lang": "ur-Latn",
+              "gloss": "create a new role with the same name"
+            },
+            "goesTo": "role.create — this use case, and it will be refused.",
+            "note": "A deactivated role still holds its name, so a new one of the same name is refused (E1). Reactivating keeps the permission set and the history."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "role.reactivate",
+            "inputs": {
+              "role_id": "$request.role_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The role is assignable again with exactly the permissions it had."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One state change. The permission set comes back **as it was** — including anything added shortly before it was retired, which is worth reading before anybody is assigned to it (BR-1)."
+      },
+      "operations": [
+        {
+          "name": "role.reactivate",
+          "method": "POST",
+          "path": "/api/v1/roles/{role_id}/reactivate",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "role_id, since a role is reactivated once and a repeat is the same state",
+          "purpose": "Bring a deactivated role back into use.",
+          "parameters": [
+            {
+              "name": "role_id",
+              "source": "resolved",
+              "sourceRef": "$request.role_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "role",
+                "fromPhrase": "$request.role_phrase",
+                "onNoMatch": "Refuse. No deactivated role of that name exists. Deactivated roles are named here just as active ones are.",
+                "onAmbiguous": "Ask, naming the roles that match with how many users hold each and how many permissions each carries."
+              },
+              "notes": "The role, named the way the school names it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What comes back.",
+            "fields": [
+              {
+                "name": "role_id",
+                "type": "string",
+                "description": "The role."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Active."
+              },
+              {
+                "name": "permissions",
+                "type": "object[]",
+                "description": "Exactly what it held when it was retired. Nothing revisits them on the way back (BR-1)."
+              },
+              {
+                "name": "permission_count",
+                "type": "integer",
+                "description": "How many, which is worth reading against what the role is being brought back to do (BR-1)."
+              },
+              {
+                "name": "released_to_branches",
+                "type": "object[]",
+                "description": "Branches its permissions were released to, still in force. Nothing withdrew them while the role was inactive (BR-3)."
+              },
+              {
+                "name": "users_holding_it",
+                "type": "integer",
+                "description": "Zero. The role had to be empty before it could be deactivated (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_SUCH_ROLE",
+              "mapsTo": "E1",
+              "httpStatus": 404,
+              "meaning": "No deactivated role of that name exists.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is reactivated."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Read the permission set back before anybody is assigned to it. It returns exactly as it was, including whatever was added in its last months, and nothing revisits it on the way back (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that its branch releases are still in force. Nothing withdrew them while the role was inactive, so the School Admins who could grant it before can grant it again immediately (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that nobody holds it. The role had to be empty before it could be retired, so bringing it back grants nothing to anybody until somebody is assigned to it at a branch (BR-2, BR-7, BR-8).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-7",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "role.deactivate",
+        "statement": "It is retired again, once nobody holds it. Nothing is lost either way (BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "exam office wala role dobara chalu kar dein",
+            "lang": "ur-Latn",
+            "gloss": "reactivate the exam office role"
+          },
+          "context": "Super Admin, role deactivated two years ago.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "role.reactivate",
+              "inputs": {
+                "role_id": "$request.role_phrase → Exam office",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One state change (PR-1)."
+            }
+          ],
+          "outcome": "Active again, with exactly the eleven permissions it held two years ago — read those before assigning anybody, because nothing revisited them on the way back. Its permissions are still released to two branches, so those School Admins can grant this role again from now. Nobody holds it: it had to be empty before it could be retired."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-25-01-PC-6",
+      "intent": {
+        "name": "roles.read",
+        "summary": "See what each role may reach, who holds it, and which roles nobody holds.",
+        "routesHere": [
+          "what can the Coordinator role reach?",
+          {
+            "text": "Coordinator role kya kya kar sakta hai?",
+            "lang": "ur-Latn",
+            "gloss": "what can the Coordinator role do?"
+          },
+          {
+            "text": "salary dekhne ki permission kis kis role ke paas hai?",
+            "lang": "ur-Latn",
+            "gloss": "which roles hold the salary viewing permission?"
+          },
+          {
+            "text": "kaunse roles ko koi nahi rakhta?",
+            "lang": "ur-Latn",
+            "gloss": "which roles does nobody hold?"
+          },
+          "list the permissions released to the Johar Town branch"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is user ke paas kya permissions hain?",
+              "lang": "ur-Latn",
+              "gloss": "what permissions does this user have?"
+            },
+            "goesTo": "branch.assignments.read — UC-23-02, for the role they hold at a branch.",
+            "note": "A user holds a role on a **branch assignment**, so what they can do depends on which branch they are in (BR-7, A4). One person may hold different roles at different branches."
+          },
+          {
+            "request": {
+              "text": "kis kis ne mana ki hui request ki thi?",
+              "lang": "ur-Latn",
+              "gloss": "who has had requests refused?"
+            },
+            "goesTo": "Not offered here.",
+            "note": "Refusals are recorded — and the report distinguishes one from a typed address from one through the menu — but nothing acts on the difference, and reading the record is the audit trail's (OQ-4)."
+          },
+          {
+            "request": {
+              "text": "permissions ki list badal dein",
+              "lang": "ur-Latn",
+              "gloss": "change the list of permissions"
+            },
+            "goesTo": "Not offered.",
+            "note": "Permissions are defined by the system and created by nobody. What a role holds is changed with role.permissions.update (BR-1)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "roles.read",
+            "inputs": {
+              "role_phrase": "$request.role_phrase",
+              "permission_phrase": "$request.permission_phrase",
+              "status": "$request.status",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. Nothing about any role changes and nobody's access moves."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written, and a deactivated role is still in what it reads — the audit trail references it (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "roles.read",
+          "method": "GET",
+          "path": "/api/v1/roles",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List roles with their permissions, holders and status.",
+          "parameters": [
+            {
+              "name": "role_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.role_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "role",
+                "fromPhrase": "$request.role_phrase",
+                "onNoMatch": "Refuse. No role of that name exists.",
+                "onAmbiguous": "Ask, naming the roles that match."
+              },
+              "notes": "Where the question is about one role."
+            },
+            {
+              "name": "permission_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.permission_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "permission",
+                "fromPhrase": "$request.permission_phrase",
+                "onNoMatch": "Refuse. No such permission exists. Permissions are defined by the system (BR-1).",
+                "onAmbiguous": "Ask, naming the permissions that match with the module each belongs to."
+              },
+              "notes": "Where the question is the other way round — which roles hold a particular permission."
+            },
+            {
+              "name": "status",
+              "source": "request",
+              "sourceRef": "$request.status",
+              "required": false,
+              "type": "string",
+              "notes": "Active or deactivated. A deactivated role is out of the answer unless the question reaches for it — it is never deleted, because the audit trail references it (BR-8)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What each role reaches and who is behind it.",
+            "fields": [
+              {
+                "name": "roles",
+                "type": "object[]",
+                "description": "Name, permissions by module, users holding it, and status."
+              },
+              {
+                "name": "who_holds_it",
+                "type": "object[]",
+                "description": "By branch. The role is held on a branch assignment, so the same role at two campuses is two sets of people (BR-7)."
+              },
+              {
+                "name": "permission_count",
+                "type": "object[]",
+                "description": "How many permissions each role carries. Nothing takes one back on its own, so a role only ever grows unless somebody names what should come off (BR-1)."
+              },
+              {
+                "name": "held_by_nobody",
+                "type": "object[]",
+                "description": "Roles no user holds. These can be deactivated, and until they are they stay grantable (BR-8)."
+              },
+              {
+                "name": "released_permissions",
+                "type": "object[]",
+                "description": "Which of each role's permissions are released to which branches, and therefore grantable by that branch's School Admin without asking again (BR-3)."
+              },
+              {
+                "name": "enforcement",
+                "type": "string",
+                "description": "Server-side, on every request, without exception — not by hiding menu items. What a role can reach is what these permissions say, whether the user uses the menu or types the address (BR-4, BR-5, E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the role configuration.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned.",
+              "note": "The same message is returned whatever the reason, so a refusal does not confirm that the record exists (BR-6, E6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Answer \"what can this role do\" with the permissions, not with the menu. What a role reaches is what these permissions say — the menu is decoration over addresses anybody can type (BR-4, BR-5, E5).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Answer the permission question both ways round. \"Which roles can see salaries\" is the question that finds the role nobody meant to give it to, and it is not answerable from a list of roles (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say which permissions are released to which branches. Those are the ones a School Admin can hand out without asking the Super Admin again, and they are invisible in a plain list of what a role holds (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Give holders by branch. One person may hold different roles at different campuses, so a count of holders is not a count of people (BR-7, A4).",
+          "derivedFrom": [
+            "BR-7",
+            "A4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Name the roles nobody holds. Each one is still grantable and still carries whatever it accumulated, and nothing surfaces them (BR-1, BR-8).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "salary dekhne ki permission kis kis role ke paas hai?",
+            "lang": "ur-Latn",
+            "gloss": "which roles hold the salary viewing permission?"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "roles.read",
+              "inputs": {
+                "role_phrase": "omitted",
+                "permission_phrase": "$request.permission_phrase → HR — view salary",
+                "status": "Active",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The question asked from the permission's side (PR-2)."
+            }
+          ],
+          "outcome": "Give every role holding it with the number of people in each, by branch. Then the part that matters more: which of those roles have this permission **released to a branch**, because at those campuses a School Admin can hand the role — and therefore salary visibility — to anybody at or below their own role without asking again."
+        },
+        {
+          "request": {
+            "text": "Coordinator role kya kya kar sakta hai?",
+            "lang": "ur-Latn",
+            "gloss": "what can the Coordinator role do?"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "roles.read",
+              "inputs": {
+                "role_phrase": "$request.role_phrase → Coordinator",
+                "permission_phrase": "omitted",
+                "status": "Active",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One role (PR-1)."
+            }
+          ],
+          "outcome": "List the permissions by module — that is what the role can reach, on the server, on every request, whether the user goes through the menu or types the address. Give the holders by branch, and say which of these permissions are released to which branches, since those are the ones a School Admin can pass on without asking anybody."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1106 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-05-01",
+  "featureRef": "5.1 Manual / session-based attendance marking",
+  "name": "Mark daily attendance for a class, and correct a mark when the day turns out differently",
+  "module": "Attendance",
+  "alsoAffectsModules": [
+    "Student",
+    "Messaging (SMS, WhatsApp, Email)"
+  ],
+  "priority": "MVP",
+  "priorityReason": "The school's daily record of who was in the building. Alerts, reporting and safeguarding all read it.",
+  "goal": {
+    "actor": "a Teacher",
+    "capability": "to record who was present, absent, late or on leave, and put a mark right when a child arrives later",
+    "outcome": "the day's record is accurate, and every change to it can be traced to whoever made it"
+  },
+  "primaryActor": "Teacher",
+  "secondaryActors": [
+    {
+      "actor": "Coordinator / Staff",
+      "involvement": "Marks on a teacher's behalf, and makes corrections once the teacher's window has closed."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "involvement": "Is informed of the result, and is not told twice when a mark is corrected."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "scheduled",
+        "description": "A class unmarked past the configured time is flagged to the Coordinator (BR-11).",
+        "source": "Attendance scheduler"
+      },
+      {
+        "type": "event",
+        "description": "A leave request is approved, which pre-applies the mark on the roster.",
+        "source": "UC-05-11"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "The class and section exist and hold placed students.",
+      "establishedBy": {
+        "id": "UC-27-03",
+        "name": "Class placement of an admitted student",
+        "link": "UC-27-03.json"
+      }
+    },
+    {
+      "condition": "An authenticated session exists and the acting user is the class incharge, a Coordinator or Staff.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "The date is a working day. An off-day or holiday is not marked at all (BR-3).",
+      "establishedBy": {
+        "id": "UC-05-04",
+        "name": "Off-day and holiday calendar",
+        "link": "UC-05-04.json"
+      }
+    },
+    {
+      "condition": "Any approved leave for the date has been applied to the roster.",
+      "establishedBy": {
+        "id": "UC-05-11",
+        "name": "Student leave request and approval",
+        "link": "UC-05-11.json"
+      }
+    }
+  ],
+  "postConditions": [
+    "Every student on the roster carries a mark for the date — present, absent, late or on leave — with nobody left unmarked.",
+    "Approved leave was applied before the teacher began, so a child on sanctioned leave is not marked absent by mistake.",
+    "Absences have been passed to the alert route, so parents learn their child is missing while it still matters.",
+    "Any correction carries who made it, when, and what it was changed from, and the original mark stays visible.",
+    "A student marked absent who arrived later reads as late or present, and the parent has not been told twice.",
+    "The day's record is available to reporting, to the parent portal and to anyone asking who was in the building.",
+    "Nothing was marked for a day the school was closed.",
+    "A class left unmarked is visible as unmarked rather than silently reading as everybody present."
+  ],
+  "screens": [
+    {
+      "name": "Mark attendance",
+      "route": "/attendance/mark",
+      "sidebar": "Attendance",
+      "columns": [
+        "Roll number",
+        "Student",
+        "Present",
+        "Absent",
+        "Late",
+        "On leave",
+        "Note"
+      ],
+      "defaultSort": "Roll number ascending",
+      "filters": [
+        "Class",
+        "Section",
+        "Date"
+      ],
+      "actions": [
+        "Select class and date",
+        "Mark all present",
+        "Save",
+        "Correct a mark"
+      ],
+      "visibleTo": [
+        "Teacher",
+        "Coordinator",
+        "Staff",
+        "School Admin"
+      ]
+    },
+    {
+      "name": "Attendance for the day",
+      "route": "/attendance/day",
+      "sidebar": "Attendance",
+      "columns": [
+        "Class",
+        "Section",
+        "Class incharge",
+        "Marked at",
+        "Present",
+        "Absent",
+        "Late",
+        "On leave",
+        "Status"
+      ],
+      "defaultSort": "Class order, then section",
+      "filters": [
+        "Date",
+        "Unmarked only",
+        "Class"
+      ],
+      "actions": [
+        "Open",
+        "Chase unmarked",
+        "Print",
+        "Export"
+      ],
+      "visibleTo": [
+        "Coordinator",
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Correction history",
+      "route": "/attendance/{id}/history",
+      "sidebar": "Attendance",
+      "columns": [
+        "Time",
+        "Student",
+        "Changed from",
+        "Changed to",
+        "Changed by",
+        "Reason"
+      ],
+      "defaultSort": "Time, newest first",
+      "visibleTo": [
+        "Coordinator",
+        "School Admin",
+        "Principal / Director"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Class",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "A class the acting user may mark.",
+      "example": "Grade 4",
+      "lookupSource": "Classes in the user's remit"
+    },
+    {
+      "name": "Section",
+      "type": "lookup",
+      "required": "yes",
+      "example": "Section B",
+      "lookupSource": "Sections of the chosen class"
+    },
+    {
+      "name": "Date",
+      "type": "date",
+      "required": "yes",
+      "validation": "Not in the future, and not an off-day or holiday. Backdating beyond the configured window needs the Coordinator (BR-4).",
+      "default": "Today",
+      "example": "28-09-2026"
+    },
+    {
+      "name": "Mark",
+      "type": "enum",
+      "required": "yes",
+      "validation": "Per student. Every student on the roster carries one (BR-2).",
+      "example": "Present",
+      "enumValues": [
+        "Present",
+        "Absent",
+        "Late",
+        "On leave"
+      ]
+    },
+    {
+      "name": "Note",
+      "type": "text",
+      "required": "no",
+      "validation": "Maximum 250 characters per student. Anything the mark alone does not explain.",
+      "example": "Arrived at 09:20 after a doctor's appointment."
+    },
+    {
+      "name": "Marked by",
+      "type": "generated",
+      "required": "no",
+      "validation": "The user who saved the marks.",
+      "example": "Imran Sultan"
+    },
+    {
+      "name": "Marked at",
+      "type": "generated",
+      "required": "no",
+      "validation": "When they were saved. The correction window runs from here (BR-5).",
+      "example": "28-09-2026 08:42"
+    },
+    {
+      "name": "Correction reason",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 250 characters. Required for every correction, whoever makes it (BR-7).",
+      "example": "Arrived at 09:20; marked absent at registration.",
+      "requiredWhen": "A saved mark is being changed"
+    },
+    {
+      "name": "Changed from",
+      "type": "generated",
+      "required": "no",
+      "validation": "The previous mark, kept alongside the new one (BR-7).",
+      "example": "Absent"
+    },
+    {
+      "name": "Status",
+      "type": "generated",
+      "required": "no",
+      "validation": "See the lifecycle below.",
+      "default": "Unmarked",
+      "example": "Marked"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Attendance record",
+      "operations": [
+        "create",
+        "read",
+        "update"
+      ],
+      "notes": "One per student per date. The mark changes; the record is never deleted (BR-7)."
+    },
+    {
+      "entity": "Attendance correction",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "One row per change, with the previous mark, the reason and who made it. Append only."
+    },
+    {
+      "entity": "Student",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read for the roster of the class and section."
+    },
+    {
+      "entity": "Leave request",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read to pre-apply approved leave before the teacher marks (BR-6)."
+    },
+    {
+      "entity": "Off-day calendar",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read to refuse marking on a day the school is closed (BR-3)."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Every save and every correction."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "Teacher",
+      "actions": [
+        "view",
+        "create",
+        "edit"
+      ],
+      "rowScope": "Only their own assigned sections.",
+      "notes": "Marks their class and may correct their own marks within the correction window (BR-5)."
+    },
+    {
+      "actor": "Coordinator",
+      "actions": [
+        "view",
+        "create",
+        "edit"
+      ],
+      "rowScope": "Classes in their remit.",
+      "notes": "Marks on a teacher's behalf, and makes corrections once the teacher's window has closed."
+    },
+    {
+      "actor": "Staff",
+      "actions": [
+        "view",
+        "create",
+        "edit"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Marks on a teacher's behalf where the teacher is absent."
+    },
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "edit"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Corrects any mark, and reviews the correction history."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches.",
+      "notes": "Reviews attendance and corrections."
+    },
+    {
+      "actor": "Parent / Guardian",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own children only.",
+      "notes": "Sees their child's marks in the portal. Cannot change them."
+    },
+    {
+      "actor": "Student",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own marks only."
+    },
+    {
+      "actor": "Accounts",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access to student attendance."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "Attendance is marked against a class, a section and a date. A mark that does not name all three cannot be read back."
+    },
+    {
+      "id": "BR-2",
+      "rule": "Every student on the roster carries a mark. A student left unmarked is not the same as a student marked present, and the difference matters when somebody asks who was in the building."
+    },
+    {
+      "id": "BR-3",
+      "rule": "No attendance is marked on an off-day or a holiday. A day the school was closed is not a day anybody was absent."
+    },
+    {
+      "id": "BR-4",
+      "rule": "Attendance is marked for today by default. Backdating within the configured window is permitted; beyond it the Coordinator marks, because a record entered a fortnight later is a recollection rather than a record."
+    },
+    {
+      "id": "BR-5",
+      "rule": "A teacher may correct their own marks for one hour after saving. This is the common case of a child marked absent at registration who arrives later in the morning."
+    },
+    {
+      "id": "BR-6",
+      "rule": "Approved leave is applied to the roster before the teacher begins, so a child on sanctioned leave is never marked absent by mistake."
+    },
+    {
+      "id": "BR-7",
+      "rule": "Every correction is logged with who made it, when, and what it was changed from, and the original mark stays visible. Attendance is evidence, and evidence that can be quietly rewritten is not evidence."
+    },
+    {
+      "id": "BR-8",
+      "rule": "Once the teacher's hour has passed the correction is made by the Coordinator. The teacher can ask, but cannot change it themselves."
+    },
+    {
+      "id": "BR-9",
+      "rule": "Absences feed the alert route. A parent learns their child is missing while it still matters, not at the end of the day."
+    },
+    {
+      "id": "BR-10",
+      "rule": "A correction from absent to present or late suppresses any alert not yet sent, and does not send a second message where one has already gone. A parent told their child is missing and then told nothing further is left worse off than one told once."
+    },
+    {
+      "id": "BR-11",
+      "rule": "A class unmarked past the configured time is flagged to the Coordinator. An unmarked register is a class nobody has accounted for."
+    },
+    {
+      "id": "BR-12",
+      "rule": "A student placed in the section part way through the term is markable from their placement date, and carries no mark for the days before it."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Attendance record",
+      "states": [
+        "Unmarked",
+        "Marked",
+        "Corrected"
+      ],
+      "initial": "Unmarked",
+      "terminal": [],
+      "transitions": [
+        {
+          "from": "Unmarked",
+          "to": "Marked",
+          "triggeredBy": "Teacher / Coordinator / Staff",
+          "condition": "The marks are saved for the class and date."
+        },
+        {
+          "from": "Marked",
+          "to": "Corrected",
+          "triggeredBy": "Teacher within the window, or Coordinator afterwards",
+          "condition": "A mark is changed with a reason (BR-5, BR-7, BR-8)."
+        },
+        {
+          "from": "Corrected",
+          "to": "Corrected",
+          "triggeredBy": "Coordinator",
+          "condition": "A further correction, each logged separately."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "Teacher",
+      "navigation": "Login → Attendance → Mark attendance",
+      "userAction": "Opens the attendance screen and selects the class and the date.",
+      "function": "openAttendanceSheet(classId, sectionId, date)",
+      "systemResponse": "Checks the date is a working day and refuses an off-day or holiday.",
+      "rules": [
+        "BR-1",
+        "BR-3",
+        "BR-4"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "System",
+      "navigation": "Mark attendance → Roster",
+      "userAction": "—",
+      "function": "loadRosterWithApprovedLeave(sectionId, date)",
+      "systemResponse": "Displays the class roster with any approved leave already applied, so a child on sanctioned leave is not marked absent.",
+      "rules": [
+        "BR-6",
+        "BR-12"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "Teacher",
+      "navigation": "Mark attendance → Marks",
+      "userAction": "Marks each student present, absent, late or on leave, adding a note where the mark alone does not explain the day.",
+      "function": "setAttendanceMark(studentId, date, mark, note)",
+      "systemResponse": "Holds the marks and shows which students are still unmarked.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "Teacher",
+      "navigation": "Mark attendance → Save",
+      "userAction": "Saves the attendance for the date.",
+      "function": "saveAttendance(sectionId, date)",
+      "systemResponse": "Refuses to save while any student is unmarked, records who saved and when, and starts the correction window.",
+      "rules": [
+        "BR-2",
+        "BR-5"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "queueAbsenceAlerts(sectionId, date)",
+      "systemResponse": "Passes the absences to the alert route so parents learn their child is missing while it still matters.",
+      "rules": [
+        "BR-9"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "Teacher",
+      "navigation": "Mark attendance → Correct a mark",
+      "userAction": "Changes a mark within the hour, which is the common case of a child marked absent who arrives later.",
+      "function": "correctAttendanceMark(studentId, date, newMark, reason)",
+      "systemResponse": "Records the change with the previous mark, the reason and the time, and keeps the original visible.",
+      "rules": [
+        "BR-5",
+        "BR-7",
+        "BR-10"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "Coordinator",
+      "navigation": "Login → Attendance → Attendance for the day → Correct a mark",
+      "userAction": "Makes a correction once the teacher's hour has passed.",
+      "function": "correctAttendanceMark(studentId, date, newMark, reason)",
+      "systemResponse": "Records the change in the same way, with the Coordinator as the person who made it.",
+      "rules": [
+        "BR-7",
+        "BR-8"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 6,
+      "condition": "A child marked absent arrives later in the morning",
+      "actor": "Teacher",
+      "navigation": "Mark attendance → Correct a mark",
+      "behaviour": "The mark becomes Late or Present within the teacher's hour. Any alert not yet sent is suppressed, and no second message goes where one has already gone (BR-5, BR-10).",
+      "function": "correctAttendanceMark(studentId, date, 'Late', reason)",
+      "resumesAtStep": 7
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 1,
+      "condition": "The teacher is absent",
+      "actor": "Coordinator / Staff",
+      "navigation": "Login → Attendance → Mark attendance",
+      "behaviour": "The class is marked on the teacher's behalf. The record shows who actually marked it rather than the class incharge.",
+      "function": "openAttendanceSheet(classId, sectionId, date)",
+      "resumesAtStep": 2
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 2,
+      "condition": "A student has approved leave for the date",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "Their mark is pre-applied as On leave and the teacher does not have to remember it (BR-6).",
+      "function": "loadRosterWithApprovedLeave(sectionId, date)",
+      "resumesAtStep": 3
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 1,
+      "condition": "The date is a holiday or an off-day",
+      "actor": "Teacher",
+      "navigation": "Mark attendance → Date",
+      "behaviour": "Marking is refused. A day the school was closed is not a day anybody was absent (BR-3).",
+      "function": "openAttendanceSheet(classId, sectionId, holidayDate)"
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 4,
+      "condition": "The class is still unmarked past the configured time",
+      "actor": "Coordinator",
+      "navigation": "Login → Attendance → Attendance for the day → Chase unmarked",
+      "behaviour": "The unmarked class is flagged and chased, since an unmarked register is a class nobody has accounted for (BR-11).",
+      "function": "listUnmarkedClasses(date)",
+      "resumesAtStep": 1
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 1,
+      "condition": "Attendance is being entered for an earlier date",
+      "actor": "Coordinator",
+      "navigation": "Login → Attendance → Mark attendance → Date",
+      "behaviour": "Within the backdating window the teacher may enter it; beyond it only the Coordinator can, because a record entered a fortnight later is a recollection (BR-4).",
+      "function": "openAttendanceSheet(classId, sectionId, pastDate)",
+      "resumesAtStep": 2
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 4,
+      "condition": "A student is left unmarked",
+      "systemResponse": "The attendance is not saved (BR-2).",
+      "messageShown": "3 students have no mark. Mark every student before saving.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E2",
+      "atStep": 1,
+      "condition": "The date is an off-day or a holiday",
+      "systemResponse": "The sheet does not open (BR-3).",
+      "messageShown": "The school is closed on 28-09-2026. Attendance is not marked on a holiday.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E3",
+      "atStep": 1,
+      "condition": "The date is in the future",
+      "systemResponse": "The sheet does not open.",
+      "messageShown": "Attendance cannot be marked for a future date.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E4",
+      "atStep": 6,
+      "condition": "The teacher's correction window has passed",
+      "systemResponse": "The change is refused and the Coordinator route is named (BR-8).",
+      "messageShown": "The hour for changing this has passed. Ask your Coordinator to make the correction.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 6,
+      "condition": "A correction is made with no reason",
+      "systemResponse": "The change is not saved (BR-7).",
+      "messageShown": "Give a reason for changing this mark.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E6",
+      "atStep": 1,
+      "condition": "A Teacher opens a section not assigned to them",
+      "systemResponse": "The sheet does not open, per role-based-access.",
+      "messageShown": "You do not have permission to view this record.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 1,
+      "condition": "Attendance has already been saved for the class and date",
+      "systemResponse": "The saved sheet opens for correction rather than fresh marking.",
+      "messageShown": "Attendance for this class was marked at 08:42. Open it to make a correction.",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E8",
+      "atStep": 3,
+      "condition": "A student was placed in the section after the date being marked",
+      "systemResponse": "They do not appear on the roster for that date (BR-12).",
+      "messageShown": "(none)",
+      "messageStyle": "toast"
+    },
+    {
+      "id": "E9",
+      "atStep": 4,
+      "condition": "The save fails",
+      "systemResponse": "No mark is recorded and the sheet keeps what was entered.",
+      "messageShown": "Attendance could not be saved. Your marks are still here — please try again.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Class unmarked past the configured time",
+      "recipient": "Coordinator and the class incharge",
+      "channels": [
+        "inApp",
+        "push"
+      ],
+      "template": "ATTENDANCE_UNMARKED",
+      "contents": [
+        "Class and section",
+        "Date",
+        "Class incharge"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Mark corrected after the teacher's window",
+      "recipient": "The class incharge",
+      "channels": [
+        "inApp"
+      ],
+      "template": "ATTENDANCE_CORRECTED",
+      "contents": [
+        "Student",
+        "Date",
+        "Changed from",
+        "Changed to",
+        "Changed by",
+        "Reason"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "Absences are passed to the parent alert route.",
+      "affects": {
+        "id": "UC-05-09",
+        "name": "Sending absence alerts to parents",
+        "link": "UC-05-09.json"
+      }
+    },
+    {
+      "effect": "The day's marks appear in the parent and student portal.",
+      "affects": {
+        "id": "UC-15-01",
+        "name": "Parent and student portal",
+        "link": "UC-15-01.json"
+      }
+    },
+    {
+      "effect": "Attendance feeds the reporting the school reads on absence patterns.",
+      "affects": {
+        "id": "UC-24-01",
+        "name": "Custom report builder",
+        "link": "UC-24-01.json"
+      }
+    },
+    {
+      "effect": "Approved leave is consumed as the dated marks are applied.",
+      "affects": {
+        "id": "UC-05-11",
+        "name": "Student leave request and approval",
+        "link": "UC-05-11.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Daily attendance register",
+      "formats": [
+        "screen",
+        "print",
+        "pdf"
+      ],
+      "columns": [
+        "Roll number",
+        "Student",
+        "Mark",
+        "Note",
+        "Marked by",
+        "Corrected"
+      ],
+      "grouping": "By class and section",
+      "totals": "Present, absent, late and on leave per section"
+    },
+    {
+      "name": "Attendance for the day",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Class",
+        "Section",
+        "Class incharge",
+        "Marked at",
+        "Present",
+        "Absent",
+        "Late",
+        "On leave",
+        "Status"
+      ],
+      "grouping": "By class",
+      "totals": "School-wide present and absent, and count of unmarked sections"
+    },
+    {
+      "name": "Correction log",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Date",
+        "Student",
+        "Class",
+        "Changed from",
+        "Changed to",
+        "Changed by",
+        "When",
+        "Reason"
+      ],
+      "grouping": "By person who made the change",
+      "totals": "Corrections in the period, by person"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "A class of 30 with 2 students on approved leave",
+      "when": "the teacher opens the sheet",
+      "then": "the 2 are already marked On leave and the teacher marks the other 28"
+    },
+    {
+      "id": "AC-2",
+      "given": "A sheet where 3 students are unmarked",
+      "when": "the teacher saves",
+      "then": "it is refused and the unmarked students are named"
+    },
+    {
+      "id": "AC-3",
+      "given": "A student marked absent at 08:42 who arrives at 09:20",
+      "when": "the teacher changes the mark to Late at 09:25",
+      "then": "the change is saved, the previous mark of Absent is still visible, and the reason is recorded"
+    },
+    {
+      "id": "AC-4",
+      "given": "The same change attempted at 10:15",
+      "when": "the teacher submits it",
+      "then": "it is refused and the Coordinator is named as the route"
+    },
+    {
+      "id": "AC-5",
+      "given": "A correction made by the Coordinator",
+      "when": "the correction history is opened",
+      "then": "it shows the previous mark, the new mark, the Coordinator's name, the time and the reason"
+    },
+    {
+      "id": "AC-6",
+      "given": "A public holiday",
+      "when": "the teacher opens the attendance screen for that date",
+      "then": "marking is refused, and nobody is recorded as absent"
+    },
+    {
+      "id": "AC-7",
+      "given": "A class still unmarked at the configured time",
+      "when": "the check runs",
+      "then": "the Coordinator is notified and the section is flagged as unmarked rather than reading as all present"
+    },
+    {
+      "id": "AC-8",
+      "given": "A student marked absent whose parent has already been alerted",
+      "when": "the mark is corrected to Present",
+      "then": "no second message is sent and the alert route records the correction"
+    },
+    {
+      "id": "AC-9",
+      "given": "A Teacher opening a section they do not teach",
+      "when": "they request it",
+      "then": "it is refused"
+    },
+    {
+      "id": "AC-10",
+      "given": "A student placed in the section on 15 September",
+      "when": "the sheet for 10 September is opened",
+      "then": "they do not appear on it"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-27-03",
+        "name": "Class placement of an admitted student",
+        "link": "UC-27-03.json",
+        "why": "Supplies the roster."
+      },
+      {
+        "id": "UC-05-04",
+        "name": "Off-day and holiday calendar",
+        "link": "UC-05-04.json",
+        "why": "Decides which days are markable."
+      },
+      {
+        "id": "UC-05-11",
+        "name": "Student leave request and approval",
+        "link": "UC-05-11.json",
+        "why": "Pre-applies approved leave to the roster."
+      },
+      {
+        "id": "UC-05-09",
+        "name": "Sending absence alerts to parents",
+        "link": "UC-05-09.json",
+        "why": "Receives the absences."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Limits a teacher to their own sections."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      }
+    ],
+    "masterData": [
+      "Class and section rosters",
+      "Off-day and holiday calendar",
+      "Correction window and backdating window"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Attendance for an individual lecture rather than the day",
+      "handledBy": {
+        "id": "UC-05-02",
+        "name": "Per-lecture and period attendance",
+        "link": "UC-05-02.json"
+      }
+    },
+    {
+      "item": "Staff attendance",
+      "handledBy": {
+        "id": "UC-05-03",
+        "name": "Staff attendance tracking",
+        "link": "UC-05-03.json"
+      }
+    },
+    {
+      "item": "Telling the parent their child is absent",
+      "handledBy": {
+        "id": "UC-05-09",
+        "name": "Sending absence alerts to parents",
+        "link": "UC-05-09.json"
+      }
+    },
+    {
+      "item": "Requesting and approving leave",
+      "handledBy": {
+        "id": "UC-05-11",
+        "name": "Student leave request and approval",
+        "link": "UC-05-11.json"
+      }
+    },
+    {
+      "item": "Marking by card or QR scan",
+      "handledBy": {
+        "id": "UC-05-06",
+        "name": "Barcode, ID card or QR attendance scanning",
+        "link": "UC-05-06.json"
+      }
+    },
+    {
+      "item": "Attendance reporting and analysis",
+      "handledBy": {
+        "id": "UC-24-01",
+        "name": "Custom report builder",
+        "link": "UC-24-01.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Marking speed",
+        "requirement": "A class of 40 is markable in under a minute on a phone, with a mark-all-present control, because a register that takes ten minutes gets filled in at lunchtime from memory."
+      },
+      {
+        "aspect": "Correction integrity",
+        "requirement": "Every previous mark is retained. Attendance is evidence and cannot be quietly rewritten."
+      },
+      {
+        "aspect": "Offline tolerance",
+        "requirement": "Marks entered while the connection drops are held and saved when it returns, rather than lost."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Attendance records are retained 7 years, matching the student record."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "How far back may attendance be entered before it needs the Coordinator?",
+      "assumption": "Not specified. The teacher window is one hour, but the backdating window is not given.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "By what time each day must a class be marked before it is flagged as unmarked?",
+      "assumption": "Not specified.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "Does the school mark once a day, or does 5.2 replace this entirely for senior classes?",
+      "assumption": "Both exist. Which classes use which is not specified.",
+      "confirmWith": "Coordinator",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should a late arrival count as present for reporting, or as its own category?",
+      "assumption": "Its own category. Not confirmed.",
+      "confirmWith": "Coordinator",
+      "blocksBuild": false
+    },
+    {
+      "question": "Who may correct a mark after the academic session has closed?",
+      "assumption": "Not specified.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "bulk-actions",
+      "area": "Bulk actions",
+      "rule": "Any bulk operation reports a per-row result, commits valid rows and lists rejected rows with the reason. A bulk action never fails as a whole because of one bad row."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

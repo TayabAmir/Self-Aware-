@@ -1,0 +1,1400 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-18-03",
+    "name": "Decide that the school will spend the money, and issue the advance as an amount owed back",
+    "module": "Inventory, Assets & Point-of-Sale",
+    "file": "../UseCases/UC-18-03.json",
+    "featureRef": "18.3 Approving a stock request"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-18-03-PC-1",
+      "intent": {
+        "name": "stock.request.approve",
+        "summary": "Agree that the school will spend the money — in full, or for less than was asked for.",
+        "routesHere": [
+          "approve the marker request",
+          {
+            "text": "ye stock request manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve this stock request"
+          },
+          {
+            "text": "12 manzoor kar dein, 24 nahi",
+            "lang": "ur-Latn",
+            "gloss": "approve 12, not 24"
+          },
+          {
+            "text": "is round ki requests manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve this round's requests"
+          },
+          "approve it but only half the paper"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ise kharcha likh dein",
+              "lang": "ur-Latn",
+              "gloss": "book it as an expense"
+            },
+            "goesTo": "Not offered.",
+            "note": "The advance is **not an expense when it is issued**, and posting it as one is the most likely error in this module. Money handed over before a purchase is an amount owed back in goods or cash, and it becomes an expense only on settlement (BR-6, A6, E9 belongs to the settlement use case)."
+          },
+          {
+            "request": {
+              "text": "manzoori ke saath paise bhi de dein",
+              "lang": "ur-Latn",
+              "gloss": "approve it and hand over the cash as well"
+            },
+            "goesTo": "Refused.",
+            "note": "One role approves the spend and a different role releases the money. Accounts pay; they do not decide, and the approver does not pay (BR-4, E3)."
+          },
+          {
+            "request": {
+              "text": "aur zyada manzoor kar dein, 30 kar dein",
+              "lang": "ur-Latn",
+              "gloss": "approve more, make it 30"
+            },
+            "goesTo": "Refused.",
+            "note": "The approver may approve less than was asked for, not more (BR-10, E8). Whether they may add an item nobody requested is an open question this use case raises and does not answer (OQ-4)."
+          },
+          {
+            "request": {
+              "text": "manzoor nahi karna",
+              "lang": "ur-Latn",
+              "gloss": "do not approve it"
+            },
+            "goesTo": "stock.request.reject — this use case.",
+            "note": "A rejection carries a reason, because a requester refused with no explanation asks again for the same thing next round (BR-2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.request.approve",
+            "inputs": {
+              "request_id": "$request.request_phrase",
+              "adjusted_lines": "$request.adjusted_lines",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it buys nothing. It permits the advance; the purchase happens outside the system (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by the wrong role is refused outright (E2), and a quantity raised above what was asked for refuses the whole approval (E8).",
+        "atomicity": "One write. No money moves here — the advance is a separate act by a different role, and until it is issued nothing has left the school (BR-4, BR-11)."
+      },
+      "operations": [
+        {
+          "name": "stock.request.approve",
+          "method": "POST",
+          "path": "/api/v1/stock-requests/{request_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a request carries one decision and a repeat is the same approval",
+          "purpose": "Approve a submitted request, in full or with reduced quantities.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.request_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_request",
+                "fromPhrase": "$request.request_phrase",
+                "onNoMatch": "Refuse. No submitted request matches.",
+                "onAmbiguous": "Ask, naming the requests that match with their requester, their items and their estimated value — the value decides which role must approve (BR-3)."
+              },
+              "notes": "The submitted request, named by its number or by who asked and for what."
+            },
+            {
+              "name": "adjusted_lines",
+              "source": "request",
+              "sourceRef": "$request.adjusted_lines",
+              "required": false,
+              "type": "object[]",
+              "notes": "Where less is being approved than was asked for: the line and the reduced quantity. **Downwards only** (BR-10, E8). Omitted approves what was asked for. Approving a smaller quantity is a decision and is recorded as one; silently buying less is not."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision and what it permits.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved. Nothing is bought and no money has moved (BR-11)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "Who approved it, and in which role."
+              },
+              {
+                "name": "approver_required",
+                "type": "string",
+                "description": "Which role the value required. Derived from the estimated value and the thresholds the Super Admin set, following the voucher thresholds rather than a second set invented here (BR-3)."
+              },
+              {
+                "name": "lines",
+                "type": "object[]",
+                "description": "Item, requested quantity and approved quantity, line by line."
+              },
+              {
+                "name": "reduced",
+                "type": "object[]",
+                "description": "Lines approved for less than was asked for. The requester is told, because a quantity halved without explanation reads as an order that went wrong (BR-10, BR-12)."
+              },
+              {
+                "name": "next_step",
+                "type": "string",
+                "description": "Accounts issue the advance. The approver cannot (BR-4, E3)."
+              },
+              {
+                "name": "estimated_value",
+                "type": "string",
+                "description": "What decided the approver. Nothing in the system holds a price for a stock item, so where this figure came from is unanswered (OQ-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WRONG_APPROVER",
+              "mapsTo": "E2",
+              "httpStatus": 403,
+              "meaning": "The acting user is not the approver the value requires.",
+              "written": "Nothing.",
+              "notWritten": "The request stays submitted.",
+              "note": "Who approves is configuration following the voucher thresholds, not a choice made at the moment of asking (BR-3, A3)."
+            },
+            {
+              "code": "QUANTITY_INCREASED",
+              "mapsTo": "E8",
+              "httpStatus": 400,
+              "meaning": "A quantity was adjusted above what was requested.",
+              "written": "Nothing.",
+              "notWritten": "The request stays submitted.",
+              "note": "The approver may approve less than was asked for, not more (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve on somebody else's behalf, and never work round the seat. Which role must approve comes from the value and the thresholds the Super Admin set — a refusal here is the control, not a permissions problem (BR-3, E2, A3).",
+          "derivedFrom": [
+            "BR-3",
+            "E2",
+            "A3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that approving buys nothing. It permits an advance that Accounts have to issue, and the purchase happens outside the system entirely — nothing arrives because this was pressed (BR-11).",
+          "derivedFrom": [
+            "BR-11",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never reduce a quantity that was not asked to be reduced, and never raise one. Approving less is a decision the requester is told about; approving more is refused outright (BR-10, BR-12, E8).",
+          "derivedFrom": [
+            "BR-10",
+            "BR-12",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say who pays next and that it is not the approver. One role approves the spend and a different role releases the money — a configuration putting both with Accounts leaves the request, the approval, the cash, the settlement and the ledger entry in one pair of hands with nothing outside it to check against (BR-4, E3).",
+          "derivedFrom": [
+            "BR-4",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never present the estimated value as a known price. It decided which role must approve, and nothing in the system produces it (OQ-3).",
+          "derivedFrom": [
+            "OQ-3"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no unapprove in the lifecycle: a submitted request goes to Approved or Rejected and neither runs back. Once Accounts issue the advance against it, cash has left the school and is owed back by whoever took it — that is settled against goods or returned as cash, not undone (BR-6, BR-7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "marker wali request manzoor kar dein lekin 24 ki jagah 12",
+            "lang": "ur-Latn",
+            "gloss": "approve the marker request but 12 instead of 24"
+          },
+          "context": "School Admin, Johar Town branch, request estimated at PKR 2,400.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.request.approve",
+              "inputs": {
+                "request_id": "$request.request_phrase → the marker request",
+                "adjusted_lines": "the marker line reduced to 12",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Downwards, and recorded as a decision (PR-3)."
+            }
+          ],
+          "outcome": "Report that 12 were approved against 24 asked for and that the requester is told — a quantity halved without explanation reads as an order that went wrong. Then say what has not happened: nothing is bought, no money has moved, and Accounts have to issue the advance before anybody can go and buy anything."
+        },
+        {
+          "request": {
+            "text": "manzoor kar dein aur paise bhi nikaal dein",
+            "lang": "ur-Latn",
+            "gloss": "approve it and take the cash out too"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.request.approve",
+              "inputs": {
+                "request_id": "$request.request_phrase → the request named",
+                "adjusted_lines": "omitted — approved as asked",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only. Issuing the advance is a different seat (PR-4)."
+            }
+          ],
+          "outcome": "The approval is recorded. The cash is not yours to release — Accounts issue the advance, and the separation is the control: one role decides to spend and another hands the money over. Tell Accounts the request is approved and name who will be taking the advance, since it is owed back by them."
+        },
+        {
+          "request": {
+            "text": "ye badi request manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve this large request"
+          },
+          "context": "School Admin, request estimated above the School Admin threshold.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.request.approve",
+              "inputs": {
+                "request_id": "$request.request_phrase → the large request",
+                "adjusted_lines": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused on the seat (PR-1)."
+            }
+          ],
+          "outcome": "It needs the Principal at this value. Say that plainly and say why it is not a permissions fault to route around: the thresholds are the ones already set for vouchers, so this request sits where any payment of that size sits."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-03-PC-2",
+      "intent": {
+        "name": "stock.request.reject",
+        "summary": "Refuse the spend, with a reason the requester reads.",
+        "routesHere": [
+          "reject the marker request, there are two boxes in the main store",
+          {
+            "text": "ye request rad kar dein, main store mein pare hain",
+            "lang": "ur-Latn",
+            "gloss": "reject this request, they are in the main store"
+          },
+          {
+            "text": "manzoor nahi, wajah likh dein",
+            "lang": "ur-Latn",
+            "gloss": "not approved, put the reason in"
+          },
+          "turn down the request for this round"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "kam manzoor kar dein",
+              "lang": "ur-Latn",
+              "gloss": "approve less"
+            },
+            "goesTo": "stock.request.approve — this use case, with adjusted lines.",
+            "note": "Approving a smaller quantity is a decision and is often the right answer to a request that asks for too much (BR-10). A rejection sends the requester back to nothing."
+          },
+          {
+            "request": {
+              "text": "bina wajah rad kar dein",
+              "lang": "ur-Latn",
+              "gloss": "reject it without a reason"
+            },
+            "goesTo": "Refused.",
+            "note": "A rejection carries a reason, because a requester refused with no explanation asks again for the same thing next round (BR-2, E1)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.request.reject",
+            "inputs": {
+              "request_id": "$request.request_phrase",
+              "rejection_reason": "$request.rejection_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The requester is told either way, and can see the state of their request throughout (BR-12)."
+          }
+        ],
+        "onFailure": "Stop and report. A rejection with no reason is refused (E1), and a rejection by the wrong role is refused like an approval by the wrong role (E2).",
+        "atomicity": "One write and one notification. Nothing is bought, no money moves, and the request stays on the record — a member of staff whose requests are always rejected is visible only because nothing is deleted (UC-18-02 BR-11)."
+      },
+      "operations": [
+        {
+          "name": "stock.request.reject",
+          "method": "POST",
+          "path": "/api/v1/stock-requests/{request_id}/reject",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a request carries one decision and a repeat is the same rejection",
+          "purpose": "Reject a submitted request with the reason recorded and sent to the requester.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.request_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_request",
+                "fromPhrase": "$request.request_phrase",
+                "onNoMatch": "Refuse. No submitted request matches.",
+                "onAmbiguous": "Ask, naming the requests that match with their requester, their items and their estimated value — the value decides which role must approve (BR-3)."
+              },
+              "notes": "The submitted request, named by its number or by who asked and for what."
+            },
+            {
+              "name": "rejection_reason",
+              "source": "request",
+              "sourceRef": "$request.rejection_reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters, the approver's own. Required (BR-2, E1) — it is sent to the requester, and \"not approved\" sends the same request back next round."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The decision and what it leaves.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Rejected. Terminal — the route back is a fresh request (UC-18-02 BR-11)."
+              },
+              {
+                "name": "rejection_reason",
+                "type": "string",
+                "description": "What the requester was told, in the approver's own words (BR-12)."
+              },
+              {
+                "name": "rejected_by",
+                "type": "string",
+                "description": "Who decided."
+              },
+              {
+                "name": "items_still_low",
+                "type": "object[]",
+                "description": "Items on the rejected request that are still at or below their reorder level. Rejecting the request does not change the shelf — the store is still short of them (UC-18-01 BR-7)."
+              },
+              {
+                "name": "requester_rejection_count",
+                "type": "integer",
+                "description": "How many of this person's requests have been rejected. Visible because nothing is deleted, and worth reading before the next one (UC-18-02 BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A rejection was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "The request stays submitted."
+            },
+            {
+              "code": "WRONG_APPROVER",
+              "mapsTo": "E2",
+              "httpStatus": 403,
+              "meaning": "The acting user is not the approver the value requires.",
+              "written": "Nothing.",
+              "notWritten": "The request stays submitted.",
+              "note": "The same seat decides either way (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. The requester reads it, and it is the difference between a decision and a wall — \"there are two boxes in the main store, draw from those first\" ends the matter, \"not approved\" starts it again next round (BR-2, E1).",
+          "derivedFrom": [
+            "BR-2",
+            "E1",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Offer the smaller approval before the rejection where the objection is the quantity. Approving less is a decision the system records; rejecting sends a classroom back to nothing (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the shelf is unchanged. An item rejected off a request that was below its reorder level still is, and will be offered again next round — the rejection answered the request, not the shortage (BR-2).",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Rejected is terminal in the lifecycle. There is no route back for the same request — a fresh one is submitted, and the rejected one stays on the record with its reason (UC-18-02 BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye request rad kar dein, main store mein do dabbe pare hain, wahan se lein",
+            "lang": "ur-Latn",
+            "gloss": "reject this request, there are two boxes in the main store, draw from those"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.request.reject",
+              "inputs": {
+                "request_id": "$request.request_phrase → the marker request",
+                "rejection_reason": "as they gave it — two boxes are in the main store, draw from those first",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words, and the requester reads them (PR-1)."
+            }
+          ],
+          "outcome": "Report that the requester has been told, in those words. Add what the rejection did not do: if the store's own balance still shows the item below its reorder level, it will be offered again next round — and if those two boxes are not on the system, the balance and the shelf have already parted company."
+        },
+        {
+          "request": {
+            "text": "ye request rad kar dein",
+            "lang": "ur-Latn",
+            "gloss": "reject this request"
+          },
+          "context": "School Admin, request submitted.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.request.reject",
+              "inputs": {
+                "request_id": "$request.request_phrase → the request named",
+                "rejection_reason": "$request.rejection_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The reason is required and the requester reads it (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is rejected. Ask why — and consider whether the objection is really the quantity, because approving less is a decision the system records and a rejection sends the classroom back to nothing."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-03-PC-3",
+      "intent": {
+        "name": "stock.advance.issue",
+        "summary": "Hand the cash over against an approved request, as an amount owed back by the person who takes it.",
+        "routesHere": [
+          "issue the advance for the approved marker request to Imran",
+          {
+            "text": "manzoor shuda request ke liye Imran ko advance de dein",
+            "lang": "ur-Latn",
+            "gloss": "issue the advance to Imran for the approved request"
+          },
+          {
+            "text": "2400 rupay ka advance nikaal dein is request pe",
+            "lang": "ur-Latn",
+            "gloss": "release a 2,400 rupee advance against this request"
+          },
+          "release the cash for the approved stationery request"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ise kharcha likh dein",
+              "lang": "ur-Latn",
+              "gloss": "book it as an expense"
+            },
+            "goesTo": "Not offered.",
+            "note": "The advance is not an expense when it is issued. It is an amount owed back in goods or cash, and it becomes an expense only on settlement (BR-6, A6)."
+          },
+          {
+            "request": {
+              "text": "bina manzoori ke advance de dein",
+              "lang": "ur-Latn",
+              "gloss": "issue the advance without approval"
+            },
+            "goesTo": "Refused.",
+            "note": "An advance against an unapproved request is refused. The approval is what permits it (BR-11, E4)."
+          },
+          {
+            "request": {
+              "text": "kisi ke naam ke baghair nikaal dein",
+              "lang": "ur-Latn",
+              "gloss": "issue it without naming anybody"
+            },
+            "goesTo": "Refused.",
+            "note": "The advance is held against the person who takes it, exactly as a salary advance is held against an employee. It is that person's to settle (BR-7, E5)."
+          },
+          {
+            "request": {
+              "text": "dukandaar ko seedha paisa bhej dein",
+              "lang": "ur-Latn",
+              "gloss": "pay the supplier directly instead"
+            },
+            "goesTo": "Not offered.",
+            "note": "The advance is cash as modelled. Whether the school may pay a supplier directly — which would remove the advance and its risk entirely — is an open question this use case raises and does not answer (OQ-5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.advance.issue",
+            "inputs": {
+              "request_id": "$request.request_phrase",
+              "amount": "$request.amount",
+              "held_against_id": "$request.holder_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, through the ordinary voucher route for money leaving the school. No separate mechanism exists (BR-5), and the posting goes to the advances account rather than to expense (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. Where the ledger posting fails nothing is issued, the request stays approved and unadvanced, and no cash has left the school (E6).",
+        "atomicity": "One act: the payment voucher, the cash out, and the posting to the advances account **as an amount owed back**. It becomes an expense only when the goods are received and the advance is settled (BR-6, A6). The advance is held against the named person from this moment (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "stock.advance.issue",
+          "method": "POST",
+          "path": "/api/v1/stock-advances",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "request_id, since a request carries one advance and a repeat would put the cash out twice against one approval",
+          "purpose": "Issue a cash advance against an approved request, posted as an amount owed back.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.request_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_request",
+                "fromPhrase": "$request.request_phrase",
+                "onNoMatch": "Refuse. No approved request matches. The approval is what permits the advance (E4).",
+                "onAmbiguous": "Ask, naming the approved requests awaiting an advance with their requesters and approved values."
+              },
+              "notes": "The approved request. An advance against an unapproved one is refused (BR-11, E4)."
+            },
+            {
+              "name": "amount",
+              "source": "request",
+              "sourceRef": "$request.amount",
+              "required": true,
+              "type": "money",
+              "notes": "The cash issued. Not an expense (BR-6) — an amount owed back in goods or cash."
+            },
+            {
+              "name": "held_against_id",
+              "source": "resolved",
+              "sourceRef": "$request.holder_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.holder_phrase",
+                "onNoMatch": "Refuse. No active member of staff matches. An advance with nobody against it is money out with nobody owing it (E5).",
+                "onAmbiguous": "Ask, naming the candidates with their staff identifiers and any advance already outstanding against each — somebody already holding one unsettled advance is worth seeing before they take a second."
+              },
+              "notes": "The person taking the advance. Required (BR-7, E5) — it is owed back by them, exactly as a salary advance is, and is ultimately recovered from their salary if it is never settled (BR-9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The advance, and what it is now owed against.",
+            "fields": [
+              {
+                "name": "advance_id",
+                "type": "string",
+                "description": "The advance."
+              },
+              {
+                "name": "voucher_number",
+                "type": "string",
+                "description": "The payment voucher it was issued through. The ordinary route for money leaving the school, not a separate mechanism (BR-5)."
+              },
+              {
+                "name": "posted_to",
+                "type": "string",
+                "description": "The advances account. **Not expense** — it becomes one at settlement and not before (BR-6, A6)."
+              },
+              {
+                "name": "held_against",
+                "type": "string",
+                "description": "Who owes it, by name. It is theirs to settle (BR-7)."
+              },
+              {
+                "name": "issued_by",
+                "type": "string",
+                "description": "Accounts. They pay; they did not decide (BR-4)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The role that decided the spend, which is not the role that released the money (BR-4)."
+              },
+              {
+                "name": "other_advances_outstanding",
+                "type": "object[]",
+                "description": "Anything else already outstanding against the same person, with how long each has been out (BR-9)."
+              },
+              {
+                "name": "visible_to",
+                "type": "string[]",
+                "description": "The outstanding advance list. Where Accounts approved alone below a threshold, this list is the only remaining control and is visible to the School Admin and the Principal rather than to Accounts alone (BR-8, E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_APPROVED",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "An advance was attempted against a request that has not been approved.",
+              "written": "Nothing.",
+              "notWritten": "No cash leaves the school.",
+              "note": "The approval is what permits it (BR-11)."
+            },
+            {
+              "code": "APPROVER_CANNOT_ISSUE",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "The approver is attempting to issue the advance themselves.",
+              "written": "Nothing.",
+              "notWritten": "No cash leaves the school.",
+              "note": "One role approves the spend and a different role releases the money. Accounts pay; they do not decide (BR-4)."
+            },
+            {
+              "code": "NO_HOLDER",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "No person was named to hold the advance.",
+              "written": "Nothing.",
+              "notWritten": "It is not issued.",
+              "note": "It is owed back by them (BR-7)."
+            },
+            {
+              "code": "LEDGER_POSTING_FAILED",
+              "mapsTo": "E6",
+              "httpStatus": 502,
+              "meaning": "The ledger posting failed.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is issued and the request stays approved and unadvanced.",
+              "note": "No cash has been paid. The voucher and the posting hold together or neither happens."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never call the advance an expense, and never suggest posting it as one. It is an amount owed back in goods or cash and becomes an expense only on settlement — the document names this as the most likely error in the module (BR-6, A6).",
+          "derivedFrom": [
+            "BR-6",
+            "A6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Always name who holds it. An advance against nobody is cash out of the school with nobody owing it, and this one is recovered from salary if it is never settled, exactly as a salary advance would be (BR-7, BR-9, E5).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-9",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say what else that person already holds. Somebody taking a second advance while a first is unsettled is the case the outstanding list exists for, and it is not visible on the request being paid (BR-9).",
+          "derivedFrom": [
+            "BR-9",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never let the approver issue it. The separation of who decides from who pays is the module's main control, and a configuration that puts both with Accounts leaves the whole cycle in one pair of hands (BR-4, E3).",
+          "derivedFrom": [
+            "BR-4",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report a failed posting as nothing paid. The voucher and the ledger entry hold together, and a request left approved-but-unadvanced is the correct outcome rather than a half-issued advance (E6).",
+          "derivedFrom": [
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-issue. Once the cash is out it is owed back, and the only routes are settlement against goods, cash returned, or recovery from salary (BR-6, BR-9). Where the holder leaves the school, it comes out of their final settlement rather than lapsing (E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "manzoor shuda marker request ke liye Imran Sultan ko 2400 ka advance de dein",
+            "lang": "ur-Latn",
+            "gloss": "issue a 2,400 advance to Imran Sultan for the approved marker request"
+          },
+          "context": "Accounts, Johar Town branch, request approved by the School Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.advance.issue",
+              "inputs": {
+                "request_id": "$request.request_phrase → the approved marker request",
+                "amount": "PKR 2,400",
+                "held_against_id": "$request.holder_phrase → Imran Sultan",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Through the ordinary voucher route, posted to advances (PR-1)."
+            }
+          ],
+          "outcome": "Report the voucher number and say plainly what was posted: PKR 2,400 to the advances account as an amount owed back by Imran Sultan, not as an expense. It becomes an expense when the goods come in and the advance is settled. Add that he already has PKR 1,150 outstanding from eleven days ago — worth knowing before a second advance goes out to the same person."
+        },
+        {
+          "request": {
+            "text": "advance nikaal dein",
+            "lang": "ur-Latn",
+            "gloss": "release the advance"
+          },
+          "context": "Accounts, request approved, nobody named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.advance.issue",
+              "inputs": {
+                "request_id": "$request.request_phrase → the approved request",
+                "amount": "$request.amount",
+                "held_against_id": "$request.holder_phrase — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The holder is required (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is issued. Ask who is taking it — the advance is owed back by that person by name, it appears on the outstanding list against them, and if it is never settled it comes out of their salary. Cash issued against nobody has left the school with nobody owing it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-03-PC-4",
+      "intent": {
+        "name": "stock.advance.recover",
+        "summary": "Recover an advance that was never settled from the holder's salary.",
+        "routesHere": [
+          "recover Imran's unsettled advance from his salary",
+          {
+            "text": "ye advance tankhwah se kaat lein, kabhi settle nahi hua",
+            "lang": "ur-Latn",
+            "gloss": "recover this advance from salary, it was never settled"
+          },
+          {
+            "text": "jo advance wapas nahi aaya usay salary se recover kar dein",
+            "lang": "ur-Latn",
+            "gloss": "recover the advance that never came back from salary"
+          },
+          "take the outstanding advance out of the next payroll"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "saman aa gaya hai, settle kar dein",
+              "lang": "ur-Latn",
+              "gloss": "the goods have arrived, settle it"
+            },
+            "goesTo": "stock.advance.settle — UC-18-04.",
+            "note": "An advance that produced goods is settled against them and becomes an expense at that point. Recovery is for one that produced nothing (BR-6, BR-9)."
+          },
+          {
+            "request": {
+              "text": "bacha hua paisa wapas aa gaya hai",
+              "lang": "ur-Latn",
+              "gloss": "the unspent cash has come back"
+            },
+            "goesTo": "stock.cashreturned.record — UC-18-04.",
+            "note": "Cash handed back is recorded as such rather than recovered from salary."
+          },
+          {
+            "request": {
+              "text": "chhod dein, purani baat hai",
+              "lang": "ur-Latn",
+              "gloss": "leave it, it is an old matter"
+            },
+            "goesTo": "Not offered.",
+            "note": "An advance does not lapse. Where the holder has left the school it is recovered from their final settlement instead (E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.advance.recover",
+            "inputs": {
+              "advance_id": "$request.advance_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The amount moves from an advance owed back to a deduction against the holder's salary, exactly as a salary advance would be (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. An advance already settled is not recovered, and an advance against somebody who has left goes to their final settlement rather than to a payroll they will not receive (E9).",
+        "atomicity": "One act. The advance stops being outstanding and becomes a deduction. Nothing came into stock for it — that is the point: the money was owed back in goods or cash and neither arrived (BR-6, BR-9)."
+      },
+      "operations": [
+        {
+          "name": "stock.advance.recover",
+          "method": "POST",
+          "path": "/api/v1/stock-advances/{advance_id}/recover",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "advance_id, since an advance is recovered once and a repeat would deduct the same money twice from one salary",
+          "purpose": "Recover an unsettled advance from the holder's salary.",
+          "parameters": [
+            {
+              "name": "advance_id",
+              "source": "resolved",
+              "sourceRef": "$request.advance_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_advance",
+                "fromPhrase": "$request.advance_phrase",
+                "onNoMatch": "Refuse. No outstanding advance matches.",
+                "onAmbiguous": "Ask, naming the outstanding advances with their holders, amounts and how long each has been out."
+              },
+              "notes": "The advance, named by who holds it or by the request it was issued against."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What is being recovered and from whom.",
+            "fields": [
+              {
+                "name": "advance_id",
+                "type": "string",
+                "description": "The advance."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Recovered from salary. Terminal (BR-9)."
+              },
+              {
+                "name": "amount",
+                "type": "string",
+                "description": "What is being deducted."
+              },
+              {
+                "name": "held_against",
+                "type": "string",
+                "description": "Whose salary it comes out of (BR-7)."
+              },
+              {
+                "name": "days_outstanding",
+                "type": "integer",
+                "description": "How long it was out before this. It should have been chased first (BR-9)."
+              },
+              {
+                "name": "chased_on",
+                "type": "date",
+                "description": "When the holder was last chased, if they were. An advance recovered without ever being chased is a deduction the holder was not warned about (BR-9)."
+              },
+              {
+                "name": "goods_received",
+                "type": "string",
+                "description": "None. Nothing came into stock against this advance, which is why it is being recovered rather than settled (BR-6)."
+              },
+              {
+                "name": "holder_has_left",
+                "type": "boolean",
+                "description": "Where true, it goes to the final settlement rather than to payroll — it does not lapse (E9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "HOLDER_HAS_LEFT",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The holder has left the school with the advance outstanding.",
+              "written": "Nothing here.",
+              "notWritten": "No payroll deduction is raised.",
+              "note": "It is recovered from their final settlement rather than lapsing (E9). The route is the exit settlement, not this one."
+            },
+            {
+              "code": "ALREADY_SETTLED",
+              "mapsTo": null,
+              "httpStatus": 409,
+              "meaning": "The advance has already been settled.",
+              "written": "Nothing.",
+              "notWritten": "No deduction is raised.",
+              "note": "A settled advance produced goods and became an expense; there is nothing owed. The use case writes no exception for the attempt."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say whether the holder was ever chased. An advance recovered from somebody's pay without a single reminder is a deduction they find out about on their payslip, and the chasing step exists precisely to avoid that (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that nothing came into stock. Recovery closes the money and leaves the shelf exactly as it was — whatever the request was for was never bought, and the item is presumably still short (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never let it lapse. Where the holder has left, it comes out of their final settlement rather than being written off, and this is the route that fails silently if nobody looks (E9).",
+          "derivedFrom": [
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say how long it was out. Two weeks and eight months are the same status on the screen and different facts about how the store is being run (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no reversal in the lifecycle: Recovered from salary is terminal. Where goods turn up afterwards, they are a receipt with no advance behind it and the money has already been taken back from the holder — which is a reason to chase before recovering rather than after (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Imran ka advance kabhi settle nahi hua, tankhwah se kaat lein",
+            "lang": "ur-Latn",
+            "gloss": "Imran's advance was never settled, recover it from his salary"
+          },
+          "context": "Accounts, Johar Town branch, advance out 74 days, chased once at day 30.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.advance.recover",
+              "inputs": {
+                "advance_id": "$request.advance_phrase → Imran Sultan's advance",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One act (PR-1)."
+            }
+          ],
+          "outcome": "Report the amount, whose pay it comes from, that it has been out 74 days and that he was chased once, 44 days ago. Say what this does not fix: no goods ever came in against it, so the item that was approved is still unbought and presumably still below its reorder level."
+        },
+        {
+          "request": {
+            "text": "is advance ko tankhwah se recover kar dein",
+            "lang": "ur-Latn",
+            "gloss": "recover this advance from salary"
+          },
+          "context": "Accounts, advance held against somebody who resigned last month.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.advance.recover",
+              "inputs": {
+                "advance_id": "$request.advance_phrase → the outstanding advance",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused. There is no payroll to deduct from (PR-3)."
+            }
+          ],
+          "outcome": "It cannot go through payroll — the holder has left. It is recovered from their final settlement instead, and it does not lapse. If the settlement has already been paid, this is money the school will not see again, which is exactly what the outstanding list and the chasing period exist to prevent."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-03-PC-5",
+      "intent": {
+        "name": "stock.advances.read",
+        "summary": "See what cash is out of the school, who holds it, and how long it has been out.",
+        "routesHere": [
+          "what advances are outstanding?",
+          {
+            "text": "kitne advance abhi tak wapas nahi aaye?",
+            "lang": "ur-Latn",
+            "gloss": "how many advances have still not come back?"
+          },
+          {
+            "text": "kis kis ke paas school ka paisa para hai?",
+            "lang": "ur-Latn",
+            "gloss": "who is holding the school's money?"
+          },
+          {
+            "text": "Imran ke naam pe kitna advance hai?",
+            "lang": "ur-Latn",
+            "gloss": "how much advance is against Imran?"
+          },
+          "show me the advances out longer than a fortnight"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "advance settle kar dein",
+              "lang": "ur-Latn",
+              "gloss": "settle the advance"
+            },
+            "goesTo": "stock.advance.settle — UC-18-04.",
+            "note": "Reading the list and closing an advance are separate. Settlement needs the goods and the supplier receipt."
+          },
+          {
+            "request": {
+              "text": "meri request kahan pahunchi?",
+              "lang": "ur-Latn",
+              "gloss": "where has my request got to?"
+            },
+            "goesTo": "stock.requests.read — UC-18-02.",
+            "note": "A requester follows their own request; this list is about money out of the school (BR-8)."
+          },
+          {
+            "request": {
+              "text": "ye list sirf Accounts ko dikhayein",
+              "lang": "ur-Latn",
+              "gloss": "show this list to Accounts only"
+            },
+            "goesTo": "Refused.",
+            "note": "Where Accounts approve alone below a threshold, this list is the only remaining control, and it must be visible to the School Admin and the Principal rather than to Accounts alone (BR-8, E7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.advances.read",
+            "inputs": {
+              "holder_phrase": "$request.holder_phrase",
+              "outstanding_only": "$request.outstanding_only",
+              "older_than_days": "$request.older_than_days",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. Nothing is settled, chased or recovered by looking."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written. The list itself is a control rather than a report, which is why it is not Accounts' alone to see (BR-8, E7)."
+      },
+      "operations": [
+        {
+          "name": "stock.advances.read",
+          "method": "GET",
+          "path": "/api/v1/stock-advances",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List stock advances with their holders, amounts and days outstanding.",
+          "parameters": [
+            {
+              "name": "holder_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.holder_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.holder_phrase",
+                "onNoMatch": "Refuse. No member of staff matches.",
+                "onAmbiguous": "Ask, naming the candidates with their staff identifiers."
+              },
+              "notes": "Where the question is about one person."
+            },
+            {
+              "name": "outstanding_only",
+              "source": "request",
+              "sourceRef": "$request.outstanding_only",
+              "required": false,
+              "type": "boolean",
+              "notes": "Advances not yet settled. The settled ones became expenses and are no longer money owed back (BR-6)."
+            },
+            {
+              "name": "older_than_days",
+              "source": "request",
+              "sourceRef": "$request.older_than_days",
+              "required": false,
+              "type": "integer",
+              "notes": "Where the question is about how long. After how many days an advance is chased, and after how many it is recovered from salary, is not specified anywhere (OQ-1)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What is out, against whom, and for how long.",
+            "fields": [
+              {
+                "name": "advances",
+                "type": "object[]",
+                "description": "Advance, request, amount, holder, issued on, days outstanding and when last chased."
+              },
+              {
+                "name": "total_outstanding",
+                "type": "string",
+                "description": "Cash out of the school with nothing yet received for it. This is the module's exposure in one number (BR-6)."
+              },
+              {
+                "name": "never_chased",
+                "type": "object[]",
+                "description": "Advances past the chasing point that nobody has chased. The list is only a control if somebody acts on it (BR-9)."
+              },
+              {
+                "name": "multiple_advances",
+                "type": "object[]",
+                "description": "People holding more than one unsettled advance at once. Nothing refuses a second advance to somebody who has not settled a first."
+              },
+              {
+                "name": "holders_who_have_left",
+                "type": "object[]",
+                "description": "Advances against people no longer at the school. These are recovered from the final settlement and do not lapse — but only if somebody notices before it is paid (E9)."
+              },
+              {
+                "name": "approved_by_accounts_alone",
+                "type": "object[]",
+                "description": "Advances on requests Accounts both approved and paid. For these the list is the only control there ever was (BR-8, E7)."
+              },
+              {
+                "name": "visible_to",
+                "type": "string[]",
+                "description": "School Admin, Principal and Accounts. Never Accounts alone (BR-8, E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RESTRICTED_TO_ACCOUNTS",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "The list has been restricted to Accounts.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned under that restriction.",
+              "note": "Where Accounts approved alone below a threshold, this list is the only remaining control and must be visible to the School Admin and the Principal (BR-8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Give the total out, not only the rows. Cash issued against goods nobody has yet seen is the module's exposure, and it reads as a list of small amounts rather than as one number (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the advances nobody has chased. The list is a control only if somebody acts on it, and an advance sitting unchased past the point is the failure the whole arrangement was meant to catch (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say who holds more than one. Nothing refuses a second advance to somebody who has not settled a first, so the pattern is visible here and nowhere else (BR-7, BR-9).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Name the holders who have left. Their advances are recovered from the final settlement and do not lapse — but only if somebody sees them before the settlement is paid (E9).",
+          "derivedFrom": [
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Mark the advances Accounts both approved and paid. For those the separation of duties never existed, and this list is the only check there is (BR-4, BR-8, E7).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-8",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never say how long is too long. After how many days an advance is chased, and after how many it is recovered, is not specified anywhere (OQ-1).",
+          "derivedFrom": [
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "kitne advance abhi tak wapas nahi aaye?",
+            "lang": "ur-Latn",
+            "gloss": "how many advances have still not come back?"
+          },
+          "context": "Principal, all branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.advances.read",
+              "inputs": {
+                "holder_phrase": "omitted",
+                "outstanding_only": "true",
+                "older_than_days": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read."
+            }
+          ],
+          "outcome": "Give the total out first, then the rows by days outstanding. Then the four things the screen does not separate: the ones nobody has chased, the people holding two at once, any advance against somebody who has already left, and the ones Accounts both approved and paid — for those this list is the only control that ever existed."
+        },
+        {
+          "request": {
+            "text": "Imran ke naam pe kitna para hai?",
+            "lang": "ur-Latn",
+            "gloss": "how much is outstanding against Imran?"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.advances.read",
+              "inputs": {
+                "holder_phrase": "$request.holder_phrase → Imran Sultan",
+                "outstanding_only": "true",
+                "older_than_days": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One person (PR-3)."
+            }
+          ],
+          "outcome": "Give each advance with its amount, its request and how long it has been out — and say whether he has been chased on any of them. Nothing stops a third advance going to somebody holding two, so the answer matters before the next one is issued rather than after."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1910 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-18-10",
+    "name": "Check the asset register against reality, and resolve every exception with an approved correction",
+    "module": "Inventory, Assets & Point-of-Sale",
+    "file": "../UseCases/UC-18-10.json",
+    "featureRef": "18.10 Verifying assets physically"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-18-10-PC-1",
+      "intent": {
+        "name": "asset.verification.schedule",
+        "summary": "Schedule a physical check of the register against reality, over a room, a person, a department or a campus.",
+        "routesHere": [
+          "schedule a verification of the physics laboratory for the end of term",
+          {
+            "text": "physics lab ke assets ki janch rakh dein",
+            "lang": "ur-Latn",
+            "gloss": "schedule a check of the physics lab's assets"
+          },
+          {
+            "text": "Imran ke naam jo assets hain unki tasdeeq karwani hai",
+            "lang": "ur-Latn",
+            "gloss": "we want to verify the assets in Imran's name"
+          },
+          {
+            "text": "poore campus ki asset verification rakh dein",
+            "lang": "ur-Latn",
+            "gloss": "schedule an asset verification for the whole campus"
+          },
+          "set up the annual asset check"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "register theek hai, janch ki zaroorat nahi",
+              "lang": "ur-Latn",
+              "gloss": "the register is fine, no check is needed"
+            },
+            "goesTo": "Not offered.",
+            "note": "A register nobody checks against reality is a list rather than a record, which is why this is not optional (BR-5, E10)."
+          },
+          {
+            "request": {
+              "text": "stock ki ginti karwani hai",
+              "lang": "ur-Latn",
+              "gloss": "we want a stock count"
+            },
+            "goesTo": "stock.count.schedule — UC-18-06.",
+            "note": "Stock is counted and assets are verified. The two are separate records with separate corrections."
+          },
+          {
+            "request": {
+              "text": "main apne hi assets ki tasdeeq kar leta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I will verify my own assets myself"
+            },
+            "goesTo": "Refused.",
+            "note": "A custodian verifying their own assets is confirming their own account of them, which is not a check (BR-2, E1)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.verification.schedule",
+            "inputs": {
+              "scope": "$request.scope",
+              "scope_value_id": "$request.scope_phrase",
+              "scheduled_for": "$request.scheduled_for",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A list of assets is drawn for whatever is being checked, and nothing on the register moves (BR-1, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A scope naming a room, person or department nobody matches is asked about rather than widened.",
+        "atomicity": "One write. No asset changes: the verification does not change the register by itself — the correction does, and only once approved (BR-7, E7)."
+      },
+      "operations": [
+        {
+          "name": "asset.verification.schedule",
+          "method": "POST",
+          "path": "/api/v1/asset-verifications",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "scope + scope value + date, so a double press does not schedule two walks round the same room on one day",
+          "purpose": "Schedule an asset verification over a scope.",
+          "parameters": [
+            {
+              "name": "scope",
+              "source": "request",
+              "sourceRef": "$request.scope",
+              "required": true,
+              "type": "enum: Room|Person|Department|Campus",
+              "notes": "What is being checked. A verification may cover a whole campus, a department, a room or one person's assets (BR-10)."
+            },
+            {
+              "name": "scope_value_id",
+              "source": "resolved",
+              "sourceRef": "$request.scope_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "verification_scope",
+                "fromPhrase": "$request.scope_phrase",
+                "onNoMatch": "Refuse. No room, person, department or campus matches. Where the scope is a room, note that nothing in the system creates rooms (OQ-5).",
+                "onAmbiguous": "Ask, naming the candidates and saying which kind each is."
+              },
+              "notes": "Which room, person, department or campus. **Rooms are the scope most verifications will use, and no feature anywhere creates a room register** — the document names this as its most-referenced missing structure (OQ-5)."
+            },
+            {
+              "name": "scheduled_for",
+              "source": "request",
+              "sourceRef": "$request.scheduled_for",
+              "required": true,
+              "type": "date",
+              "notes": "When it is to be taken. Verifications are periodic, as the stock count is for stock — how often, and whether they rotate by scope, is not specified anywhere (BR-5, OQ-1)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What will be checked, and by whom it cannot be.",
+            "fields": [
+              {
+                "name": "verification_id",
+                "type": "string",
+                "description": "The verification."
+              },
+              {
+                "name": "scope",
+                "type": "string",
+                "description": "Room, person, department or campus (BR-10)."
+              },
+              {
+                "name": "assets_in_scope",
+                "type": "integer",
+                "description": "The list drawn for it. Every one is checked or reported unchecked — unchecked and present mean different things (BR-1, BR-6)."
+              },
+              {
+                "name": "total_value_in_scope",
+                "type": "string",
+                "description": "What the register says is sitting there, at purchase value."
+              },
+              {
+                "name": "verifier_must_not_be",
+                "type": "string",
+                "description": "The custodian of the assets in scope. A custodian verifying their own assets is confirming their own account of them (BR-2, E1)."
+              },
+              {
+                "name": "days_since_last_verification",
+                "type": "integer",
+                "description": "How long since anybody walked round. A register unchecked since June is a list rather than a record (BR-5, E10)."
+              },
+              {
+                "name": "never_verified",
+                "type": "object[]",
+                "description": "Assets in scope that no verification has ever covered."
+              },
+              {
+                "name": "previous_exceptions",
+                "type": "object[]",
+                "description": "Exceptions raised on these assets before. An asset missing at every verification is not an accident (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "VERIFIER_IS_CUSTODIAN",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The scheduler is the custodian of the assets in scope.",
+              "written": "Nothing.",
+              "notWritten": "No verification is scheduled under them.",
+              "note": "Another member of staff must take it. Who verifies assets assigned to the School Admin themselves is an open question this use case raises and does not answer (BR-2, OQ-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say how long it has been. Everything a verification is worth depends on somebody having walked round recently, and \"nothing since June\" is the answer to most questions about whether the register can be relied on (BR-5, E10).",
+          "derivedFrom": [
+            "BR-5",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name who cannot take it. The custodian of the assets in scope is barred, and where the custodian is the School Admin the specification does not say who does it instead (BR-2, E1, OQ-2).",
+          "derivedFrom": [
+            "BR-2",
+            "E1",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say plainly that rooms do not exist as records. Rooms are the scope most verifications will use and nothing in the system creates a room register — this is the module's most-referenced missing structure (OQ-5).",
+          "derivedFrom": [
+            "OQ-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Name the assets in scope that have never been verified at all. Their presence has never been confirmed by anybody, and on the register they read exactly like the ones checked last month (BR-5, BR-6).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "asset.verification.schedule",
+        "statement": "A verification not yet begun is rescheduled. Nothing has been checked and nothing on the register has moved — but a verification once taken is never deleted, and neither is an exception (BR-9, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "physics lab ke assets ki janch rakh dein, term ke aakhir mein",
+            "lang": "ur-Latn",
+            "gloss": "schedule a check of the physics lab's assets for the end of term"
+          },
+          "context": "School Admin, Johar Town branch, last verification in June.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.verification.schedule",
+              "inputs": {
+                "scope": "Room",
+                "scope_value_id": "$request.scope_phrase → the physics laboratory",
+                "scheduled_for": "the last day of term",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A room scope (PR-3)."
+            }
+          ],
+          "outcome": "Report the 14 assets in scope and their register value. Then three things: nothing has been verified since June; four of these assets have never been verified at all; and the physics laboratory exists here as a typed location rather than a record — no feature in the system creates rooms, which is the structure this whole scope depends on."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-10-PC-2",
+      "intent": {
+        "name": "asset.verification.start",
+        "summary": "Begin the verification. The verifier cannot be the custodian of what is being checked.",
+        "routesHere": [
+          "start the physics lab verification",
+          {
+            "text": "asset verification shuru kar dein",
+            "lang": "ur-Latn",
+            "gloss": "start the asset verification"
+          },
+          {
+            "text": "main janch karne ja raha hoon, khol dein",
+            "lang": "ur-Latn",
+            "gloss": "I am going to do the check, open it"
+          },
+          "begin walking round the lab"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "main hi in assets ka zimmedar hoon, main hi dekh leta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I am the custodian of these assets, I will check them myself"
+            },
+            "goesTo": "Refused.",
+            "note": "A custodian verifying their own assets is confirming their own account of them, which is not a check (BR-2, E1)."
+          },
+          {
+            "request": {
+              "text": "register abhi theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "correct the register now"
+            },
+            "goesTo": "Not offered.",
+            "note": "The verification does not change the register by itself. Only an approved correction does (BR-7, E7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.verification.start",
+            "inputs": {
+              "verification_id": "$request.verification_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The list is opened against the person taking it, who is checked against the custodian of the scope (BR-2, E1)."
+          }
+        ],
+        "onFailure": "Stop and report. A verification begun by the custodian of the assets in scope does not open (E1).",
+        "atomicity": "One state change. Nothing on the register moves — the whole point is that it moves only through an approved correction afterwards (BR-7, E7)."
+      },
+      "operations": [
+        {
+          "name": "asset.verification.start",
+          "method": "POST",
+          "path": "/api/v1/asset-verifications/{verification_id}/start",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "verification_id, since a verification begins once",
+          "purpose": "Begin a scheduled verification.",
+          "parameters": [
+            {
+              "name": "verification_id",
+              "source": "resolved",
+              "sourceRef": "$request.verification_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset_verification",
+                "fromPhrase": "$request.verification_phrase",
+                "onNoMatch": "Refuse. No scheduled verification matches.",
+                "onAmbiguous": "Ask, naming the verifications that match with their scopes, dates and where each stands."
+              },
+              "notes": "The verification, named by its scope or its date."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The list to walk round with.",
+            "fields": [
+              {
+                "name": "verification_id",
+                "type": "string",
+                "description": "The verification."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "In progress."
+              },
+              {
+                "name": "verified_by",
+                "type": "string",
+                "description": "Whoever begins it. Never the custodian of what is being checked (BR-2, E1)."
+              },
+              {
+                "name": "assets",
+                "type": "object[]",
+                "description": "Identifier, name, what the register says its condition is, and who it is assigned to."
+              },
+              {
+                "name": "assets_in_scope",
+                "type": "integer",
+                "description": "How many have to be checked or reported unchecked (BR-6)."
+              },
+              {
+                "name": "disposed_but_listed",
+                "type": "object[]",
+                "description": "Assets already disposed of that the register still places here. Finding one present is an exception in itself (E8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "VERIFIER_IS_CUSTODIAN",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The verifier is the custodian of the assets in scope.",
+              "written": "Nothing.",
+              "notWritten": "The verification does not begin (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never let the custodian take it. It is the whole value of the check, and a verification taken by the person being checked produces a register that agrees with itself (BR-2, E1).",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that nothing on the register moves during the walk. A verifier who thinks they are correcting as they go will not raise the exceptions, and the corrections are what actually change anything (BR-7, E7).",
+          "derivedFrom": [
+            "BR-7",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Give the register's condition beside each asset. The check is against what the register claims, and a verifier who does not know the claim cannot contradict it (BR-2).",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A verification in progress is not un-started. It is submitted with whatever was checked, and anything not checked is reported as unchecked rather than as present (BR-6). Neither the verification nor its exceptions is ever deleted (BR-9, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "physics lab wali verification shuru kar dein",
+            "lang": "ur-Latn",
+            "gloss": "start the physics lab verification"
+          },
+          "context": "Staff, Johar Town branch, not the custodian.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.verification.start",
+              "inputs": {
+                "verification_id": "$request.verification_phrase → the physics lab verification",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-1)."
+            }
+          ],
+          "outcome": "Report the list of 14 with what the register says each should be. Say that nothing they record changes the register — every difference becomes an exception that needs an approved correction — and flag one asset the register places in this room that was disposed of in June: if it is there, that is an exception on its own."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-10-PC-3",
+      "intent": {
+        "name": "asset.verification.record",
+        "summary": "Record what was found: present and in what condition, or an exception saying what is wrong.",
+        "routesHere": [
+          "the projector is here and in fair condition",
+          {
+            "text": "projector maujood hai, halat theek thaak hai",
+            "lang": "ur-Latn",
+            "gloss": "the projector is here, condition is fair"
+          },
+          {
+            "text": "ye laptop yahan nahi hai, kahin aur chala gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "this laptop is not here, it has gone somewhere else"
+          },
+          {
+            "text": "ye cheez koi le gaya tha aur wapas nahi ki",
+            "lang": "ur-Latn",
+            "gloss": "somebody took this and did not return it"
+          },
+          "mark the microscope as missing"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "register mein hi theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "just correct it on the register"
+            },
+            "goesTo": "Not offered.",
+            "note": "The verification does not change the register by itself. Every difference becomes an exception and the register moves only on an approved correction (BR-7, E7)."
+          },
+          {
+            "request": {
+              "text": "jo nahi dekha wo maujood maan lein",
+              "lang": "ur-Latn",
+              "gloss": "take the ones we did not look at as present"
+            },
+            "goesTo": "Refused.",
+            "note": "An asset in scope that was not checked is reported as unchecked rather than as present. Unchecked and present mean different things (BR-6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.verification.record",
+            "inputs": {
+              "verification_id": "$request.verification_phrase",
+              "lines": "$request.lines",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, repeatable as the verifier works through the list. Nothing on the register moves (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. An asset marked present with no condition, or an exception with no note, refuses that line and the rest stand.",
+        "atomicity": "One write into the verification. **No asset changes**: the exceptions raised here are proposals for correction, and only an approved correction moves the register (BR-7, E7)."
+      },
+      "operations": [
+        {
+          "name": "asset.verification.record",
+          "method": "POST",
+          "path": "/api/v1/asset-verifications/{verification_id}/lines",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "verification_id + the asset, so re-entering a line replaces that asset's result rather than adding a second",
+          "purpose": "Record what was found for each asset in scope.",
+          "parameters": [
+            {
+              "name": "verification_id",
+              "source": "resolved",
+              "sourceRef": "$request.verification_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset_verification",
+                "fromPhrase": "$request.verification_phrase",
+                "onNoMatch": "Refuse. No verification is in progress that matches.",
+                "onAmbiguous": "Ask, naming the verifications that match with their scopes, dates and where each stands."
+              },
+              "notes": "The verification, named by its scope or its date."
+            },
+            {
+              "name": "lines",
+              "source": "request",
+              "sourceRef": "$request.lines",
+              "required": true,
+              "type": "object[]",
+              "notes": "One entry per asset: whether it was present, the condition it was found in where it was (E2), and where it was not — or was not as the register says — which of the four exceptions applies with a note saying what is wrong (BR-3, E3). An asset not looked at is entered as unchecked, never as present (BR-6)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was found and what is wrong.",
+            "fields": [
+              {
+                "name": "recorded",
+                "type": "object[]",
+                "description": "Asset, present or not, condition found, and any exception with its note."
+              },
+              {
+                "name": "exceptions",
+                "type": "object[]",
+                "description": "Each raised, by kind. The four are named separately because each is a different problem needing a different correction (BR-3)."
+              },
+              {
+                "name": "unchecked",
+                "type": "object[]",
+                "description": "Assets in scope not yet looked at. Reported as unchecked, never as present (BR-6)."
+              },
+              {
+                "name": "condition_worse_than_register",
+                "type": "object[]",
+                "description": "Assets present but in worse condition than the register claims. Not an exception, but it needs a maintenance record to move the register (BR-3, UC-18-09 BR-3)."
+              },
+              {
+                "name": "disposed_but_present",
+                "type": "object[]",
+                "description": "Assets found present that were already disposed of. An exception in itself — a disposed asset should not be there (E8)."
+              },
+              {
+                "name": "previous_exceptions",
+                "type": "object[]",
+                "description": "Where this asset, or this custodian, has been an exception before. An asset missing at every verification is not an accident (BR-8)."
+              },
+              {
+                "name": "register_moved",
+                "type": "boolean",
+                "description": "False. Only an approved correction moves it (BR-7, E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_CONDITION",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "An asset was marked present with no condition recorded.",
+              "written": "Nothing.",
+              "notWritten": "The line is not saved (BR-2)."
+            },
+            {
+              "code": "NO_NOTE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "An exception was raised with no note.",
+              "written": "Nothing.",
+              "notWritten": "It is not raised.",
+              "note": "Each of the four exceptions is a different problem and the note is what says which this one actually is (BR-3)."
+            },
+            {
+              "code": "DISPOSED_ASSET_PRESENT",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "An asset already disposed of was found present.",
+              "written": "It is recorded as an exception.",
+              "notWritten": "Nothing about the disposal changes.",
+              "treatedAsSuccess": true,
+              "note": "A disposed asset should not be there."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the exception kind. Missing, moved, borrowed and not returned, and broken and quietly disposed of are four different problems needing four different corrections, and only the person standing in the room knows which this is (BR-3, E3).",
+          "derivedFrom": [
+            "BR-3",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never record an unchecked asset as present. Unchecked is a reported fact and present is a confirmed one, and collapsing the two turns a partial walk into a clean register (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that nothing has been corrected. Every exception is a proposal; the register moves only when a correction is approved (BR-7, E7).",
+          "derivedFrom": [
+            "BR-7",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Name where this asset or this custodian has been an exception before. An asset missing at every verification is not an accident, and a single verification cannot show it (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report a present asset in worse condition than the register claims. It is not one of the four exceptions and it still needs a maintenance record, or the register goes on claiming a condition nobody found (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A recorded line is replaced by recording that asset again. Nothing about the register has been changed by writing down what was seen, and neither the verification nor an exception is ever deleted (BR-9, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "projector maujood hai halat theek thaak, laptop yahan nahi hai — shayad hall mein le gaye thay",
+            "lang": "ur-Latn",
+            "gloss": "the projector is here in fair condition, the laptop is not here — it may have gone to the hall"
+          },
+          "context": "Staff verifying the physics laboratory, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.verification.record",
+              "inputs": {
+                "verification_id": "$request.verification_phrase → the physics lab verification",
+                "lines": "projector present and Fair; laptop an exception with their note",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The exception kind is asked, not chosen for them (PR-1)."
+            }
+          ],
+          "outcome": "Ask which of the four the laptop is — moved is a different problem from missing, and only somebody who has asked around can say. Note that the projector was Good on the register and Fair on the shelf: that is not an exception and it still needs a maintenance record, or the register goes on claiming Good. Add that this laptop was an exception at the June verification too."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-10-PC-4",
+      "intent": {
+        "name": "asset.verification.submit",
+        "summary": "Submit the verification, so its exceptions can be resolved.",
+        "routesHere": [
+          "submit the physics lab verification",
+          {
+            "text": "verification mukammal ho gayi hai, submit kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the verification is finished, submit it"
+          },
+          {
+            "text": "janch khatam, aage bhej dein",
+            "lang": "ur-Latn",
+            "gloss": "the check is done, send it on"
+          },
+          "close the walk-round and list the exceptions"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "exceptions chhod dein, baad mein dekh lenge",
+              "lang": "ur-Latn",
+              "gloss": "leave the exceptions, we will look later"
+            },
+            "goesTo": "Not offered.",
+            "note": "An exception noted and not resolved is the register drifting again. The verification cannot complete until every one has an approved correction (BR-4, E6)."
+          },
+          {
+            "request": {
+              "text": "register ab theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "correct the register now"
+            },
+            "goesTo": "asset.verification.correction.propose — this use case.",
+            "note": "Each exception is resolved by a proposed correction with a reason, and only the approval applies it (BR-4, BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.verification.submit",
+            "inputs": {
+              "verification_id": "$request.verification_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every asset in scope is checked or reported unchecked, and the exceptions go forward (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. Nothing on the register has moved and none of it will until each exception has an approved correction (BR-7).",
+        "atomicity": "One state change. Where any exception was raised the verification sits at exceptions outstanding rather than complete, and it cannot complete until every one is resolved (BR-4, E6)."
+      },
+      "operations": [
+        {
+          "name": "asset.verification.submit",
+          "method": "POST",
+          "path": "/api/v1/asset-verifications/{verification_id}/submit",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "verification_id, since a verification is submitted once",
+          "purpose": "Submit a completed verification and list its exceptions.",
+          "parameters": [
+            {
+              "name": "verification_id",
+              "source": "resolved",
+              "sourceRef": "$request.verification_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset_verification",
+                "fromPhrase": "$request.verification_phrase",
+                "onNoMatch": "Refuse. No verification is in progress that matches.",
+                "onAmbiguous": "Ask, naming the verifications that match with their scopes, dates and where each stands."
+              },
+              "notes": "The verification, named by its scope or its date."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was found.",
+            "fields": [
+              {
+                "name": "verification_id",
+                "type": "string",
+                "description": "The verification."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Exceptions outstanding, or complete where none was raised (BR-4)."
+              },
+              {
+                "name": "checked",
+                "type": "integer",
+                "description": "Assets confirmed present, with the condition each was found in."
+              },
+              {
+                "name": "unchecked",
+                "type": "object[]",
+                "description": "Assets in scope nobody looked at. Reported as unchecked, never as present (BR-6)."
+              },
+              {
+                "name": "exceptions",
+                "type": "object[]",
+                "description": "By kind: missing, moved, borrowed and not returned, or broken and quietly disposed of (BR-3)."
+              },
+              {
+                "name": "value_of_missing",
+                "type": "string",
+                "description": "What the register says the missing assets were worth. Whether a missing asset above a value should be escalated differently is unanswered — every one is treated the same (OQ-4)."
+              },
+              {
+                "name": "repeat_exceptions",
+                "type": "object[]",
+                "description": "Assets or custodians that were exceptions at a previous verification too (BR-8)."
+              },
+              {
+                "name": "register_moved",
+                "type": "boolean",
+                "description": "False. Only an approved correction moves it (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "EXCEPTIONS_UNRESOLVED",
+              "mapsTo": "E6",
+              "httpStatus": 202,
+              "meaning": "Exceptions were raised.",
+              "written": "The verification is submitted and sits at exceptions outstanding.",
+              "notWritten": "It cannot complete.",
+              "treatedAsSuccess": true,
+              "note": "Each needs an approved correction. An exception noted and not resolved is the register drifting again (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Give the exceptions by kind, not as one number. Missing, moved, borrowed and broken are four different problems and only one of them means the school has lost something (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the unchecked assets as a gap in the check. A verification covering 10 of 14 has confirmed 10 assets (BR-6).",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say what the missing assets are worth. Every missing asset is treated the same regardless of value, and whether one above a threshold should be escalated differently is unanswered (OQ-4).",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that the verification cannot complete until every exception is resolved. That is deliberate — an exception noted and left is the register drifting again, which is what the whole check exists to stop (BR-4, E6).",
+          "derivedFrom": [
+            "BR-4",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A submitted verification is not un-submitted, and neither it nor an exception is ever deleted — the record of what was not where it should have been is the point (BR-9, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "verification mukammal ho gayi hai, submit kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the verification is finished, submit it"
+          },
+          "context": "Staff who took it, Johar Town branch, 12 of 14 checked.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.verification.submit",
+              "inputs": {
+                "verification_id": "$request.verification_phrase → the physics lab verification",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One step (PR-4)."
+            }
+          ],
+          "outcome": "Report 12 confirmed and 2 never looked at — reported as unchecked, not as present. Three exceptions: one moved, one borrowed and not returned, one missing. Say what the missing one is worth, PKR 68,000, and that nothing escalates on value. The verification stays open until all three have an approved correction."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-10-PC-5",
+      "intent": {
+        "name": "asset.verification.correction.propose",
+        "summary": "Propose the correction that resolves an exception, with the reason. It applies only once approved.",
+        "routesHere": [
+          "the projector was found in the hall — resolve it as a reassignment",
+          {
+            "text": "wo laptop hall mein mil gaya hai, reassignment se theek kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the laptop was found in the hall, resolve it with a reassignment"
+          },
+          {
+            "text": "ye cheez tooti hui thi, maintenance record se theek karein",
+            "lang": "ur-Latn",
+            "gloss": "this was broken, resolve it with a maintenance record"
+          },
+          {
+            "text": "ye asset mil hi nahi raha, disposal karna paray ga",
+            "lang": "ur-Latn",
+            "gloss": "this asset cannot be found at all, it will have to be a disposal"
+          },
+          "close the exception on the microscope"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "exception aise hi chhod dein",
+              "lang": "ur-Latn",
+              "gloss": "just leave the exception as it is"
+            },
+            "goesTo": "Not offered.",
+            "note": "An exception noted and not resolved is the register drifting again, and the verification cannot complete while any remain (BR-4, E6)."
+          },
+          {
+            "request": {
+              "text": "main hi manzoor kar deta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I will approve it myself"
+            },
+            "goesTo": "Refused.",
+            "note": "The verifier cannot approve their own correction. Only the School Admin can (BR-4, E5)."
+          },
+          {
+            "request": {
+              "text": "register seedha theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "just correct the register directly"
+            },
+            "goesTo": "Not offered.",
+            "note": "The register moves only on an approved correction, never on the verifier's entry (BR-7, E7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.verification.correction.propose",
+            "inputs": {
+              "exception_id": "$request.exception_phrase",
+              "resolution": "$request.resolution",
+              "resolution_reason": "$request.resolution_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it proposes rather than applies. The correction — a reassignment, a maintenance record or a disposal — is made when it is approved (BR-4, BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A correction proposed with no reason is refused (E4), and the register is untouched either way.",
+        "atomicity": "One write. **Nothing on the register changes**: the correction is awaiting approval, and only the approval applies it (BR-7, E7)."
+      },
+      "operations": [
+        {
+          "name": "asset.verification.correction.propose",
+          "method": "POST",
+          "path": "/api/v1/verification-exceptions/{exception_id}/resolve",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "exception_id + the resolution, so a double press does not propose the same correction twice",
+          "purpose": "Propose the approved correction that will resolve an exception.",
+          "parameters": [
+            {
+              "name": "exception_id",
+              "source": "resolved",
+              "sourceRef": "$request.exception_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "verification_exception",
+                "fromPhrase": "$request.exception_phrase",
+                "onNoMatch": "Refuse. No outstanding exception matches.",
+                "onAmbiguous": "Ask, naming the outstanding exceptions with their assets, what kind each is and the notes recorded."
+              },
+              "notes": "The exception, named by the asset it was raised against."
+            },
+            {
+              "name": "resolution",
+              "source": "request",
+              "sourceRef": "$request.resolution",
+              "required": true,
+              "type": "enum: Reassignment|Maintenance record|Disposal",
+              "notes": "The correction that resolves it (BR-4). Each of the four exception kinds needs a different one: an asset **moved** is a reassignment, one **broken** is a maintenance record, one **missing** or **quietly disposed of** is a disposal — and a disposal recorded as lost is a write-off and probably an investigation (BR-3, UC-18-11 BR-11)."
+            },
+            {
+              "name": "resolution_reason",
+              "source": "request",
+              "sourceRef": "$request.resolution_reason",
+              "required": true,
+              "type": "string",
+              "notes": "10 to 500 characters, the resolver's own. Required (BR-4, E4) — it is the record of why the register was changed to disagree with what it said before."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What is proposed and what it will do.",
+            "fields": [
+              {
+                "name": "exception_id",
+                "type": "string",
+                "description": "The exception."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. The register is unchanged (BR-7)."
+              },
+              {
+                "name": "exception_kind",
+                "type": "string",
+                "description": "Missing, moved, borrowed and not returned, or broken and quietly disposed of (BR-3)."
+              },
+              {
+                "name": "resolution",
+                "type": "string",
+                "description": "The correction proposed."
+              },
+              {
+                "name": "will_do",
+                "type": "string",
+                "description": "What approving it will actually do — end an assignment and begin another, add a maintenance record and move the condition, or retire the asset from the register."
+              },
+              {
+                "name": "asset_value",
+                "type": "string",
+                "description": "What the register says the asset is worth. Where the resolution is a disposal for a missing asset, this is what is being written off (UC-18-11 BR-5)."
+              },
+              {
+                "name": "goes_through_disposal_approval",
+                "type": "boolean",
+                "description": "Where the resolution is a disposal, it carries the disposal's own approval and its own thresholds on top of this one (UC-18-11 BR-2)."
+              },
+              {
+                "name": "approver",
+                "type": "string",
+                "description": "The School Admin. Never the verifier who raised it (BR-4, E5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "A correction was proposed with no reason.",
+              "written": "Nothing.",
+              "notWritten": "It is not proposed (BR-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Match the correction to the kind of exception, and never guess it. An asset moved needs a reassignment, one broken needs a maintenance record, one missing needs a disposal — and calling a missing asset \"moved\" is how a loss becomes a paperwork exercise (BR-3, BR-4).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never write the reason. It is the record of why the register was changed to say something different from what it said before, and it is read long after everybody has forgotten the walk round (BR-4, E4).",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say what approving will actually do. A disposal here retires the asset and writes off its value, and it carries the disposal use case's own approval on top of this one — resolving an exception is not a bookkeeping tidy-up (BR-4, BR-7).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that nothing has changed yet. The register moves on the approval and never on the proposal (BR-7, E7).",
+          "derivedFrom": [
+            "BR-7",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say what a missing asset is worth, and that nothing further follows. Beyond a disposal recorded as lost there is no process at all for an asset that is never found (OQ-3, OQ-4).",
+          "derivedFrom": [
+            "OQ-3",
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "asset.verification.correction.return",
+        "statement": "A proposed correction is returned with a reason and the register is unchanged — it goes back to being an outstanding exception. Nothing is deleted (BR-9, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "wo laptop hall mein mil gaya hai, wahin reassign kar dein",
+            "lang": "ur-Latn",
+            "gloss": "the laptop was found in the hall, reassign it there"
+          },
+          "context": "Staff who took the verification, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.verification.correction.propose",
+              "inputs": {
+                "exception_id": "$request.exception_phrase → the laptop exception",
+                "resolution": "Reassignment",
+                "resolution_reason": "as they gave it — found in the hall and reassigned to it",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A reassignment, because it was moved rather than missing (PR-1)."
+            }
+          ],
+          "outcome": "Proposed, not applied. The register still places the laptop in the physics lab until the School Admin approves this — and the approval cannot be theirs, since they raised it."
+        },
+        {
+          "request": {
+            "text": "ye projector mil hi nahi raha, kya karein?",
+            "lang": "ur-Latn",
+            "gloss": "this projector cannot be found at all, what should we do?"
+          },
+          "context": "Staff, Johar Town branch, asset value PKR 68,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.verification.correction.propose",
+              "inputs": {
+                "exception_id": "$request.exception_phrase → the projector exception",
+                "resolution": "Disposal",
+                "resolution_reason": "$request.resolution_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The reason is required (PR-2)."
+            }
+          ],
+          "outcome": "The correction for an asset that cannot be found is a disposal recorded as lost — which is a write-off of PKR 68,000 and, in the specification's own words, probably an investigation. Ask for the reason in their words. And say the part nothing covers: beyond flagging it as lost, there is no process anywhere for an asset that is never found."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-10-PC-6",
+      "intent": {
+        "name": "asset.verification.correction.approve",
+        "summary": "Approve the correction. This is what actually changes the register.",
+        "routesHere": [
+          "approve the correction on the laptop",
+          {
+            "text": "ye correction manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve this correction"
+          },
+          {
+            "text": "verification ke saare corrections approve kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve all the corrections from the verification"
+          },
+          "sign off the exception resolutions"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "main ne hi janch ki thi, main hi manzoor kar deta hoon",
+              "lang": "ur-Latn",
+              "gloss": "I did the check, I will approve it myself"
+            },
+            "goesTo": "Refused.",
+            "note": "The verifier cannot approve their own correction. Only the School Admin can (BR-4, E5) — otherwise one person walks round, decides what was wrong, and changes the register to match."
+          },
+          {
+            "request": {
+              "text": "manzoor nahi karna, dobara dekh lein",
+              "lang": "ur-Latn",
+              "gloss": "do not approve it, look again"
+            },
+            "goesTo": "asset.verification.correction.return — this use case.",
+            "note": "It goes back with a reason and the register stays as it was."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.verification.correction.approve",
+            "inputs": {
+              "exception_id": "$request.exception_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it applies the correction — the reassignment, the maintenance record or the disposal — which is the only thing that moves the register (BR-7, E7)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by the verifier who raised it is refused and the register stays where it was (E5).",
+        "atomicity": "One write, and the correction is applied. Where the correction is a disposal it carries the disposal's own approval and thresholds on top of this one, and **that use case cannot complete at all while no asset carries a book value** (UC-18-11 E7)."
+      },
+      "operations": [
+        {
+          "name": "asset.verification.correction.approve",
+          "method": "POST",
+          "path": "/api/v1/verification-exceptions/{exception_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exception_id, since an exception carries one decision and a repeat would apply the correction twice",
+          "purpose": "Approve a proposed correction and apply it to the register.",
+          "parameters": [
+            {
+              "name": "exception_id",
+              "source": "resolved",
+              "sourceRef": "$request.exception_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "verification_exception",
+                "fromPhrase": "$request.exception_phrase",
+                "onNoMatch": "Refuse. No exception awaiting approval matches.",
+                "onAmbiguous": "Ask, naming the outstanding exceptions with their assets, what kind each is and the notes recorded."
+              },
+              "notes": "The exception, named by the asset it was raised against."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was applied and what is left.",
+            "fields": [
+              {
+                "name": "exception_id",
+                "type": "string",
+                "description": "The exception."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Resolved. Terminal (BR-4)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The School Admin. Never the verifier (BR-4, E5)."
+              },
+              {
+                "name": "applied",
+                "type": "string",
+                "description": "What the correction did to the register — the reassignment made, the maintenance record added, or the disposal raised."
+              },
+              {
+                "name": "register_now_says",
+                "type": "object",
+                "description": "What the register holds about the asset after the correction (BR-7)."
+              },
+              {
+                "name": "exceptions_outstanding",
+                "type": "integer",
+                "description": "How many are left on this verification. It cannot complete until every one is resolved (BR-4, E6)."
+              },
+              {
+                "name": "disposal_raised",
+                "type": "object",
+                "description": "Where the correction was a disposal: it is raised, not completed — it carries its own approval and its own thresholds, and the disposal use case cannot complete while no asset carries a remaining book value (UC-18-11 BR-2, E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SELF_APPROVAL",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "The verifier is trying to approve their own correction.",
+              "written": "Nothing.",
+              "notWritten": "The register is unchanged (BR-4)."
+            },
+            {
+              "code": "REGISTER_CHANGED_WITHOUT_APPROVAL",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "An attempt was made to change the register directly.",
+              "written": "Nothing.",
+              "notWritten": "There is no such route (BR-7)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say what the correction actually did. \"Resolved\" covers a reassignment, a repair record and a write-off, and only one of those means the school has lost something (BR-3, BR-4).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never approve a correction the acting user proposed. One person walking round, deciding what was wrong and changing the register to match is the arrangement the separation exists to prevent (BR-4, E5).",
+          "derivedFrom": [
+            "BR-4",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say how many exceptions are still outstanding. The verification does not complete until every one is resolved, and a partially-resolved verification leaves the register drifting exactly where it was found to be wrong (BR-4, E6).",
+          "derivedFrom": [
+            "BR-4",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Where the correction is a disposal, say it is raised rather than done. It carries its own approval and its own thresholds, and that use case cannot complete while nothing in the system calculates a book value (BR-4, BR-7).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A resolved exception is terminal, and neither the verification nor the exception is ever deleted (BR-9, E9). A correction found to be wrong is undone through whatever route its own use case provides — another reassignment, a further maintenance record — not by reversing this."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "laptop wala correction manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve the laptop correction"
+          },
+          "context": "School Admin, Johar Town branch, correction proposed by the verifier.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.verification.correction.approve",
+              "inputs": {
+                "exception_id": "$request.exception_phrase → the laptop exception",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The correction is applied now (PR-1)."
+            }
+          ],
+          "outcome": "Report what it did: the laptop's assignment moved from the physics laboratory to the hall, with the reason on the record. Two exceptions are still outstanding on this verification and it cannot complete until both are resolved."
+        },
+        {
+          "request": {
+            "text": "gum shuda projector wala correction manzoor kar dein",
+            "lang": "ur-Latn",
+            "gloss": "approve the correction on the missing projector"
+          },
+          "context": "School Admin, correction is a disposal for a missing asset worth PKR 68,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.verification.correction.approve",
+              "inputs": {
+                "exception_id": "$request.exception_phrase → the projector exception",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The disposal is raised, not completed (PR-4)."
+            }
+          ],
+          "outcome": "This approval raises a disposal; it does not retire anything. The disposal has its own approval, its own value threshold, and it is recorded as lost — a write-off of PKR 68,000 which the specification itself calls probably an investigation. Say plainly that the disposal cannot be completed at all as the system stands: nothing calculates depreciation, so the asset carries no remaining book value and the gain or loss cannot be computed."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-10-PC-7",
+      "intent": {
+        "name": "asset.verification.correction.return",
+        "summary": "Send a proposed correction back unapproved, with a reason. The register stays as it was.",
+        "routesHere": [
+          "return the correction on the projector — look in the hall before writing it off",
+          {
+            "text": "ye correction wapas bhej dein, pehle hall mein dhoond lein",
+            "lang": "ur-Latn",
+            "gloss": "send this correction back, look in the hall first"
+          },
+          {
+            "text": "abhi write off na karein, dobara talash karein",
+            "lang": "ur-Latn",
+            "gloss": "do not write it off yet, search again"
+          },
+          "send the resolution back for a better explanation"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "manzoor kar dein",
+              "lang": "ur-Latn",
+              "gloss": "approve it"
+            },
+            "goesTo": "asset.verification.correction.approve — this use case.",
+            "note": "The other answer, and it is the one that changes the register."
+          },
+          {
+            "request": {
+              "text": "exception hi hata dein",
+              "lang": "ur-Latn",
+              "gloss": "just remove the exception"
+            },
+            "goesTo": "Not offered.",
+            "note": "Neither a verification nor an exception is ever deleted. The record of what was not where it should have been is the point (BR-9, E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.verification.correction.return",
+            "inputs": {
+              "exception_id": "$request.exception_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The exception goes back to being outstanding and the register is unchanged (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. A return with no reason is refused — the verifier would have nothing to act on.",
+        "atomicity": "One state change. The register does not move, which is the whole difference between returning and approving (BR-7, E7). The verification stays open, because it cannot complete while any exception is unresolved (BR-4, E6)."
+      },
+      "operations": [
+        {
+          "name": "asset.verification.correction.return",
+          "method": "POST",
+          "path": "/api/v1/verification-exceptions/{exception_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exception_id, since an exception carries one decision at a time",
+          "purpose": "Return a proposed correction unapproved, with the reason.",
+          "parameters": [
+            {
+              "name": "exception_id",
+              "source": "resolved",
+              "sourceRef": "$request.exception_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "verification_exception",
+                "fromPhrase": "$request.exception_phrase",
+                "onNoMatch": "Refuse. No exception awaiting approval matches.",
+                "onAmbiguous": "Ask, naming the outstanding exceptions with their assets, what kind each is and the corrections proposed."
+              },
+              "notes": "The exception, named by the asset it was raised against."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters, the approver's own. Required — it is what the verifier is being asked to do, and \"not approved\" sends back the same proposal."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What goes back and what stays true.",
+            "fields": [
+              {
+                "name": "exception_id",
+                "type": "string",
+                "description": "The exception."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Raised. Outstanding again, and the verification cannot complete while it is (BR-4, E6)."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "What the approver asked for, in their own words."
+              },
+              {
+                "name": "register_unchanged",
+                "type": "object",
+                "description": "What the register still says about the asset (BR-7)."
+              },
+              {
+                "name": "what_was_found",
+                "type": "string",
+                "description": "What the verifier actually recorded. Returning the correction does not change that — the asset is still not where the register says (BR-3)."
+              },
+              {
+                "name": "exceptions_outstanding",
+                "type": "integer",
+                "description": "How many are unresolved on this verification now."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No reason was given.",
+              "written": "Nothing.",
+              "notWritten": "The correction stays awaiting approval.",
+              "note": "The use case requires a reason on a correction; E4 is the exception it writes for a missing one."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. The approver is asking for something — another search, a different correction — and the verifier gets only what is written (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the discrepancy has not gone away. The register still says the projector is in the laboratory and the verifier still could not find it; returning the correction leaves that unexplained rather than uncorrected (BR-3, BR-7).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the verification stays open. It cannot complete while any exception is unresolved, so a returned correction holds the whole check open until somebody deals with it (BR-4, E6).",
+          "derivedFrom": [
+            "BR-4",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "asset.verification.correction.approve",
+        "statement": "A corrected proposal comes back and can be approved then. Nothing was undone, because nothing had moved (BR-7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye correction wapas bhej dein, pehle hall mein dhoond lein, abhi write off na karein",
+            "lang": "ur-Latn",
+            "gloss": "send this correction back, look in the hall first, do not write it off yet"
+          },
+          "context": "School Admin, Johar Town branch, proposed correction was a disposal recorded as lost.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.verification.correction.return",
+              "inputs": {
+                "exception_id": "$request.exception_phrase → the projector exception",
+                "return_reason": "as they put it — search the hall before writing it off",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Returned. The register still places the projector in the physics laboratory and the verifier still could not find it there — that gap is now unexplained rather than corrected. The verification stays open until this is settled one way or the other."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-10-PC-8",
+      "intent": {
+        "name": "asset.verifications.read",
+        "summary": "See what has been verified, what was not found, and which assets go missing every time.",
+        "routesHere": [
+          "when was the last asset verification and what did it find?",
+          {
+            "text": "aakhri asset verification kab hui thi aur kya nikla tha?",
+            "lang": "ur-Latn",
+            "gloss": "when was the last asset verification and what did it find?"
+          },
+          {
+            "text": "kaunse assets har baar ghaib milte hain?",
+            "lang": "ur-Latn",
+            "gloss": "which assets are missing every time?"
+          },
+          {
+            "text": "kitne exceptions abhi tak hal nahi hue?",
+            "lang": "ur-Latn",
+            "gloss": "how many exceptions are still unresolved?"
+          },
+          "show me everything recorded as missing this year"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ab verification karwa dein",
+              "lang": "ur-Latn",
+              "gloss": "have a verification taken now"
+            },
+            "goesTo": "asset.verification.schedule — this use case.",
+            "note": "Reading what past checks found and scheduling the next are separate acts."
+          },
+          {
+            "request": {
+              "text": "abhi register mein kya likha hai?",
+              "lang": "ur-Latn",
+              "gloss": "what does the register say now?"
+            },
+            "goesTo": "assets.read — UC-18-07.",
+            "note": "What the register claims is the other question — and it is worth knowing whether anybody has confirmed it."
+          },
+          {
+            "request": {
+              "text": "gum shuda cheez ka kya karein?",
+              "lang": "ur-Latn",
+              "gloss": "what do we do about a missing thing?"
+            },
+            "goesTo": "Not answerable here.",
+            "note": "Beyond a disposal recorded as lost there is no process at all for an asset that is never found (OQ-3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.verifications.read",
+            "inputs": {
+              "scope": "$request.scope",
+              "from_date": "$request.from_date",
+              "to_date": "$request.to_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. Nothing on the register moves by looking."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Neither a verification nor an exception is ever deleted, so the record it reads is complete (BR-9, E9)."
+      },
+      "operations": [
+        {
+          "name": "asset.verifications.read",
+          "method": "GET",
+          "path": "/api/v1/asset-verifications",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return verifications taken, their exceptions and how each was resolved.",
+          "parameters": [
+            {
+              "name": "scope",
+              "source": "request",
+              "sourceRef": "$request.scope",
+              "required": false,
+              "type": "enum: Room|Person|Department|Campus",
+              "notes": "Where the question is about one kind of scope (BR-10)."
+            },
+            {
+              "name": "from_date",
+              "source": "request",
+              "sourceRef": "$request.from_date",
+              "required": false,
+              "type": "date",
+              "notes": "The start of the period asked about."
+            },
+            {
+              "name": "to_date",
+              "source": "request",
+              "sourceRef": "$request.to_date",
+              "required": false,
+              "type": "date",
+              "notes": "The end of it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What has been checked and what keeps going wrong.",
+            "fields": [
+              {
+                "name": "verifications",
+                "type": "object[]",
+                "description": "Scope, date, who verified, assets checked, assets unchecked and exceptions raised."
+              },
+              {
+                "name": "days_since_last",
+                "type": "integer",
+                "description": "How long since anybody walked round. A register unchecked since June is a list rather than a record (BR-5, E10)."
+              },
+              {
+                "name": "never_verified",
+                "type": "object[]",
+                "description": "Assets no verification has ever covered. Their presence has never been confirmed by anybody (BR-5)."
+              },
+              {
+                "name": "exceptions_by_kind",
+                "type": "object[]",
+                "description": "Missing, moved, borrowed and not returned, or broken and quietly disposed of. Only one of the four means the school has lost something (BR-3)."
+              },
+              {
+                "name": "unresolved",
+                "type": "object[]",
+                "description": "Exceptions with no approved correction. Every one holds its verification open, and the register is known to be wrong and still in use (BR-4, E6)."
+              },
+              {
+                "name": "repeat_exceptions",
+                "type": "object[]",
+                "description": "Assets that were exceptions at more than one verification, and custodians who appear at more than one. An asset missing at every verification is not an accident (BR-8)."
+              },
+              {
+                "name": "total_value_missing",
+                "type": "string",
+                "description": "What the register says the assets recorded as missing were worth. Nothing escalates on value — every missing asset is treated the same (OQ-4)."
+              },
+              {
+                "name": "scopes_never_checked",
+                "type": "object[]",
+                "description": "Rooms, people or departments no verification has ever covered. Where a scope is a room, note that nothing in the system creates a room register at all (BR-10, OQ-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the verification screens.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned.",
+              "note": "The use case writes no exception for it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Lead with how long it has been. Every claim the register makes rests on somebody having walked round, and \"nothing since June\" answers most questions about whether it can be relied on (BR-5, E10).",
+          "derivedFrom": [
+            "BR-5",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the unresolved exceptions. For each of those the school knows its register is wrong and is still using it, and the verification that found the problem never completed (BR-4, E6).",
+          "derivedFrom": [
+            "BR-4",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name the assets and the custodians that come up more than once. An asset missing at every verification is not an accident, and neither is a custodian who appears in three (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Give the value of what is recorded as missing, and say that nothing escalates on it. Every missing asset is treated the same whatever it was worth (OQ-4).",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Name what has never been checked at all — assets and scopes both. Never verified and verified clean read identically on the register (BR-5, BR-6).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing. The record it reads is never deleted (BR-9, E9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "aakhri asset verification kab hui thi aur kya nikla tha?",
+            "lang": "ur-Latn",
+            "gloss": "when was the last asset verification and what did it find?"
+          },
+          "context": "Principal, all branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.verifications.read",
+              "inputs": {
+                "scope": "omitted",
+                "from_date": "omitted",
+                "to_date": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-1)."
+            }
+          ],
+          "outcome": "The date first and the gap since. Then what it found, by kind — and separately the exceptions still unresolved, because for those the school knows its register is wrong and is still using it. Add the assets no verification has ever covered: nobody has confirmed those exist at all."
+        },
+        {
+          "request": {
+            "text": "kaunse assets baar baar ghaib milte hain?",
+            "lang": "ur-Latn",
+            "gloss": "which assets keep coming up missing?"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.verifications.read",
+              "inputs": {
+                "scope": "omitted",
+                "from_date": "the last two years",
+                "to_date": "today",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Across verifications, which is the only way the pattern shows (PR-3)."
+            }
+          ],
+          "outcome": "Give the assets that were exceptions at more than one check, and the custodians who appear at more than one — the second list is the one nobody asks for. Add the total value recorded as missing over the period, and say that nothing in the system treats a missing projector differently from a missing stapler."
+        }
+      ]
+    }
+  ]
+}

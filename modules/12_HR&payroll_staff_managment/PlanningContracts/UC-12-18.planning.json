@@ -1,0 +1,1150 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-12-18",
+    "name": "End employment on the school's decision, with notice or immediately, and run the same exit and handover",
+    "module": "HR and payroll",
+    "file": "../UseCases/UC-12-18.json",
+    "featureRef": "12.18 Termination or dismissal of a member of staff"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-12-18-PC-1",
+      "intent": {
+        "name": "termination.open",
+        "summary": "Open a termination case with the reason and the supporting record it rests on. One step, and it takes effect only when approved.",
+        "routesHere": [
+          "open a termination case for this employee, the warnings are on file",
+          {
+            "text": "is mulazim ke khilaf termination ka case khol do",
+            "lang": "ur-Latn",
+            "gloss": "open a termination case against this employee"
+          },
+          {
+            "text": "barkhastagi ka case banao, record laga hua hai",
+            "lang": "ur-Latn",
+            "gloss": "open a dismissal case, the record is attached"
+          },
+          {
+            "text": "mulazim ko nikalna hai, wajah aur record hai",
+            "lang": "ur-Latn",
+            "gloss": "we need to dismiss the employee, the reason and the record are ready"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mulazim khud istifa de de",
+              "lang": "ur-Latn",
+              "gloss": "let the employee resign instead"
+            },
+            "goesTo": "resignation.submit — UC-12-17-PC-1",
+            "note": "A resignation is the employee's own act from their own portal. A termination is the school's decision (BR-12, UC-12-17 BR-1)."
+          },
+          {
+            "request": {
+              "text": "apne khilaf case khol do",
+              "lang": "ur-Latn",
+              "gloss": "open a case against myself"
+            },
+            "goesTo": "Not offered.",
+            "note": "An employee cannot open a termination against themselves or anybody else. Only the School Admin or the Principal can (BR-12, E3)."
+          },
+          {
+            "request": {
+              "text": "record baad mein laga denge",
+              "lang": "ur-Latn",
+              "gloss": "we will attach the record later"
+            },
+            "goesTo": "Not offered.",
+            "note": "A termination with no supporting record cannot be defended afterwards, and the case is not opened without one (BR-1, E1)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "termination.open",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "reason": "$request.reason",
+              "supporting_record_id": "$request.record_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A termination records the reason and the supporting record it rests on — a decision with no record behind it cannot be defended afterwards (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing reason, a missing supporting record, and an employee attempting to open a case are all refused.",
+        "atomicity": "One write: the case, its reason and its supporting record together or not at all. Nothing happens to the employee — they stay active, and the case takes effect only when it is approved (BR-2). A termination case is never deleted; one that is not approved stays on record as returned or withdrawn (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "termination.open",
+          "method": "POST",
+          "path": "/api/v1/terminations",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff_id, since an employee carries one open termination case",
+          "purpose": "Open a termination case with its reason and supporting record.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No active staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation and joining date."
+              },
+              "notes": "An active member of staff. Only the School Admin or the Principal may open a case (BR-12, E3)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 2000 characters. Why employment is being ended, in terms that stand up afterwards (BR-1, E2). The school's own words — this is read back in any dispute."
+            },
+            {
+              "name": "supporting_record_id",
+              "source": "resolved",
+              "sourceRef": "$request.record_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "uploaded_file",
+                "fromPhrase": "$request.record_phrase",
+                "onNoMatch": "Refuse. No supporting record is attached. The case cannot be opened without one (BR-1, E1).",
+                "onAmbiguous": "Ask, naming the documents held against that employee."
+              },
+              "notes": "The warnings, findings or evidence the case rests on (BR-1, E1). Uploaded on the screen and named here — a file does not travel in a plan, and a termination with no record behind it cannot be defended."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The case as opened.",
+            "fields": [
+              {
+                "name": "termination_id",
+                "type": "string",
+                "description": "The case."
+              },
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The employee."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Recorded. Nothing has taken effect (BR-2)."
+              },
+              {
+                "name": "notice_period_on_record",
+                "type": "string",
+                "description": "Carried from the appointment letter. It applies where the effect is with notice (BR-3)."
+              },
+              {
+                "name": "approver_role",
+                "type": "string",
+                "description": "Who approves. Configuration-based; by default the Principal, whose decision is final (BR-2)."
+              },
+              {
+                "name": "employee_notified",
+                "type": "boolean",
+                "description": "False. The employee is notified of the decision when it is approved (BR-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_SUPPORTING_RECORD",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "No supporting record is attached.",
+              "written": "Nothing.",
+              "notWritten": "The case is not opened.",
+              "note": "A decision with no record behind it cannot be defended afterwards (BR-1)."
+            },
+            {
+              "code": "NO_REASON",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No reason is recorded.",
+              "written": "Nothing.",
+              "notWritten": "The case is not opened."
+            },
+            {
+              "code": "EMPLOYEE_CANNOT_OPEN",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "An employee attempted to open a termination.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "Only the School Admin or the Principal can (BR-12)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. It is read back in any dispute about the dismissal (BR-1), and words a planner wrote would be the school's stated grounds for ending somebody's employment.",
+          "derivedFrom": [
+            "BR-1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never open a case without the supporting record. E1 is BR-1 working — the evidence is a file attached on the screen, and a case a plan opened without it is a dismissal with nothing behind it.",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never suggest a resignation as a way around a termination. They are different records with different meanings, and one is the employee's own act (BR-12, UC-12-17 BR-1).",
+          "derivedFrom": [
+            "BR-12",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say plainly that nothing has happened to the employee yet. The case takes effect when it is approved, and they are told then (BR-2, BR-4).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report that the case is permanent. A termination case is never deleted; one that is not approved stays on record as returned or withdrawn (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A termination case is never deleted (BR-11). One that will not proceed is returned unapproved and stays on the record."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is mulazim ke khilaf case khol do — tanbeehi record laga hua hai",
+            "lang": "ur-Latn",
+            "gloss": "open a case against this employee — the warning record is attached"
+          },
+          "context": "Principal, Johar Town branch, with the record uploaded.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.open",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "reason": "as the Principal wrote it",
+                "supporting_record_id": "$request.record_phrase → the attached warnings",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Principal's own (PR-1); the record is named, not created (PR-2)."
+            }
+          ],
+          "outcome": "Recorded. Report that nothing has happened to the employee and they have not been told (PR-4), and that the case stays on record whatever is decided (PR-5)."
+        },
+        {
+          "request": {
+            "text": "mulazim ko nikal do, record baad mein laga denge",
+            "lang": "ur-Latn",
+            "gloss": "dismiss the employee, we will attach the record later"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.open",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "reason": "$request.reason",
+                "supporting_record_id": "$request.record_phrase — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The case is not opened without the record (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the warnings, findings or evidence are attached before the case opens — a dismissal with nothing behind it cannot be defended, and attaching the file afterwards is not the same as the case having rested on it."
+        },
+        {
+          "request": {
+            "text": "case khol do aur wajah tum likh do",
+            "lang": "ur-Latn",
+            "gloss": "open the case and you write the reason"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.open",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "reason": "$request.reason — absent",
+                "supporting_record_id": "$request.record_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Ask for the grounds in the school's own words — the reason is what the employee is told, and it is what is read back if the dismissal is ever questioned."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-18-PC-2",
+      "intent": {
+        "name": "termination.effect.set",
+        "summary": "Set whether the termination runs with notice or takes immediate effect. One step, and immediate means the leaving date is the date of approval.",
+        "routesHere": [
+          "make this termination immediate",
+          {
+            "text": "ye termination foran lagu ho",
+            "lang": "ur-Latn",
+            "gloss": "make this termination take immediate effect"
+          },
+          {
+            "text": "notice ke saath karo, ek mahine ka",
+            "lang": "ur-Latn",
+            "gloss": "with notice, one month"
+          },
+          {
+            "text": "notice period rakhna hai ya foran",
+            "lang": "ur-Latn",
+            "gloss": "should it be with notice or immediate"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "case manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the case"
+            },
+            "goesTo": "termination.approve — UC-12-18-PC-3"
+          },
+          {
+            "request": {
+              "text": "handover ki fikr baad mein karenge",
+              "lang": "ur-Latn",
+              "gloss": "we will worry about the handover later"
+            },
+            "goesTo": "Not offered.",
+            "note": "An immediate termination still cannot leave a class unstaffed. The checklist is worked the same day and anything unassigned is escalated at once (BR-9, E6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "termination.effect.set",
+            "inputs": {
+              "termination_id": "$request.termination_phrase",
+              "effect": "$request.effect",
+              "notice_period": "$request.notice_period",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. With notice, a notice period runs exactly as for a resignation; with immediate effect the leaving date is the date of approval and no notice period runs (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the effect, the notice period where one applies, and the audit entry together or not at all. Nothing takes effect until the case is approved (BR-2). Where the effect is immediate the School Admin works the handover checklist, since the departing employee is not there to (BR-5) — and anything unassigned is escalated at once rather than over a notice period (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "termination.effect.set",
+          "method": "PUT",
+          "path": "/api/v1/terminations/{termination_id}/effect",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "termination_id, since a case carries one effect",
+          "purpose": "Set the termination's effect and, where it runs with notice, the notice period.",
+          "parameters": [
+            {
+              "name": "termination_id",
+              "source": "resolved",
+              "sourceRef": "$request.termination_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "termination",
+                "fromPhrase": "$request.termination_phrase",
+                "onNoMatch": "Refuse. No termination case matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the effect and the status."
+              },
+              "notes": "The termination case, resolved from the employee and its state."
+            },
+            {
+              "name": "effect",
+              "source": "request",
+              "sourceRef": "$request.effect",
+              "required": true,
+              "type": "enum: With notice | Immediate",
+              "notes": "How the termination takes effect (BR-3). Immediate means the leaving date is the date of approval, the access goes the same day, and the checklist is worked that day — never assumed."
+            },
+            {
+              "name": "notice_period",
+              "source": "request",
+              "sourceRef": "$request.notice_period",
+              "required": false,
+              "type": "string",
+              "notes": "Required where the effect is with notice. Defaults to the notice period on the staff record and can be changed (BR-3)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The effect as set.",
+            "fields": [
+              {
+                "name": "termination_id",
+                "type": "string",
+                "description": "The case."
+              },
+              {
+                "name": "effect",
+                "type": "string",
+                "description": "With notice, or Immediate (BR-3)."
+              },
+              {
+                "name": "notice_period",
+                "type": "string",
+                "description": "Where one runs."
+              },
+              {
+                "name": "leaving_date",
+                "type": "date",
+                "description": "Produced by the notice period, or the date of approval where the effect is immediate (BR-3)."
+              },
+              {
+                "name": "handover_worked_by",
+                "type": "string",
+                "description": "The School Admin where the effect is immediate, since the departing employee is not there to work it (BR-5)."
+              },
+              {
+                "name": "handover_items",
+                "type": "integer",
+                "description": "Items that will have to be cleared — the same day where the effect is immediate (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOTICE_PERIOD_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The effect is with notice and no notice period is set.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved."
+            },
+            {
+              "code": "ALREADY_APPROVED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The case is already approved.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "An approved termination is not reversed and its terms are not changed. The decision is final (BR-2, E10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the effect. Immediate means somebody's employment ends the day the case is approved, their access goes that day, and their classes have to be covered that day (BR-3, BR-9) — it is not a detail to infer from the reason.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report what immediate effect actually costs. The checklist is worked the same day by the School Admin, and anything unassigned is escalated at once rather than over a notice period (BR-5, BR-9, E6).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-9",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never set an effect on an approved case. The decision is final and there is no route that reverses it (BR-2, E10).",
+          "derivedFrom": [
+            "BR-2",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "The effect is set again before approval. After approval the decision is final and there is no route back (BR-2, E10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye termination foran lagu ho",
+            "lang": "ur-Latn",
+            "gloss": "make this termination take immediate effect"
+          },
+          "context": "Principal, Johar Town branch, the employee holds nine timetable slots.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.effect.set",
+              "inputs": {
+                "termination_id": "$request.termination_phrase",
+                "effect": "Immediate",
+                "notice_period": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Immediate because the Principal said so (PR-1)."
+            }
+          ],
+          "outcome": "Set. Report that on approval the leaving date is that day, access goes the same day, and the School Admin works the whole checklist that day (PR-2) — nine timetable slots have to find teachers before tomorrow morning."
+        },
+        {
+          "request": {
+            "text": "mulazim ko nikal do",
+            "lang": "ur-Latn",
+            "gloss": "dismiss the employee"
+          },
+          "context": "School Admin, Johar Town branch, with no effect stated.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.effect.set",
+              "inputs": {
+                "termination_id": "$request.termination_phrase",
+                "effect": "$request.effect — absent",
+                "notice_period": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is set. Ask whether it runs with notice or takes immediate effect — with notice, a notice period runs as for a resignation and the handover has time; immediate means their classes need covering the same day."
+        },
+        {
+          "request": {
+            "text": "notice ke saath karo",
+            "lang": "ur-Latn",
+            "gloss": "do it with notice"
+          },
+          "context": "Principal, Johar Town branch, with no length given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.effect.set",
+              "inputs": {
+                "termination_id": "$request.termination_phrase",
+                "effect": "With notice",
+                "notice_period": "$request.notice_period — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns NOTICE_PERIOD_REQUIRED (E1)."
+            }
+          ],
+          "outcome": "Nothing is set. Report the notice period carried on the staff record and ask whether that is the one to use — it decides the leaving date, which is when the access goes and what the settlement is calculated to."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-18-PC-3",
+      "intent": {
+        "name": "termination.approve",
+        "summary": "Approve a termination, which ends the employment and tells the employee. The configured approver only, one step, and there is no route back.",
+        "routesHere": [
+          "approve this termination",
+          {
+            "text": "ye termination manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this termination"
+          },
+          {
+            "text": "case manzoor hai, lagu kar do",
+            "lang": "ur-Latn",
+            "gloss": "the case is accepted, put it into effect"
+          },
+          {
+            "text": "barkhastagi manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the dismissal"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "case wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "return the case"
+            },
+            "goesTo": "termination.return — UC-12-18-PC-4"
+          },
+          {
+            "request": {
+              "text": "manzoori wapas le lo",
+              "lang": "ur-Latn",
+              "gloss": "reverse the approval"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is no such route. The decision is final (BR-2, E10)."
+          },
+          {
+            "request": {
+              "text": "handover ke kaam bant do",
+              "lang": "ur-Latn",
+              "gloss": "distribute the handover items"
+            },
+            "goesTo": "handover.item.reassign — UC-12-17-PC-6",
+            "note": "The exit path is the same as a resignation from the handover onward (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "termination.approve",
+            "inputs": {
+              "termination_id": "$request.termination_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it is not reversible. The employee is notified of the decision, the reason and the leaving date — a person dismissed without being told why has no way to respond (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by a role the configuration does not name is refused by the API.",
+        "atomicity": "One write, atomic in itself: the approval, the leaving date, the handover checklist and the notification to the employee together or not at all. Where the effect is immediate the leaving date is today, the access goes today, and the checklist is worked today by the School Admin (BR-3, BR-5, BR-6, BR-9). **There is no route that reverses this** — the decision is final (BR-2, E10)."
+      },
+      "operations": [
+        {
+          "name": "termination.approve",
+          "method": "POST",
+          "path": "/api/v1/terminations/{termination_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "termination_id, since a case is approved once and a repeat must not notify the employee twice",
+          "purpose": "Approve the termination and put it into effect.",
+          "parameters": [
+            {
+              "name": "termination_id",
+              "source": "resolved",
+              "sourceRef": "$request.termination_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "termination",
+                "fromPhrase": "$request.termination_phrase",
+                "onNoMatch": "Refuse. No termination case matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the effect and the status."
+              },
+              "notes": "The termination case, resolved from the employee and its state."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval and what it set in motion.",
+            "fields": [
+              {
+                "name": "termination_id",
+                "type": "string",
+                "description": "The case."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Notice running, or Handover outstanding where the effect is immediate."
+              },
+              {
+                "name": "effect",
+                "type": "string",
+                "description": "With notice, or Immediate (BR-3)."
+              },
+              {
+                "name": "leaving_date",
+                "type": "date",
+                "description": "Produced by the notice period, or today where the effect is immediate (BR-3)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The configured approver; by default the Principal, whose decision is final (BR-2)."
+              },
+              {
+                "name": "employee_notified",
+                "type": "string",
+                "description": "Delivery status. They are told the decision, the reason and the leaving date (BR-4)."
+              },
+              {
+                "name": "handover_items",
+                "type": "object[]",
+                "description": "The same checklist as a resignation — timetable slots, section in charge, unsubmitted marks, activities (BR-5)."
+              },
+              {
+                "name": "handover_worked_by",
+                "type": "string",
+                "description": "The School Admin where the effect is immediate (BR-5)."
+              },
+              {
+                "name": "items_escalated",
+                "type": "integer",
+                "description": "Items escalated at once where the effect is immediate and there is no notice period to work them in (BR-9, E6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_CONFIGURED_APPROVER",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The School Admin approved where the Principal is configured.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Who approves is configuration-based (BR-2)."
+            },
+            {
+              "code": "NO_EFFECT_SET",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "No effect has been set on the case.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "With notice or immediate decides the leaving date (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a case the actor opened where the configuration names somebody else. E4 is BR-2 working, and this ends somebody's employment.",
+          "derivedFrom": [
+            "BR-2",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say plainly that there is no route back. An approved termination is not reversed and the decision is final (BR-2, E10) — this is the last moment at which anything can be reconsidered.",
+          "derivedFrom": [
+            "BR-2",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the employee is told the reason. A person dismissed without being told why has no way to respond (BR-4), and the notification is part of the same act.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the handover checklist and, on an immediate termination, that it is worked today. An immediate termination still cannot leave a class unstaffed (BR-9, E6).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-9",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain a reassignment. Each item goes to a named person who can take it, and a class handed to somebody already teaching then is still unstaffed (UC-12-17 E5).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no route that reverses an approved termination. The decision is final (BR-2, E10). The controller must not attempt a compensating call — the employee has been told."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye termination manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this termination"
+          },
+          "context": "Principal, Johar Town branch, effect immediate, nine timetable slots held.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.approve",
+              "inputs": {
+                "termination_id": "$request.termination_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved. The leaving date is today, the access goes today, and the employee is told the decision, the reason and the date (PR-3). Report the nine items now with the School Admin and escalated at once (PR-4) — those classes need covering this afternoon. There is no route back from here (PR-2)."
+        },
+        {
+          "request": {
+            "text": "maine case khola tha, ab manzoor bhi kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I opened the case, I will approve it too"
+          },
+          "context": "School Admin, Johar Town branch, where the Principal is the configured approver.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.approve",
+              "inputs": {
+                "termination_id": "$request.termination_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_CONFIGURED_APPROVER (E4)."
+            }
+          ],
+          "outcome": "Not approved. Report that the Principal approves and their decision is final — ending somebody's employment on the same person's case and signature would remove the only check there is."
+        },
+        {
+          "request": {
+            "text": "manzoor kar do, agar ghalat hua to wapas le lenge",
+            "lang": "ur-Latn",
+            "gloss": "approve it, we can reverse it if it turns out wrong"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.approve",
+              "inputs": {
+                "termination_id": "$request.termination_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval is planned as asked, but PR-2 governs the reply."
+            }
+          ],
+          "outcome": "Report before approving that there is no route that reverses an approved termination — the decision is final, the employee is told, and re-employing them afterwards would be a fresh appointment with a fresh record. If there is any doubt, returning the case with a reason keeps it open."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-18-PC-4",
+      "intent": {
+        "name": "termination.return",
+        "summary": "Return a termination case unapproved, with the reason. One step, and the employee is told nothing.",
+        "routesHere": [
+          "return this case — the evidence is not strong enough",
+          {
+            "text": "ye case wapas bhej do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "return this case with the reason"
+          },
+          {
+            "text": "case manzoor nahi, dobara dekho",
+            "lang": "ur-Latn",
+            "gloss": "the case is not approved, look at it again"
+          },
+          {
+            "text": "shahadat kafi nahi hai",
+            "lang": "ur-Latn",
+            "gloss": "the evidence is not enough"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "case manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the case"
+            },
+            "goesTo": "termination.approve — UC-12-18-PC-3"
+          },
+          {
+            "request": {
+              "text": "case mita do",
+              "lang": "ur-Latn",
+              "gloss": "delete the case"
+            },
+            "goesTo": "Not offered.",
+            "note": "A termination case is never deleted. One that is not approved stays on record as returned or withdrawn (BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "termination.return",
+            "inputs": {
+              "termination_id": "$request.termination_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The employee has not been told anything — they are notified only on approval (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. The employee stays active and knows nothing of the case (BR-4). The case stays on record as returned rather than disappearing (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "termination.return",
+          "method": "POST",
+          "path": "/api/v1/terminations/{termination_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "termination_id, since a case carries one decision",
+          "purpose": "Return a termination case unapproved with the reason.",
+          "parameters": [
+            {
+              "name": "termination_id",
+              "source": "resolved",
+              "sourceRef": "$request.termination_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "termination",
+                "fromPhrase": "$request.termination_phrase",
+                "onNoMatch": "Refuse. No termination case matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with the employee, the effect and the status."
+              },
+              "notes": "The termination case, resolved from the employee and its state."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required to return a case unapproved. Whoever opened it works from it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "termination_id",
+                "type": "string",
+                "description": "The case."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It stays on record (BR-11)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The configured approver."
+              },
+              {
+                "name": "employee_notified",
+                "type": "boolean",
+                "description": "False. They are told only on approval (BR-4)."
+              },
+              {
+                "name": "record_state",
+                "type": "string",
+                "description": "Active. Nothing about the employee's status changes."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "A case was returned with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The case is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. Whoever opened the case works from it, and it is part of the record of a dismissal that was not made.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never notify the employee of a returned case. They are told only on approval (BR-4), and somebody told about a dismissal that was refused cannot be untold.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the case stays on record. A termination case is never deleted; one that is not approved stays as returned or withdrawn (BR-11).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report that nothing about the employee's status changes. They remain active, on the roster and in payroll.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. The case is strengthened and resubmitted, or left as returned on the record (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye case wapas bhej do — shahadat kafi nahi hai",
+            "lang": "ur-Latn",
+            "gloss": "return this case — the evidence is not strong enough"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.return",
+              "inputs": {
+                "termination_id": "$request.termination_phrase",
+                "reason": "The supporting record shows one verbal warning. A written warning and a response are needed before this can be approved.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the Principal's own (PR-1)."
+            }
+          ],
+          "outcome": "Returned. Report that the employee has been told nothing (PR-2) and remains active on the roster (PR-4), and that the case stays on record as returned (PR-3)."
+        },
+        {
+          "request": {
+            "text": "case wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return the case"
+          },
+          "context": "Principal, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.return",
+              "inputs": {
+                "termination_id": "$request.termination_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what is missing — whoever opened the case works from the reason, and a case returned without one either comes back unchanged or is quietly dropped."
+        },
+        {
+          "request": {
+            "text": "case wapas bhej do aur record se hata do",
+            "lang": "ur-Latn",
+            "gloss": "return the case and remove it from the record"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "termination.return",
+              "inputs": {
+                "termination_id": "$request.termination_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The return only. Nothing is deleted (PR-3)."
+            }
+          ],
+          "outcome": "Returned with the reason. Report that a termination case is never deleted — it stays as returned, which is what makes it possible to say afterwards that a case was considered and not approved."
+        }
+      ]
+    }
+  ]
+}

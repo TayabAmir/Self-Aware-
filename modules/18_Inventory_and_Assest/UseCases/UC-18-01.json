@@ -1,0 +1,996 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-18-01",
+  "featureRef": "18.1 Setting up a stock item",
+  "name": "Create a stock item once, with the unit it is counted in and the level at which it must be bought again",
+  "module": "Inventory, Assets & Point-of-Sale",
+  "alsoAffectsModules": [
+    "Finance"
+  ],
+  "priority": "MVP",
+  "priorityReason": "Requests, receipts, issues and counts all read the item. Nothing in the module works until it exists.",
+  "goal": {
+    "actor": "a School Admin",
+    "capability": "to define each stock item once, with its unit and its reorder level",
+    "outcome": "everything counted, requested, received and issued is counted in the same unit against the same item"
+  },
+  "primaryActor": "School Admin",
+  "secondaryActors": [
+    {
+      "actor": "Staff (storekeeper)",
+      "involvement": "Receives, issues and counts against the items. Does not create them."
+    },
+    {
+      "actor": "Accounts",
+      "involvement": "Values the stock held."
+    }
+  ],
+  "externalActors": [],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "An item falls below its reorder level, which offers it for inclusion in a stock request.",
+        "source": "UC-18-02"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An authenticated session exists and the acting user is School Admin.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "The category list exists, or the category is created as the item is."
+    }
+  ],
+  "postConditions": [
+    "The item exists once, with its name, category, unit, reorder level and whether it is consumable or returnable.",
+    "The unit is fixed, so everything requested, received, issued and counted for that item is counted the same way.",
+    "The reorder level is set by the School Admin, not by whoever holds the store, since it commits the school to buying.",
+    "Whether the item is consumable or returnable is recorded, which decides whether an issue stays outstanding against the person who took it.",
+    "The item is available for requests, receipts, issues and counts.",
+    "Every change to the item is recorded with who made it.",
+    "Nothing was deleted. An item no longer stocked is deactivated and stays readable, since receipts, issues and counts reference it."
+  ],
+  "screens": [
+    {
+      "name": "Stock items",
+      "route": "/inventory/items",
+      "sidebar": "Inventory",
+      "columns": [
+        "Item",
+        "Category",
+        "Unit",
+        "On hand",
+        "Reorder level",
+        "Consumable or returnable",
+        "Status"
+      ],
+      "defaultSort": "Category, then item name",
+      "filters": [
+        "Category",
+        "Consumable or returnable",
+        "Below reorder level",
+        "Status"
+      ],
+      "actions": [
+        "Create an item",
+        "Open",
+        "Edit",
+        "Deactivate",
+        "Export"
+      ],
+      "visibleTo": [
+        "School Admin",
+        "Staff",
+        "Accounts",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Create an item",
+      "route": "/inventory/items/new",
+      "sidebar": "Inventory",
+      "actions": [
+        "Enter the name and category",
+        "Select the unit",
+        "Set the reorder level",
+        "Set consumable or returnable",
+        "Save"
+      ],
+      "visibleTo": [
+        "School Admin"
+      ]
+    },
+    {
+      "name": "Item history",
+      "route": "/inventory/items/{id}/history",
+      "sidebar": "Inventory",
+      "columns": [
+        "When",
+        "Field",
+        "From",
+        "To",
+        "Changed by"
+      ],
+      "defaultSort": "When, newest first",
+      "visibleTo": [
+        "School Admin",
+        "Principal / Director"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Name",
+      "type": "text",
+      "required": "yes",
+      "validation": "2 to 100 characters. Unique within its category (BR-6).",
+      "example": "Whiteboard marker, black"
+    },
+    {
+      "name": "Category",
+      "type": "lookup",
+      "required": "yes",
+      "validation": "What kind of item it is. Lists and counts group by it.",
+      "example": "Stationery",
+      "lookupSource": "Stock categories"
+    },
+    {
+      "name": "Unit",
+      "type": "enum",
+      "required": "yes",
+      "validation": "The unit the item is counted in. Fixed once set, since a change would make every past count mean something different (BR-2).",
+      "example": "Piece",
+      "enumValues": [
+        "Piece",
+        "Box",
+        "Ream",
+        "Packet",
+        "Litre",
+        "Kilogram",
+        "Metre",
+        "Set"
+      ]
+    },
+    {
+      "name": "Reorder level",
+      "type": "number",
+      "required": "yes",
+      "validation": "The quantity at which the item must be bought again. Zero or more. Set by the School Admin because it commits the school to buying (BR-3).",
+      "example": 20
+    },
+    {
+      "name": "Consumable or returnable",
+      "type": "enum",
+      "required": "yes",
+      "validation": "A consumable is used up once issued. A return is expected back and stays outstanding against the person who took it (BR-4).",
+      "example": "Consumable",
+      "enumValues": [
+        "Consumable",
+        "Returnable"
+      ]
+    },
+    {
+      "name": "On hand",
+      "type": "generated",
+      "required": "no",
+      "validation": "The quantity currently held, from receipts, issues and counts. Never typed here (BR-5).",
+      "example": 14
+    },
+    {
+      "name": "Below reorder level",
+      "type": "generated",
+      "required": "no",
+      "validation": "Set where the quantity on hand has fallen to or below the reorder level, which offers it for a request (BR-7).",
+      "default": false,
+      "example": true
+    },
+    {
+      "name": "Deactivation reason",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 250 characters. Required to deactivate an item (BR-9).",
+      "example": "The school has moved to refillable markers.",
+      "requiredWhen": "An item is being deactivated"
+    },
+    {
+      "name": "Status",
+      "type": "generated",
+      "required": "no",
+      "validation": "Active or deactivated. Never deleted (BR-9).",
+      "default": "Active",
+      "example": "Active",
+      "enumValues": [
+        "Active",
+        "Deactivated"
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Stock item",
+      "operations": [
+        "create",
+        "read",
+        "update",
+        "deactivate"
+      ],
+      "notes": "One per item, with its unit, reorder level and type. Deactivated rather than deleted (BR-9)."
+    },
+    {
+      "entity": "Stock category",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read to group the item."
+    },
+    {
+      "entity": "Item change",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "One row per change, with the previous value and who made it. Append only (BR-8)."
+    },
+    {
+      "entity": "Stock balance",
+      "operations": [
+        "read"
+      ],
+      "notes": "Read for the quantity on hand. Written by receipts, issues and counts (BR-5)."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Creation, every change and every deactivation."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "create",
+        "edit",
+        "deactivate"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Creates and maintains the items, and sets the reorder level (BR-3)."
+    },
+    {
+      "actor": "Staff",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Receives, issues and counts against the items. Cannot create one or change a reorder level (BR-3)."
+    },
+    {
+      "actor": "Accounts",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Values the stock held. Does not create items."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "All branches."
+    },
+    {
+      "actor": "Teacher, Coordinator",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "Sees what exists, since they request against it."
+    },
+    {
+      "actor": "Parent / Guardian, Student",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "An item is created once, and everything in the module works against it. Two items for the same thing is two stock balances for one shelf."
+    },
+    {
+      "id": "BR-2",
+      "rule": "The unit is fixed once the item is in use. Changing it would make every past receipt, issue and count mean something different from what it meant when it was recorded."
+    },
+    {
+      "id": "BR-3",
+      "rule": "A reorder level is a standing commitment to buy rather than a description, so it is set by the School Admin and not by whoever happens to hold the store."
+    },
+    {
+      "id": "BR-4",
+      "rule": "An item is consumable or returnable, and the difference matters. A consumable is used up once issued — a marker, a ream of paper, a reagent. A return is expected back — a projector remote, a set of keys, a lab instrument — and stays outstanding against the person who took it until it is returned."
+    },
+    {
+      "id": "BR-5",
+      "rule": "The quantity on hand is never typed here. It comes from receipts, issues and counts, and this screen shows it rather than setting it."
+    },
+    {
+      "id": "BR-6",
+      "rule": "An item name is unique within its category. Two entries called the same thing in the same category is how a store ends up with two balances for one shelf."
+    },
+    {
+      "id": "BR-7",
+      "rule": "An item at or below its reorder level is flagged, and is offered for inclusion when a stock request is raised."
+    },
+    {
+      "id": "BR-8",
+      "rule": "Every change to an item is recorded with who made it. A reorder level that moved without explanation is a purchasing decision nobody made."
+    },
+    {
+      "id": "BR-9",
+      "rule": "An item is deactivated rather than deleted, with a reason, and stays readable. Receipts, issues and counts reference it, and deleting it would leave a past count unreadable."
+    },
+    {
+      "id": "BR-10",
+      "rule": "A deactivated item cannot be requested, received or issued, but its history stays and it still appears in a count of what is physically on the shelf until the shelf is clear."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Stock item",
+      "states": [
+        "Active",
+        "Below reorder level",
+        "Deactivated"
+      ],
+      "initial": "Active",
+      "terminal": [],
+      "transitions": [
+        {
+          "from": "Active",
+          "to": "Below reorder level",
+          "triggeredBy": "System",
+          "condition": "The quantity on hand falls to or below the reorder level (BR-7)."
+        },
+        {
+          "from": "Below reorder level",
+          "to": "Active",
+          "triggeredBy": "System",
+          "condition": "A receipt takes the quantity back above the level."
+        },
+        {
+          "from": "Active",
+          "to": "Deactivated",
+          "triggeredBy": "School Admin",
+          "condition": "Deactivated with a reason. The history stays (BR-9)."
+        },
+        {
+          "from": "Deactivated",
+          "to": "Active",
+          "triggeredBy": "School Admin",
+          "condition": "Brought back into use."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "School Admin",
+      "navigation": "Login → Inventory → Stock items → Create an item",
+      "userAction": "Creates the item with its name, category, the unit it is counted in, the reorder level, and whether it is consumable or returnable.",
+      "function": "createStockItem(name, category, unit, reorderLevel, type)",
+      "systemResponse": "Checks the name is unique within the category and requires all five.",
+      "rules": [
+        "BR-1",
+        "BR-6"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "School Admin",
+      "navigation": "Create an item → Unit",
+      "userAction": "Selects the unit the item will be counted in.",
+      "function": "setUnit(itemId, unit)",
+      "systemResponse": "Fixes the unit once the item is in use, since changing it would make every past count mean something different.",
+      "rules": [
+        "BR-2"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "School Admin",
+      "navigation": "Create an item → Reorder level",
+      "userAction": "Sets the level at which the item must be bought again.",
+      "function": "setReorderLevel(itemId, level)",
+      "systemResponse": "Records it against the item. Only the School Admin may set it.",
+      "rules": [
+        "BR-3"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "School Admin",
+      "navigation": "Create an item → Consumable or returnable",
+      "userAction": "Records whether the item is used up once issued or is expected back.",
+      "function": "setItemType(itemId, type)",
+      "systemResponse": "Decides whether an issue of this item stays outstanding against the person who took it.",
+      "rules": [
+        "BR-4"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "System",
+      "navigation": "Stock items",
+      "userAction": "—",
+      "function": "makeItemAvailable(itemId)",
+      "systemResponse": "Makes the item available for requests, receipts, issues and counts, showing the quantity on hand rather than setting it.",
+      "rules": [
+        "BR-5"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "flagBelowReorderLevel(itemId)",
+      "systemResponse": "Flags the item when the quantity on hand falls to or below the reorder level, and offers it for inclusion in a request.",
+      "rules": [
+        "BR-7"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "School Admin",
+      "navigation": "Stock items → Edit",
+      "userAction": "Changes the item as circumstances change.",
+      "function": "updateStockItem(itemId, changes)",
+      "systemResponse": "Records the change with who made it, and refuses a change to the unit once the item is in use.",
+      "rules": [
+        "BR-2",
+        "BR-8"
+      ]
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 4,
+      "condition": "The item is returnable",
+      "actor": "School Admin",
+      "navigation": "Create an item → Consumable or returnable → Returnable",
+      "behaviour": "An issue of it stays outstanding against the person who took it until it is returned. A projector remote, a set of keys, a lab instrument (BR-4).",
+      "function": "setItemType(itemId, 'Returnable')",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 6,
+      "condition": "The item falls to its reorder level",
+      "actor": "System",
+      "navigation": "Stock items → Below reorder level",
+      "behaviour": "It is flagged and offered for inclusion when a stock request is raised (BR-7).",
+      "function": "flagBelowReorderLevel(itemId)"
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 7,
+      "condition": "The item is no longer stocked",
+      "actor": "School Admin",
+      "navigation": "Stock items → Deactivate",
+      "behaviour": "It is deactivated with a reason and stays readable, since receipts, issues and counts reference it (BR-9, BR-10).",
+      "function": "deactivateStockItem(itemId, reason)"
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 2,
+      "condition": "The unit was set wrongly and the item is already in use",
+      "actor": "School Admin",
+      "navigation": "Stock items → Edit → Unit",
+      "behaviour": "The change is refused. The item is deactivated and a new one created, so past counts keep their meaning (BR-2).",
+      "function": "updateStockItem(itemId, changes)",
+      "resumesAtStep": 1
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 7,
+      "condition": "The reorder level changes",
+      "actor": "School Admin",
+      "navigation": "Stock items → Edit → Reorder level",
+      "behaviour": "The change is recorded with who made it, since a level that moved without explanation is a purchasing decision nobody made (BR-8).",
+      "function": "updateStockItem(itemId, changes)",
+      "resumesAtStep": 6
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 1,
+      "condition": "An item of the same name exists in the same category",
+      "systemResponse": "It is not created (BR-6).",
+      "messageShown": "An item called Whiteboard marker, black already exists in Stationery.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E2",
+      "atStep": 1,
+      "condition": "No unit is selected",
+      "systemResponse": "The item is not created (BR-2).",
+      "messageShown": "Select the unit this item is counted in.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E3",
+      "atStep": 1,
+      "condition": "No reorder level is set",
+      "systemResponse": "The item is not created (BR-3).",
+      "messageShown": "Set the reorder level. It is what triggers buying the item again.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E4",
+      "atStep": 3,
+      "condition": "A member of staff attempts to set the reorder level",
+      "systemResponse": "It is refused (BR-3).",
+      "messageShown": "Only the School Admin can set a reorder level.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E5",
+      "atStep": 7,
+      "condition": "The unit is changed on an item already in use",
+      "systemResponse": "It is refused (BR-2).",
+      "messageShown": "This item has receipts and issues against it. Changing the unit would make them mean something different.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 5,
+      "condition": "A user attempts to type the quantity on hand",
+      "systemResponse": "There is no such field (BR-5).",
+      "messageShown": "The quantity on hand comes from receipts, issues and counts.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 7,
+      "condition": "An item is deactivated with no reason",
+      "systemResponse": "It is not deactivated (BR-9).",
+      "messageShown": "Give a reason for deactivating this item.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E8",
+      "atStep": 7,
+      "condition": "An item is deleted",
+      "systemResponse": "There is no such control (BR-9).",
+      "messageShown": "A stock item is deactivated, never deleted. Receipts, issues and counts reference it.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E9",
+      "atStep": 5,
+      "condition": "A deactivated item is requested or issued",
+      "systemResponse": "It is refused (BR-10).",
+      "messageShown": "This item is no longer stocked.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Item at or below its reorder level",
+      "recipient": "School Admin and Staff",
+      "channels": [
+        "inApp"
+      ],
+      "template": "STOCK_BELOW_REORDER_LEVEL",
+      "contents": [
+        "Item",
+        "Category",
+        "On hand",
+        "Reorder level"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "An item below its reorder level is offered for inclusion in a stock request.",
+      "affects": {
+        "id": "UC-18-02",
+        "name": "Submitting a stock request",
+        "link": "UC-18-02.json"
+      }
+    },
+    {
+      "effect": "Receipts increase the quantity on hand against the item.",
+      "affects": {
+        "id": "UC-18-04",
+        "name": "Recording a receipt into stock",
+        "link": "UC-18-04.json"
+      }
+    },
+    {
+      "effect": "Issues decrease it, and a returnable item stays outstanding.",
+      "affects": {
+        "id": "UC-18-05",
+        "name": "Recording an issue from stock",
+        "link": "UC-18-05.json"
+      }
+    },
+    {
+      "effect": "A count adjusts it to what is physically on the shelf.",
+      "affects": {
+        "id": "UC-18-06",
+        "name": "Stock count and adjustment",
+        "link": "UC-18-06.json"
+      }
+    },
+    {
+      "effect": "Accounts value the stock held from these items.",
+      "affects": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    }
+  ],
+  "integrations": [],
+  "reports": [
+    {
+      "name": "Stock items",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Item",
+        "Category",
+        "Unit",
+        "On hand",
+        "Reorder level",
+        "Consumable or returnable",
+        "Status"
+      ],
+      "grouping": "By category",
+      "totals": "Items per category, and count below reorder level"
+    },
+    {
+      "name": "Below reorder level",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Item",
+        "Category",
+        "Unit",
+        "On hand",
+        "Reorder level",
+        "Shortfall"
+      ],
+      "grouping": "By category",
+      "totals": "Items needing to be bought"
+    },
+    {
+      "name": "Item change history",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Item",
+        "When",
+        "Field",
+        "From",
+        "To",
+        "Changed by"
+      ],
+      "grouping": "By item",
+      "totals": "Changes in the period"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "An item created with a name, category, unit, reorder level and type",
+      "when": "it is saved",
+      "then": "it is available for requests, receipts, issues and counts"
+    },
+    {
+      "id": "AC-2",
+      "given": "A second item of the same name in the same category",
+      "when": "it is created",
+      "then": "it is refused"
+    },
+    {
+      "id": "AC-3",
+      "given": "An item created with no reorder level",
+      "when": "it is saved",
+      "then": "it is refused"
+    },
+    {
+      "id": "AC-4",
+      "given": "A member of staff",
+      "when": "they attempt to set a reorder level",
+      "then": "it is refused and the School Admin is named"
+    },
+    {
+      "id": "AC-5",
+      "given": "An item with receipts and issues against it",
+      "when": "its unit is changed",
+      "then": "the change is refused, so past counts keep their meaning"
+    },
+    {
+      "id": "AC-6",
+      "given": "A returnable item issued to somebody",
+      "when": "the issue is checked",
+      "then": "it stays outstanding against them until it is returned"
+    },
+    {
+      "id": "AC-7",
+      "given": "A consumable item issued to somebody",
+      "when": "the issue is checked",
+      "then": "nothing stays outstanding"
+    },
+    {
+      "id": "AC-8",
+      "given": "An item with 20 as its reorder level and 14 on hand",
+      "when": "the check runs",
+      "then": "it is flagged and offered for inclusion in a request"
+    },
+    {
+      "id": "AC-9",
+      "given": "Any item",
+      "when": "a user looks for a field to type the quantity on hand",
+      "then": "there is none"
+    },
+    {
+      "id": "AC-10",
+      "given": "An item no longer stocked",
+      "when": "it is deactivated with a reason",
+      "then": "it leaves the request and issue lists and its history stays readable"
+    },
+    {
+      "id": "AC-11",
+      "given": "Any item",
+      "when": "deletion is attempted",
+      "then": "there is no such control"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-18-02",
+        "name": "Submitting a stock request",
+        "link": "UC-18-02.json",
+        "why": "Offers an item below its reorder level."
+      },
+      {
+        "id": "UC-18-04",
+        "name": "Recording a receipt into stock",
+        "link": "UC-18-04.json",
+        "why": "Increases the quantity on hand."
+      },
+      {
+        "id": "UC-18-05",
+        "name": "Recording an issue from stock",
+        "link": "UC-18-05.json",
+        "why": "Decreases it, and holds a returnable item outstanding."
+      },
+      {
+        "id": "UC-18-06",
+        "name": "Stock count and adjustment",
+        "link": "UC-18-06.json",
+        "why": "Adjusts it to what is physically there."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Keeps the reorder level with the School Admin."
+      },
+      {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json",
+        "why": "Authenticated session."
+      }
+    ],
+    "masterData": [
+      "Stock categories",
+      "Units of measure"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Asking for the item to be bought",
+      "handledBy": {
+        "id": "UC-18-02",
+        "name": "Submitting a stock request",
+        "link": "UC-18-02.json"
+      }
+    },
+    {
+      "item": "Bringing goods into stock",
+      "handledBy": {
+        "id": "UC-18-04",
+        "name": "Recording a receipt into stock",
+        "link": "UC-18-04.json"
+      }
+    },
+    {
+      "item": "Giving stock out",
+      "handledBy": {
+        "id": "UC-18-05",
+        "name": "Recording an issue from stock",
+        "link": "UC-18-05.json"
+      }
+    },
+    {
+      "item": "Counting what is physically there",
+      "handledBy": {
+        "id": "UC-18-06",
+        "name": "Stock count and adjustment",
+        "link": "UC-18-06.json"
+      }
+    },
+    {
+      "item": "Assets, which are registered individually rather than counted",
+      "handledBy": {
+        "id": "UC-18-07",
+        "name": "Registering an asset",
+        "link": "UC-18-07.json"
+      }
+    },
+    {
+      "item": "Valuing the stock in the books",
+      "handledBy": {
+        "id": "UC-04-18",
+        "name": "Reading the books: ledger, trial balance and journals",
+        "link": "UC-04-18.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "One item, one balance",
+        "requirement": "An item name is unique within its category, so a store never carries two balances for one shelf."
+      },
+      {
+        "aspect": "The unit never moves",
+        "requirement": "Once an item has any movement against it, its unit cannot be changed by any route. A past count must keep the meaning it had when it was recorded."
+      },
+      {
+        "aspect": "Quantity is derived",
+        "requirement": "There is no field anywhere on this screen that sets the quantity on hand. It comes from receipts, issues and counts."
+      },
+      {
+        "aspect": "Retention",
+        "requirement": "Items and their change history are retained 7 years, since receipts, issues and counts reference them."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "Who maintains the category list, and can a category be created while creating an item?",
+      "assumption": "The School Admin as modelled. Not confirmed.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Should an item carry a value or a cost, so Accounts can value the stock held?",
+      "assumption": "Not modelled. Accounts are listed as valuing the stock but nothing here holds a price.",
+      "confirmWith": "Accounts",
+      "blocksBuild": true
+    },
+    {
+      "question": "Are stock items held per branch or shared across a school with several campuses?",
+      "assumption": "Per branch as modelled.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "Is the reorder level a single figure, or does it differ by term or season?",
+      "assumption": "A single figure as modelled.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "Should an item have a maximum level as well, so the store is not overstocked?",
+      "assumption": "Not modelled, and the document does not raise it.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

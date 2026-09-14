@@ -1,0 +1,766 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-02-10",
+    "name": "Record an enquiry and follow it up until it moves or closes",
+    "module": "Admissions & Inquiry Management",
+    "file": "../UseCases/UC-02-10.json",
+    "featureRef": "2.10 Inquiry / lead tracking"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-02-10-PC-1",
+      "intent": {
+        "name": "inquiry.record",
+        "summary": "Record an enquiry taken by phone, in person or at an event, with the follow-up that keeps it alive. One step.",
+        "routesHere": [
+          "record an enquiry for Ahmed Raza, grade 3, 03001234567",
+          {
+            "text": "ek nayi inquiry likho — Ahmed Raza, grade 3, number 03001234567",
+            "lang": "ur-Latn",
+            "gloss": "write a new enquiry — Ahmed Raza, grade 3, number 03001234567"
+          },
+          {
+            "text": "abhi ek family aayi thi, unki inquiry daal do",
+            "lang": "ur-Latn",
+            "gloss": "a family just came in, put their enquiry in"
+          },
+          "add a walk-in enquiry for grade 1",
+          {
+            "text": "phone pe inquiry aayi hai, note kar lo",
+            "lang": "ur-Latn",
+            "gloss": "an enquiry came by phone, note it down"
+          },
+          "log an enquiry from the education fair"
+        ],
+        "routesElsewhere": [
+          {
+            "request": "submit an inquiry through the website",
+            "goesTo": "UC-02-01 — not planned",
+            "note": "The family's own submission stamps source Online Form. A staff member recording an enquiry stamps how it actually arrived (BR-2)."
+          },
+          {
+            "request": {
+              "text": "is inquiry pe call ki thi, log kar do",
+              "lang": "ur-Latn",
+              "gloss": "I called on this enquiry, log it"
+            },
+            "goesTo": "inquiry.contact.log — UC-02-10-PC-2",
+            "note": "Recording what happened on an existing enquiry, not opening a new one."
+          },
+          {
+            "request": "find the enquiry for Ahmed Raza",
+            "goesTo": "UC-02-11 lists, or the enquiry list itself",
+            "note": "Finding an enquiry is a read. Global search does not cover enquiries (UC-01-10, Out of Scope)."
+          },
+          {
+            "request": {
+              "text": "is bache ka admission kar do",
+              "lang": "ur-Latn",
+              "gloss": "admit this child"
+            },
+            "goesTo": "applicant.admit — UC-02-07",
+            "note": "An enquiry is interest, not enrolment. It creates no student record (BR-10)."
+          },
+          {
+            "request": "send them the fee structure",
+            "goesTo": "inquiry.message — UC-02-12"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "inquiry.record",
+            "inputs": {
+              "child_name": "$request.child_name",
+              "guardian_name": "$request.guardian_name",
+              "contact_number": "$request.contact_number",
+              "enquiry_source": "$request.enquiry_source",
+              "target_class_id": "$request.class_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step. Optional fields are omitted entirely rather than sent empty, and the API supplies the follow-up date where the request names none (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. The mobile format, the source, the class and the follow-up date are validated by the API and arrive as errors; the plan does not test for them beforehand.",
+        "atomicity": "One write, atomic in itself: the enquiry, its reference and its first audit entry are created together or not at all. Nothing else is touched — no student record, no applicant and no account (BR-10). Where an open enquiry already exists for this child and number, the API returns that one instead of creating a second (BR-7), so a repeated run cannot produce duplicates."
+      },
+      "operations": [
+        {
+          "name": "inquiry.record",
+          "method": "POST",
+          "path": "/api/v1/inquiries",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "child_name + contact_number + session_id, which is the same triple BR-7 uses to decide an enquiry is already open",
+          "purpose": "Open an enquiry taken by phone, in person or at an event, with an owner and a follow-up date.",
+          "parameters": [
+            {
+              "name": "child_name",
+              "source": "request",
+              "sourceRef": "$request.child_name",
+              "required": true,
+              "type": "string",
+              "notes": "2 to 120 characters, as the family gave it. Never transliterated or corrected (request-language)."
+            },
+            {
+              "name": "guardian_name",
+              "source": "request",
+              "sourceRef": "$request.guardian_name",
+              "required": true,
+              "type": "string",
+              "notes": "2 to 120 characters."
+            },
+            {
+              "name": "contact_number",
+              "source": "request",
+              "sourceRef": "$request.contact_number",
+              "required": true,
+              "type": "string",
+              "notes": "Registered mobile format. Mandatory — an enquiry that cannot be followed up is not an enquiry (BR-1). Digits in Eastern Arabic numerals are normalised to Latin; a number spoken as words is not converted (request-language)."
+            },
+            {
+              "name": "enquiry_source",
+              "source": "request",
+              "sourceRef": "$request.enquiry_source",
+              "required": true,
+              "type": "enum: Online form | Walk-in | Phone | WhatsApp | Referral | Social media | Newspaper | Event | Other",
+              "notes": "How the enquiry actually arrived. Never Online form — that value is stamped by UC-02-01 alone and cannot be set by hand (BR-2, PR-2)."
+            },
+            {
+              "name": "target_class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No active class matches in this academic session (E7).",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class the family is asking about, resolved from their words. Active classes in the current academic session only."
+            },
+            {
+              "name": "child_date_of_birth",
+              "source": "request",
+              "sourceRef": "$request.child_date_of_birth",
+              "required": false,
+              "type": "date",
+              "notes": "Only where the request states it. Never inferred from a class or an age (request-language)."
+            },
+            {
+              "name": "email",
+              "source": "request",
+              "sourceRef": "$request.email",
+              "required": false,
+              "type": "string",
+              "notes": "A secondary channel. Omit where the request does not give one."
+            },
+            {
+              "name": "location",
+              "source": "request",
+              "sourceRef": "$request.location",
+              "required": false,
+              "type": "string",
+              "notes": "Area or locality, which feeds catchment reporting."
+            },
+            {
+              "name": "current_school",
+              "source": "request",
+              "sourceRef": "$request.current_school",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 150 characters."
+            },
+            {
+              "name": "notes",
+              "source": "request",
+              "sourceRef": "$request.notes",
+              "required": false,
+              "type": "string",
+              "notes": "What the family said, in their words. Appended with author and timestamp, never overwriting (BR-5)."
+            },
+            {
+              "name": "follow_up_date",
+              "source": "request",
+              "sourceRef": "$request.follow_up_date",
+              "required": false,
+              "type": "date",
+              "notes": "Only where the request names one, and never in the past (E3). Omit otherwise: the API sets one, because a blank date means the lead disappears (BR-3)."
+            },
+            {
+              "name": "owner_id",
+              "source": "resolved",
+              "sourceRef": "$request.owner_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.owner_phrase",
+                "onNoMatch": "Refuse. No staff member of that name in this branch.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The staff member responsible for the follow-up. Omit unless the request names someone, in which case the API assigns the acting user."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The enquiry as opened, with the reference to quote back to the family.",
+            "fields": [
+              {
+                "name": "inquiry_id",
+                "type": "string",
+                "description": "The enquiry's id."
+              },
+              {
+                "name": "reference",
+                "type": "string",
+                "description": "Gapless per branch and academic session, quotable to the family."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Pending review on creation."
+              },
+              {
+                "name": "follow_up_date",
+                "type": "date",
+                "description": "The date set, whether given or supplied by the API (BR-3)."
+              },
+              {
+                "name": "owner_name",
+                "type": "string",
+                "description": "Who is responsible for the follow-up."
+              },
+              {
+                "name": "existing",
+                "type": "boolean",
+                "description": "True where an open enquiry already existed for this child and number and was returned instead of a second being created (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "INVALID_CONTACT_NUMBER",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The contact number is missing or malformed.",
+              "written": "Nothing.",
+              "notWritten": "No enquiry created.",
+              "note": "Message: \"Enter a valid contact number. An enquiry cannot be followed up without one.\""
+            },
+            {
+              "code": "SOURCE_REQUIRED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No enquiry source was given.",
+              "written": "Nothing.",
+              "notWritten": "No enquiry created."
+            },
+            {
+              "code": "FOLLOW_UP_DATE_IN_PAST",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The follow-up date given is before today.",
+              "written": "Nothing.",
+              "notWritten": "No enquiry created.",
+              "note": "Do not retry with today's date substituted. The date came from the request and correcting it is the actor's decision."
+            },
+            {
+              "code": "CLASS_NOT_IN_SESSION",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "The target class does not exist in the current academic session.",
+              "written": "Nothing.",
+              "notWritten": "No enquiry created."
+            },
+            {
+              "code": "OPEN_ENQUIRY_EXISTS",
+              "mapsTo": null,
+              "httpStatus": 200,
+              "meaning": "An open enquiry already holds this child name and contact number for this academic session.",
+              "written": "Nothing new. The existing enquiry is returned with existing true.",
+              "notWritten": "No second enquiry created.",
+              "treatedAsSuccess": true,
+              "note": "Not a failure — BR-7 says the second attempt opens the first. Report the existing reference rather than announcing a new enquiry. UC-02-10 defines no E-id for it because on screen the existing enquiry simply opens; see the open question."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never fabricate a contact number, and never proceed without one. It is the single mandatory field that makes an enquiry an enquiry (BR-1), and an enquiry recorded against a guessed number is a lead nobody can follow up.",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never set enquiry_source to Online form. That value is stamped by the family's own submission (BR-2) and setting it by hand records a lie about where the family came from, which is what the school's advertising decisions are made on.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never set follow_up_date to today to get past a refusal, and never invent one to fill the field. Omitting it is correct and the API supplies one (BR-3); substituting one takes a decision that belongs to the person who will do the following up.",
+          "derivedFrom": [
+            "BR-3",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Pass the child's and guardian's names exactly as the request gave them. A name recorded here is what the family will be greeted by on the phone, and it is matched against later when the same family enquires again (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never re-emit the write with the failing field removed. A refused mobile number, a missing source or a class outside the session are all the API stating something about the enquiry, and an enquiry saved without them is worse than none.",
+          "derivedFrom": [
+            "E1",
+            "E2",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never chain a message onto this plan. Recording an enquiry sends the family nothing; telling them anything is inquiry.message, planned separately and logged as a contact.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no delete. An enquiry recorded in error is closed as not interested through inquiry.close, which keeps it and its history (BR-8, and UC-02-11 BR-4). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "abhi ek family aayi thi — Ahmed Raza, grade 3, walid ka number 03001234567, Model Town se",
+            "lang": "ur-Latn",
+            "gloss": "a family just came in — Ahmed Raza, grade 3, father's number 03001234567, from Model Town"
+          },
+          "context": "Staff, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.record",
+              "inputs": {
+                "child_name": "Ahmed Raza",
+                "guardian_name": "$request.guardian_name",
+                "contact_number": "03001234567",
+                "enquiry_source": "Walk-in",
+                "target_class_id": "$request.class_phrase → \"grade 3\"",
+                "location": "Model Town",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "enquiry_source is Walk-in because the request says the family came in — not Online form, which only UC-02-01 may stamp (PR-2). follow_up_date and owner_id are omitted, so the API sets the date and assigns the acting user."
+            }
+          ],
+          "outcome": "One enquiry at status Pending review with a quotable reference, a follow-up date set by the API and the acting Staff member as owner. Nothing else exists: no student, no applicant, no account (BR-10)."
+        },
+        {
+          "request": "log an enquiry from Saturday's education fair — Sana Malik, grade 1, mother Ayesha 03211234567",
+          "context": "Staff, Johar Town branch, academic session 2025-26.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.record",
+              "inputs": {
+                "child_name": "Sana Malik",
+                "guardian_name": "Ayesha",
+                "contact_number": "03211234567",
+                "enquiry_source": "Event",
+                "target_class_id": "$request.class_phrase → \"grade 1\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              }
+            }
+          ],
+          "outcome": "One enquiry sourced Event, which is what the school's advertising spend is judged on. The fair is not a date field; it is the source."
+        },
+        {
+          "request": {
+            "text": "wohi family dobara aayi hai — Ahmed Raza, 03001234567",
+            "lang": "ur-Latn",
+            "gloss": "the same family came again — Ahmed Raza, 03001234567"
+          },
+          "context": "Staff, Johar Town branch, with an open enquiry already held for that child and number.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.record",
+              "inputs": {
+                "child_name": "Ahmed Raza",
+                "guardian_name": "$request.guardian_name",
+                "contact_number": "03001234567",
+                "enquiry_source": "Walk-in",
+                "target_class_id": "$request.class_phrase → \"grade 3\"",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The plan is unchanged. The API recognises the open enquiry from the same child name and number and returns it (BR-7); the plan neither checked for it nor branched."
+            }
+          ],
+          "outcome": "The existing enquiry comes back with existing true and its original reference. No second enquiry is created, and the correct report is that this family already has one open — not that a new one was recorded."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-02-10-PC-2",
+      "intent": {
+        "name": "inquiry.contact.log",
+        "summary": "Record what happened on a follow-up call or visit, and move the enquiry's next follow-up date. One step.",
+        "routesHere": [
+          "log a call on the Ahmed Raza enquiry — no answer",
+          {
+            "text": "is inquiry pe call ki thi, koi jawab nahi aaya",
+            "lang": "ur-Latn",
+            "gloss": "I called on this enquiry, there was no answer"
+          },
+          {
+            "text": "family se baat hui, wo soch rahe hain, agle hafte phir call karni hai",
+            "lang": "ur-Latn",
+            "gloss": "spoke to the family, they are thinking about it, need to call again next week"
+          },
+          "they visited today, record it and set the next follow-up for Friday",
+          {
+            "text": "unhone kaha fees zyada hai",
+            "lang": "ur-Latn",
+            "gloss": "they said the fees are too high"
+          },
+          "record a WhatsApp follow-up on this enquiry"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "unko message bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send them a message"
+            },
+            "goesTo": "inquiry.message — UC-02-12",
+            "note": "Sending a message is a different act, and it logs its own contact automatically (UC-02-12 BR-7). Do not log a contact for a message you also sent."
+          },
+          {
+            "request": {
+              "text": "ye inquiry band kar do, unhone mana kar diya",
+              "lang": "ur-Latn",
+              "gloss": "close this enquiry, they said no"
+            },
+            "goesTo": "inquiry.close — UC-02-11-PC-1",
+            "note": "A refusal is a closure with a reason, not a contact outcome."
+          },
+          {
+            "request": "forward this to the principal",
+            "goesTo": "inquiry.review — UC-02-02",
+            "note": "Moving an enquiry on is the School Admin's review, not a contact log."
+          },
+          {
+            "request": "open a new enquiry for this family",
+            "goesTo": "inquiry.record — UC-02-10-PC-1"
+          },
+          {
+            "request": {
+              "text": "follow-up date aage badha do",
+              "lang": "ur-Latn",
+              "gloss": "push the follow-up date forward"
+            },
+            "goesTo": "inquiry.contact.log, with what happened",
+            "note": "There is no capability that moves the date alone. A date moves because something happened, and BR-4 requires the channel and the outcome with it."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "inquiry.contact.log",
+            "inputs": {
+              "inquiry_id": "$request.inquiry_phrase",
+              "channel": "$request.channel",
+              "outcome": "$request.outcome",
+              "next_follow_up_date": "$request.next_follow_up_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The enquiry is resolved from how the actor named it; the channel, the outcome and the next date all come from what they said happened."
+          }
+        ],
+        "onFailure": "Stop and report. Whether the enquiry is still open, and whether the date is valid, are enforced by the API and arrive as errors.",
+        "atomicity": "One write. The contact log entry, the incremented attempt count, the moved follow-up date and the audit entry are written together or not at all. Earlier notes are appended to, never replaced (BR-5), so nothing already recorded can be lost by this call."
+      },
+      "operations": [
+        {
+          "name": "inquiry.contact.log",
+          "method": "POST",
+          "path": "/api/v1/inquiries/{inquiry_id}/contacts",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "inquiry_id + channel + outcome + the contact timestamp, so a repeated call does not inflate the attempt count that BR-6 relies on",
+          "purpose": "Record a contact attempt against an enquiry with its outcome, and set the next follow-up date.",
+          "parameters": [
+            {
+              "name": "inquiry_id",
+              "source": "resolved",
+              "sourceRef": "$request.inquiry_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "inquiry",
+                "fromPhrase": "$request.inquiry_phrase",
+                "onNoMatch": "Refuse. No open enquiry matches, or none in this branch. Neither is reached by guessing a reference.",
+                "onAmbiguous": "Ask, naming the candidates with child name, guardian and target class. Two families of the same name is the ordinary case here, not the exception."
+              },
+              "notes": "The enquiry, resolved from how the actor named it — a reference, the child's name, or the guardian's number. Never a reference the planner composed."
+            },
+            {
+              "name": "channel",
+              "source": "request",
+              "sourceRef": "$request.channel",
+              "required": true,
+              "type": "enum: Phone | WhatsApp | Email | In person",
+              "notes": "How the contact was made. Required with the outcome (BR-4)."
+            },
+            {
+              "name": "outcome",
+              "source": "request",
+              "sourceRef": "$request.outcome",
+              "required": true,
+              "type": "enum: Reached | No answer | Wrong number | Call back later | Not interested",
+              "notes": "What happened. Mandatory — recording a contact with no outcome tells the next caller nothing (BR-4)."
+            },
+            {
+              "name": "next_follow_up_date",
+              "source": "request",
+              "sourceRef": "$request.next_follow_up_date",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the past. Mandatory: a contact recorded without a next date is refused, because the lead then disappears (BR-4, E4)."
+            },
+            {
+              "name": "note",
+              "source": "request",
+              "sourceRef": "$request.note",
+              "required": false,
+              "type": "string",
+              "notes": "What the family said, in their words. Appended with author and timestamp (BR-5)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The contact as logged, and where the enquiry now stands.",
+            "fields": [
+              {
+                "name": "contact_id",
+                "type": "string",
+                "description": "The log entry."
+              },
+              {
+                "name": "attempts",
+                "type": "integer",
+                "description": "The attempt count after this one. Drives the stale rule (BR-6)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "The enquiry's status, which may have moved to Contacted or to Stale."
+              },
+              {
+                "name": "next_follow_up_date",
+                "type": "date",
+                "description": "The date now set."
+              },
+              {
+                "name": "became_stale",
+                "type": "boolean",
+                "description": "True where this attempt took the enquiry past the configured limit and it dropped out of the daily list (BR-6)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NEXT_DATE_REQUIRED",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No next follow-up date was given.",
+              "written": "Nothing.",
+              "notWritten": "No contact logged.",
+              "note": "Message: \"Set the next follow-up date before saving this contact.\" Ask for the date; do not supply one."
+            },
+            {
+              "code": "OUTCOME_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "No outcome was given.",
+              "written": "Nothing.",
+              "notWritten": "No contact logged."
+            },
+            {
+              "code": "ENQUIRY_CLOSED",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The enquiry was closed as not interested.",
+              "written": "Nothing.",
+              "notWritten": "No contact logged.",
+              "note": "Message names the closure date. Re-opening is inquiry.reopen and is a separate decision, never chained onto this."
+            },
+            {
+              "code": "DATE_IN_PAST",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The next follow-up date is before today.",
+              "written": "Nothing.",
+              "notWritten": "No contact logged."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never log a contact for a message you also sent. inquiry.message counts as a contact attempt in its own right (UC-02-12 BR-7), and logging one alongside it makes the attempt count and the message log disagree, which is the exact thing BR-7 exists to prevent.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Read the outcome from what the request states, not from its tone. \"Soch rahe hain\" is Call back later; \"fees zyada hai\" is a note, not an outcome; \"mana kar diya\" is a closure and belongs to inquiry.close. Where the sentence does not settle which outcome it is, ask rather than choosing — the outcome is what the next caller reads before dialling.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never supply next_follow_up_date yourself. The refusal in E4 is the system insisting that a person decide when to call back, and a date invented here is a commitment nobody made.",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain a re-open onto a contact logged against a closed enquiry. Re-opening is a judgement with its own reason and its own record (UC-02-11 BR-6), and doing it silently to make a log succeed hides that the enquiry was closed.",
+          "derivedFrom": [
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Put what the family said in note, not in outcome. The outcome is a fixed set the follow-up list is filtered on; the words are what the next person needs.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A contact log is history and is never removed. A wrong entry is corrected by logging the truth after it, because BR-5 appends and never overwrites. The controller has no compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ahmed Raza wali inquiry pe call ki thi, koi jawab nahi aaya, agle mangal ko phir karunga",
+            "lang": "ur-Latn",
+            "gloss": "I called on the Ahmed Raza enquiry, no answer, I'll try again next Tuesday"
+          },
+          "context": "Staff, Johar Town branch. Today is 07-09-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.contact.log",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase → \"Ahmed Raza\"",
+                "channel": "Phone",
+                "outcome": "No answer",
+                "next_follow_up_date": "2026-09-15",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The date comes from \"agle mangal\" in the request, not from a default. Had the request named no date, the plan would not be emitted — PR-3 forbids supplying one."
+            }
+          ],
+          "outcome": "The attempt count moves to 2, the enquiry stays open at Contacted, and the follow-up list will surface it again on 15-09-2026."
+        },
+        {
+          "request": "they came in today and looked round, book the next follow-up for Friday",
+          "context": "Staff, Johar Town branch. Today is 07-09-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.contact.log",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "channel": "In person",
+                "outcome": "Reached",
+                "next_follow_up_date": "2026-09-11",
+                "note": "Visited the school and looked round.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The visit is recorded with what happened in the note, and the enquiry stays in the follow-up list for Friday."
+        },
+        {
+          "request": {
+            "text": "unhone kaha fees bohat zyada hai, phir bhi soch rahe hain, do hafte baad call karna",
+            "lang": "ur-Latn",
+            "gloss": "they said the fees are much too high, but they are still thinking, call in two weeks"
+          },
+          "context": "Staff, Johar Town branch. Today is 07-09-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.contact.log",
+              "inputs": {
+                "inquiry_id": "$request.inquiry_phrase",
+                "channel": "Phone",
+                "outcome": "Call back later",
+                "next_follow_up_date": "2026-09-21",
+                "note": "Said the fees are much too high. Still considering.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "\"Fees bohat zyada hai\" is the note. The outcome is Call back later, because they are still considering — not Not interested, which would be a closure and a different capability (PR-2)."
+            }
+          ],
+          "outcome": "The objection is recorded where the next caller will read it, and the enquiry stays open. Nothing closed it, because the family did not say no."
+        }
+      ]
+    }
+  ]
+}

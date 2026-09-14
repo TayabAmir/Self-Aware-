@@ -1,0 +1,1709 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-23-04",
+    "name": "Move a student between branches with both agreeing, so the record follows and the leaving branch is settled",
+    "module": "Multi-branch",
+    "file": "../UseCases/UC-23-04.json",
+    "featureRef": "23.4 Inter-branch student transfer"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-23-04-PC-1",
+      "intent": {
+        "name": "student.transfer.raise",
+        "summary": "Raise a transfer to another campus, having checked what the student still owes and still holds.",
+        "routesHere": [
+          "raise a transfer for Ayesha Khan to the Johar Town campus",
+          {
+            "text": "Ayesha Khan ko Johar Town campus transfer karna hai",
+            "lang": "ur-Latn",
+            "gloss": "we want to transfer Ayesha Khan to the Johar Town campus"
+          },
+          {
+            "text": "ye bachi doosre campus ja rahi hai, transfer bana dein",
+            "lang": "ur-Latn",
+            "gloss": "this child is moving to the other campus, raise the transfer"
+          },
+          {
+            "text": "family shift ho gayi hai, student ko doosri branch bhejna hai",
+            "lang": "ur-Latn",
+            "gloss": "the family has moved, the student has to go to the other branch"
+          },
+          "start a transfer to the second campus"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "admission ka process shuru kar dein",
+              "lang": "ur-Latn",
+              "gloss": "start the admission process"
+            },
+            "goesTo": "Refused.",
+            "note": "A family moving between campuses of the same school does not reapply. This is a withdrawal and an admission performed as one action, and it deliberately bypasses both — both record it as an exception rather than being silently sidestepped (BR-10, E11)."
+          },
+          {
+            "request": {
+              "text": "ye transfer mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete this transfer"
+            },
+            "goesTo": "Not offered.",
+            "note": "A transfer is never deleted. A refused one stays on the record with its reason (BR-11, E10)."
+          },
+          {
+            "request": {
+              "text": "bacha school hi chhod raha hai",
+              "lang": "ur-Latn",
+              "gloss": "the child is leaving the school altogether"
+            },
+            "goesTo": "withdrawal.raise — UC-03-06.",
+            "note": "Leaving the school is a withdrawal with its own clearance. This is a move between campuses of the same school, which is why neither the withdrawal process nor the admission pipeline runs (BR-10)."
+          },
+          {
+            "request": {
+              "text": "isi branch mein rakhein, sirf class badal dein",
+              "lang": "ur-Latn",
+              "gloss": "keep them at this branch, just change the class"
+            },
+            "goesTo": "student.place — UC-27-03.",
+            "note": "A move within a campus is a placement. This is a move between campuses (E1)."
+          },
+          {
+            "request": {
+              "text": "fees pehle maaf kar dein",
+              "lang": "ur-Latn",
+              "gloss": "write the fees off first"
+            },
+            "goesTo": "Not offered here.",
+            "note": "The outstanding balance is checked and then either settled at the leaving branch or carried forward to the receiving one. Which it is is decided at acceptance and recorded, not left (BR-2, BR-6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.transfer.raise",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "receiving_branch_id": "$request.branch_phrase",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step, and it checks before it goes anywhere: the outstanding fee balance, the cards issued and any items still held. A student leaving with a card and two library books is a student the school has lost track of (BR-2, E3)."
+          }
+        ],
+        "onFailure": "Stop and report. The same branch, or a closed receiving branch, refuses the transfer outright — and cards or items still out are listed rather than ignored.",
+        "atomicity": "One write. **Nothing has moved and nobody has agreed to anything**: the student is still enrolled here, the receiving branch has not seen them yet, and both branches still have to agree before anything happens (BR-4)."
+      },
+      "operations": [
+        {
+          "name": "student.transfer.raise",
+          "method": "POST",
+          "path": "/api/v1/student-transfers",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "student + receiving branch, since a student carries one open transfer and a repeat is the same one",
+          "purpose": "Raise a transfer of a student to another branch, with the leaving checks run.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No enrolled student at this branch matches. A student at another campus is not visible from here (UC-23-01 BR-5).",
+                "onAmbiguous": "Ask, naming the students that match with their class, section and identifier."
+              },
+              "notes": "The student, enrolled at this branch and placed in a section."
+            },
+            {
+              "name": "receiving_branch_id",
+              "source": "resolved",
+              "sourceRef": "$request.branch_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "branch",
+                "fromPhrase": "$request.branch_phrase",
+                "onNoMatch": "Refuse. No active branch other than this one matches (E1, E2).",
+                "onAmbiguous": "Ask, naming the active branches other than this one."
+              },
+              "notes": "The campus the student is moving to. Not this one (E1) and not a closed one (E2)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What has to be cleared before this can go further.",
+            "fields": [
+              {
+                "name": "transfer_id",
+                "type": "string",
+                "description": "The transfer."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Raised. Nobody has agreed to anything and the student is still enrolled here (BR-4)."
+              },
+              {
+                "name": "outstanding_balance",
+                "type": "string",
+                "description": "What the student owes at this branch. Checked now and decided at acceptance — settled here or carried forward (BR-2, BR-6)."
+              },
+              {
+                "name": "cards_issued",
+                "type": "object[]",
+                "description": "Student and pickup cards issued at this branch, to be collected. A student leaving with a card is a student the school has lost track of (BR-2, E3)."
+              },
+              {
+                "name": "items_held",
+                "type": "object[]",
+                "description": "Anything returnable still issued to the student from stock (BR-2, E3, UC-18-05 BR-11)."
+              },
+              {
+                "name": "student_id_will_not_change",
+                "type": "boolean",
+                "description": "True. Every historical reference in results, the fee ledger and the audit trail depends on it — only the roll number is reissued (BR-7, E7)."
+              },
+              {
+                "name": "receiving_branch_sees",
+                "type": "string",
+                "description": "Nothing yet. The receiving branch is given sight of the student's record and balance only once this branch releases them, and that access ends when the transfer completes or is rejected (BR-3, E9)."
+              },
+              {
+                "name": "neither_process_runs",
+                "type": "string",
+                "description": "Neither the withdrawal process nor the admission pipeline. Both record this as an exception rather than being silently sidestepped (BR-10, E11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SAME_BRANCH",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The receiving branch is this one.",
+              "written": "Nothing.",
+              "notWritten": "No transfer is raised."
+            },
+            {
+              "code": "RECEIVING_BRANCH_CLOSED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The receiving branch is deactivated.",
+              "written": "Nothing.",
+              "notWritten": "No transfer is raised."
+            },
+            {
+              "code": "CARDS_OR_ITEMS_OUTSTANDING",
+              "mapsTo": "E3",
+              "httpStatus": 200,
+              "meaning": "The student holds cards or items not yet returned.",
+              "written": "The transfer is raised and they are listed.",
+              "notWritten": "The release cannot proceed until they are collected.",
+              "treatedAsSuccess": true,
+              "note": "A student leaving with a card and two library books is a student the school has lost track of (BR-2)."
+            },
+            {
+              "code": "ADMISSION_ATTEMPTED",
+              "mapsTo": "E11",
+              "httpStatus": 409,
+              "meaning": "The admission pipeline was entered for a transferring student.",
+              "written": "Nothing.",
+              "notWritten": "There is no such route.",
+              "note": "A family moving between campuses does not reapply (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "List what the student still holds before anything else. Cards and returnable items are checked at exactly this point because after the transfer the leaving branch has no visibility of the student at all — this is the last moment anybody here can ask for them back (BR-2, BR-8, E3).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-8",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that nothing has been agreed. Raising is not releasing and releasing is not accepting: both branches must agree, and the receiving one may refuse (BR-4, BR-5).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the balance is a decision still to be made. It is either settled at this branch or carried forward to the other, and which it is is decided at acceptance and recorded rather than left (BR-6, E6).",
+          "derivedFrom": [
+            "BR-6",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never start an admission. A family moving between campuses of the same school does not reapply, and the bypass is deliberate and recorded as an exception in both processes rather than silently sidestepped (BR-10, E11).",
+          "derivedFrom": [
+            "BR-10",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that the student identifier does not change. Every historical reference in results, the fee ledger and the audit trail depends on it, and only the roll number — a position within a class — is reissued (BR-7, E7).",
+          "derivedFrom": [
+            "BR-7",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "student.transfer.refuse",
+        "statement": "A transfer that should not proceed is refused by the receiving branch with a reason, and the student stays here (BR-5). It is never deleted — a refused transfer stays on the record with its reason (BR-11, E10). There is no way for the leaving branch to withdraw one it raised."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha Khan ko Johar Town campus transfer karna hai, family shift ho gayi hai",
+            "lang": "ur-Latn",
+            "gloss": "we want to transfer Ayesha Khan to the Johar Town campus, the family has moved"
+          },
+          "context": "Staff at the Main campus, current session, PKR 12,000 outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.transfer.raise",
+              "inputs": {
+                "student_id": "$request.student_phrase → Ayesha Khan, 2026-0417",
+                "receiving_branch_id": "$request.branch_phrase → Lahore — Johar Town campus",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The checks run as part of raising it (PR-1)."
+            }
+          ],
+          "outcome": "Raised, and three things have to be dealt with here: PKR 12,000 outstanding, one student card and two pickup cards to collect, and two library books still out. Collect them now — once the transfer completes, this branch has no visibility of Ayesha at all and no way to ask. Nothing has been agreed yet: this campus has to release her and Johar Town has to accept her, and they may refuse."
+        },
+        {
+          "request": {
+            "text": "ye bachi Johar Town ja rahi hai, admission form bhijwa dein",
+            "lang": "ur-Latn",
+            "gloss": "this child is going to Johar Town, send the admission form"
+          },
+          "context": "Staff at the Main campus.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.transfer.raise",
+              "inputs": {
+                "student_id": "$request.student_phrase → the student named",
+                "receiving_branch_id": "$request.branch_phrase → Johar Town",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "A transfer, not an admission (PR-4)."
+            }
+          ],
+          "outcome": "No admission form. A family moving between campuses of the same school does not reapply — this is a withdrawal and an admission performed as one action, and the bypass is deliberate. Both the withdrawal process and the admission pipeline record it as an exception, so nothing is being quietly skipped."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-23-04-PC-2",
+      "intent": {
+        "name": "student.transfer.release",
+        "summary": "Release the student from this branch, and open the door the receiving branch needs to decide.",
+        "routesHere": [
+          "release Ayesha's transfer to Johar Town",
+          {
+            "text": "Ayesha ka transfer release kar dein",
+            "lang": "ur-Latn",
+            "gloss": "release Ayesha's transfer"
+          },
+          {
+            "text": "hamari taraf se ijazat hai, aage bhej dein",
+            "lang": "ur-Latn",
+            "gloss": "we agree from our side, send it on"
+          },
+          "approve the release from this campus"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye transfer mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete this transfer"
+            },
+            "goesTo": "Not offered.",
+            "note": "A transfer is never deleted. A refused one stays on the record with its reason (BR-11, E10)."
+          },
+          {
+            "request": {
+              "text": "release ke saath hi complete bhi kar dein",
+              "lang": "ur-Latn",
+              "gloss": "release it and complete it as well"
+            },
+            "goesTo": "Not offered.",
+            "note": "Both branches must agree. Releasing puts the student in front of the receiving branch, which is taking on a student and possibly an outstanding balance and must be able to refuse (BR-4, BR-5)."
+          },
+          {
+            "request": {
+              "text": "cards abhi wapas nahi aaye, phir bhi release kar dein",
+              "lang": "ur-Latn",
+              "gloss": "the cards have not come back, release it anyway"
+            },
+            "goesTo": "Refused.",
+            "note": "Cards and items still held are collected before release. Afterwards this branch has no visibility of the student and no way to ask (BR-2, BR-8, E3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.transfer.release",
+            "inputs": {
+              "transfer_id": "$request.transfer_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step with two effects: this branch agrees, and the receiving branch is given sight of **that one student's record and outstanding balance** and nothing else (BR-3, BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. Cards or items still outstanding hold the release, and the student stays exactly where they are.",
+        "atomicity": "One state change and one temporary, scoped opening in the seal. The receiving branch sees that student's record and balance; this branch sees the receiving branch's class and section list in order to place them. **Nothing else crosses the boundary, and the access ends when the transfer completes or is rejected** (BR-3, E9). This is one of only two exceptions to the sealed-branch rule in the whole system (UC-23-01 BR-9)."
+      },
+      "operations": [
+        {
+          "name": "student.transfer.release",
+          "method": "POST",
+          "path": "/api/v1/student-transfers/{transfer_id}/release",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "transfer_id, since a transfer is released once and a repeat is the same state",
+          "purpose": "Approve the release from the leaving branch and open the scoped access.",
+          "parameters": [
+            {
+              "name": "transfer_id",
+              "source": "resolved",
+              "sourceRef": "$request.transfer_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student_transfer",
+                "fromPhrase": "$request.transfer_phrase",
+                "onNoMatch": "Refuse. No transfer awaiting release at this branch matches.",
+                "onAmbiguous": "Ask, naming the transfers that match with their students, the other branch and where each stands."
+              },
+              "notes": "The transfer, named by the student."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was agreed and what the other branch can now see.",
+            "fields": [
+              {
+                "name": "transfer_id",
+                "type": "string",
+                "description": "The transfer."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Released, then awaiting acceptance. The student is **still enrolled here** until the receiving branch accepts and places them (BR-4)."
+              },
+              {
+                "name": "released_by",
+                "type": "string",
+                "description": "The School Admin at this branch (BR-4)."
+              },
+              {
+                "name": "receiving_branch_now_sees",
+                "type": "string[]",
+                "description": "That one student's record and outstanding balance. Nothing else (BR-3, E9)."
+              },
+              {
+                "name": "this_branch_now_sees",
+                "type": "string[]",
+                "description": "The receiving branch's class and section list, in order to place the student. Nothing else (BR-3, E9)."
+              },
+              {
+                "name": "access_ends_when",
+                "type": "string",
+                "description": "The transfer completes or is rejected. It is temporary and scoped, and one of only two openings in the seal (BR-3, UC-23-01 BR-9)."
+              },
+              {
+                "name": "outstanding_balance",
+                "type": "string",
+                "description": "What the receiving branch is being asked to take on. They may decline until it is settled (BR-5)."
+              },
+              {
+                "name": "cards_and_items_cleared",
+                "type": "boolean",
+                "description": "True. Collected before release, because afterwards this branch cannot ask (BR-2, BR-8)."
+              },
+              {
+                "name": "no_response_means",
+                "type": "string",
+                "description": "The transfer sits awaiting acceptance and the student stays enrolled here. **No timeout is modelled** (E4, OQ-2)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CARDS_OR_ITEMS_OUTSTANDING",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "Cards or items are still held by the student.",
+              "written": "Nothing.",
+              "notWritten": "The release is held until they are collected (BR-2)."
+            },
+            {
+              "code": "BEYOND_SCOPE",
+              "mapsTo": "E9",
+              "httpStatus": 403,
+              "meaning": "Either branch attempted to see more of the other than the transfer requires.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say exactly what the other branch can now see, and for how long. This is one of only two places in the whole system where anything crosses a branch boundary: that one student's record and balance, nothing else, and the access ends when the transfer completes or is rejected (BR-3, E9, UC-23-01 BR-9).",
+          "derivedFrom": [
+            "BR-3",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say the student is still enrolled here. Releasing is not transferring — the receiving branch may refuse, and until they accept and place the student, nothing has moved (BR-4, BR-5, E4).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never release with cards or items still out. After completion this branch has no visibility of the student at all, so this is the last moment anybody here can ask for them (BR-2, BR-8, E3).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-8",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say what happens if the other branch never answers. The transfer sits awaiting acceptance and the student stays enrolled here indefinitely — **no timeout is modelled** and nothing chases it (E4, OQ-2).",
+          "derivedFrom": [
+            "E4",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-release. The lifecycle runs forward from here to acceptance or refusal, and a refusal is the receiving branch's to give — this branch cannot take the transfer back once it has released it (BR-4, BR-5)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ka transfer release kar dein, hamari taraf se theek hai",
+            "lang": "ur-Latn",
+            "gloss": "release Ayesha's transfer, we are content from our side"
+          },
+          "context": "School Admin at the Main campus, cards and books collected, PKR 12,000 outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.transfer.release",
+              "inputs": {
+                "transfer_id": "$request.transfer_phrase → Ayesha Khan's transfer",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The scoped access opens with the release (PR-1)."
+            }
+          ],
+          "outcome": "Released. Johar Town can now see Ayesha's record and her PKR 12,000 balance — that and nothing else, and only until this transfer completes or is refused. She is still enrolled here: they may decline until the balance is settled, and there is nothing that makes them answer at all. If they never do, she stays on this branch's roll and no timeout exists."
+        },
+        {
+          "request": {
+            "text": "release kar dein, cards baad mein le lenge",
+            "lang": "ur-Latn",
+            "gloss": "release it, we will collect the cards later"
+          },
+          "context": "School Admin at the Main campus, 1 student card, 2 pickup cards and 2 library books outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.transfer.release",
+              "inputs": {
+                "transfer_id": "$request.transfer_phrase → the transfer",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Held on the outstanding items (PR-3)."
+            }
+          ],
+          "outcome": "Not yet. Once this completes, this campus has no visibility of the student at all — there is no \"later\" in which to ask. One student card, two pickup cards and two library books have to come back first, and the pickup cards matter most: they are what somebody presents at the gate to collect a child."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-23-04-PC-3",
+      "intent": {
+        "name": "student.transfer.accept",
+        "summary": "Accept the student at this campus, and decide what happens to the balance they bring.",
+        "routesHere": [
+          "accept Ayesha's transfer and carry the balance forward",
+          {
+            "text": "Ayesha ka transfer qabool kar lein, balance yahan aa jaye",
+            "lang": "ur-Latn",
+            "gloss": "accept Ayesha's transfer, let the balance come here"
+          },
+          {
+            "text": "qabool hai, lekin fees wahin settle ho",
+            "lang": "ur-Latn",
+            "gloss": "we accept, but the fee should be settled there"
+          },
+          "take the student from the Main campus"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye transfer mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete this transfer"
+            },
+            "goesTo": "Not offered.",
+            "note": "A transfer is never deleted. A refused one stays on the record with its reason (BR-11, E10)."
+          },
+          {
+            "request": {
+              "text": "qabool nahi, jagah nahi hai",
+              "lang": "ur-Latn",
+              "gloss": "not accepted, there is no room"
+            },
+            "goesTo": "student.transfer.refuse — this use case.",
+            "note": "The receiving branch may refuse — there may be no capacity, or it may decline until the balance is settled — and the reason is recorded (BR-5)."
+          },
+          {
+            "request": {
+              "text": "qabool kar lein, balance ka baad mein dekhenge",
+              "lang": "ur-Latn",
+              "gloss": "accept it, we will deal with the balance later"
+            },
+            "goesTo": "Refused.",
+            "note": "Which branch the balance sits with is decided at acceptance and recorded, not left (BR-6, E6)."
+          },
+          {
+            "request": {
+              "text": "class aur section bhi abhi de dein",
+              "lang": "ur-Latn",
+              "gloss": "assign the class and section now as well"
+            },
+            "goesTo": "student.transfer.place — this use case.",
+            "note": "The coordinator places the student. Accepting and placing are separate acts by separate people (BR-7)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.transfer.accept",
+            "inputs": {
+              "transfer_id": "$request.transfer_phrase",
+              "balance_treatment": "$request.balance_treatment",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and the balance decision is part of it. Accepting without deciding is refused (BR-6, E6)."
+          }
+        ],
+        "onFailure": "Stop and report. Accepting with no balance treatment decided is refused, and the student stays where they are.",
+        "atomicity": "One state change. **The student is not here yet** — the coordinator has to assign a class, a section and a roll number before the record moves and the transfer completes (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "student.transfer.accept",
+          "method": "POST",
+          "path": "/api/v1/student-transfers/{transfer_id}/accept",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "transfer_id, since a transfer carries one decision and a repeat is the same acceptance",
+          "purpose": "Accept a released student at this branch, with the balance treatment decided.",
+          "parameters": [
+            {
+              "name": "transfer_id",
+              "source": "resolved",
+              "sourceRef": "$request.transfer_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student_transfer",
+                "fromPhrase": "$request.transfer_phrase",
+                "onNoMatch": "Refuse. No transfer awaiting acceptance at this branch matches.",
+                "onAmbiguous": "Ask, naming the transfers that match with their students, the other branch and where each stands."
+              },
+              "notes": "The transfer, named by the student."
+            },
+            {
+              "name": "balance_treatment",
+              "source": "request",
+              "sourceRef": "$request.balance_treatment",
+              "required": false,
+              "type": "enum: Settled at the leaving branch|Carried forward",
+              "notes": "Whether the outstanding balance is settled at the leaving branch or carried forward to this one. **Required where a balance is outstanding** (BR-6, E6) — which it is is decided and recorded, not left. Which branch's ledger actually holds a carried-forward balance depends on the ledger question left open in the branch use case, and is unanswered (OQ-1)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What this branch has taken on.",
+            "fields": [
+              {
+                "name": "transfer_id",
+                "type": "string",
+                "description": "The transfer."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Accepted. The student is **not here yet** — placement comes next (BR-7)."
+              },
+              {
+                "name": "accepted_by",
+                "type": "string",
+                "description": "The School Admin at this branch (BR-4)."
+              },
+              {
+                "name": "balance",
+                "type": "string",
+                "description": "What the student owes."
+              },
+              {
+                "name": "balance_treatment",
+                "type": "string",
+                "description": "Settled at the leaving branch, or carried forward to this one (BR-6)."
+              },
+              {
+                "name": "whose_ledger",
+                "type": "string",
+                "description": "Unresolved where the balance is carried forward. Whether branches keep separate ledgers or one consolidated ledger with a branch on each entry is left open in the branch use case, and it decides whose books the debt sits in (OQ-1, UC-23-01 OQ-1)."
+              },
+              {
+                "name": "fee_structure",
+                "type": "string",
+                "description": "Not addressed. Whether a transfer changes the student's fee structure, given each branch may charge differently, is unanswered — and it is the family's first question (OQ-3)."
+              },
+              {
+                "name": "history_arriving",
+                "type": "string[]",
+                "description": "Attendance, fee and result history moves with the record and will be readable here (BR-8)."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "Unchanged. Only the roll number is reissued (BR-7, E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_BALANCE_TREATMENT",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "Accepted with no balance treatment decided.",
+              "written": "Nothing.",
+              "notWritten": "The transfer is not accepted.",
+              "note": "Which branch the balance sits with is decided and recorded, not left (BR-6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the balance treatment. Settling it at the leaving branch and carrying it forward put the debt in different places and neither is the obvious answer — the receiving branch is taking on the student and possibly the money, and it is their decision (BR-5, BR-6, E6).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-6",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that carrying it forward leaves a question open. Which branch's ledger holds it depends on whether the group keeps separate ledgers or one with a branch on each entry, and that is unresolved in the branch use case (OQ-1).",
+          "derivedFrom": [
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Raise the fee structure before the family does. Each branch may charge differently and nothing says whether a transfer changes what the student pays — it is the family's first question and the specification does not answer it (OQ-3).",
+          "derivedFrom": [
+            "OQ-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say the student is not here yet. Accepting is not arriving: a coordinator has to assign a class, a section and a roll number before the record moves at all (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that the whole history comes with them. Attendance, fee and result history moves with the record and stays readable here — this campus is not starting a new file on the child (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no un-accept. The lifecycle runs forward to placement and completion; refusing is the other answer and it has to be given instead of this one (BR-5). A refused transfer stays on the record (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ka transfer qabool kar lein, balance yahan carry forward kar dein",
+            "lang": "ur-Latn",
+            "gloss": "accept Ayesha's transfer, carry the balance forward here"
+          },
+          "context": "School Admin at Johar Town, PKR 12,000 outstanding.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.transfer.accept",
+              "inputs": {
+                "transfer_id": "$request.transfer_phrase → Ayesha Khan's transfer",
+                "balance_treatment": "Carried forward",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their decision, recorded (PR-1)."
+            }
+          ],
+          "outcome": "Accepted with PKR 12,000 carried forward. Two things to say: which ledger that debt actually sits in is unresolved in the specification, and nothing here says whether Ayesha's fee structure changes now that she is at a campus that may charge differently — the family will ask, and there is no answer in the system. She is not here yet: a coordinator has to place her before the record moves."
+        },
+        {
+          "request": {
+            "text": "qabool hai",
+            "lang": "ur-Latn",
+            "gloss": "we accept"
+          },
+          "context": "School Admin at Johar Town, PKR 12,000 outstanding, no treatment given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.transfer.accept",
+              "inputs": {
+                "transfer_id": "$request.transfer_phrase → the transfer",
+                "balance_treatment": "$request.balance_treatment — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The decision is required (PR-1)."
+            }
+          ],
+          "outcome": "Not yet accepted. PKR 12,000 is outstanding and somebody has to decide whether it is settled at the Main campus before she comes or carried forward and chased here. It is your decision, not theirs — you may also decline the transfer until they settle it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-23-04-PC-4",
+      "intent": {
+        "name": "student.transfer.refuse",
+        "summary": "Decline to take the student, with a reason the leaving branch and the family are told.",
+        "routesHere": [
+          "refuse the transfer — Grade 4 is full in both sections",
+          {
+            "text": "ye transfer qabool nahi kar sakte, jagah nahi hai",
+            "lang": "ur-Latn",
+            "gloss": "we cannot accept this transfer, there is no room"
+          },
+          {
+            "text": "pehle wahan fees clear karein, tab lenge",
+            "lang": "ur-Latn",
+            "gloss": "let them clear the fee there first, then we will take them"
+          },
+          "decline the student from the Main campus"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "qabool kar lein",
+              "lang": "ur-Latn",
+              "gloss": "accept it"
+            },
+            "goesTo": "student.transfer.accept — this use case.",
+            "note": "The other answer, and it carries the balance decision with it (BR-6)."
+          },
+          {
+            "request": {
+              "text": "bina wajah mana kar dein",
+              "lang": "ur-Latn",
+              "gloss": "refuse it without a reason"
+            },
+            "goesTo": "Refused.",
+            "note": "The reason is required. The leaving branch and the family are both told it (BR-5, E5)."
+          },
+          {
+            "request": {
+              "text": "ye transfer mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete this transfer"
+            },
+            "goesTo": "Not offered.",
+            "note": "A refused transfer stays on the record with its reason (BR-11, E10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.transfer.refuse",
+            "inputs": {
+              "transfer_id": "$request.transfer_phrase",
+              "refusal_reason": "$request.refusal_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The transfer closes, the student stays at the leaving branch, and the scoped access between the two branches ends (BR-3, BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. A refusal with no reason is not recorded, and the transfer stays awaiting an answer (E5).",
+        "atomicity": "One write. The student remains enrolled at the leaving branch, the temporary sight each branch had of the other closes (BR-3), and the refused transfer stays on the record with its reason (BR-11, E10)."
+      },
+      "operations": [
+        {
+          "name": "student.transfer.refuse",
+          "method": "POST",
+          "path": "/api/v1/student-transfers/{transfer_id}/refuse",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "transfer_id, since a transfer carries one decision and a repeat is the same refusal",
+          "purpose": "Refuse a transfer, with the reason recorded and sent.",
+          "parameters": [
+            {
+              "name": "transfer_id",
+              "source": "resolved",
+              "sourceRef": "$request.transfer_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student_transfer",
+                "fromPhrase": "$request.transfer_phrase",
+                "onNoMatch": "Refuse. No transfer awaiting acceptance at this branch matches.",
+                "onAmbiguous": "Ask, naming the transfers that match with their students, the other branch and where each stands."
+              },
+              "notes": "The transfer, named by the student."
+            },
+            {
+              "name": "refusal_reason",
+              "source": "request",
+              "sourceRef": "$request.refusal_reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters, this branch's own. Required (BR-5, E5) — **the leaving branch and the family are both told it**, so it is not an internal note."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was declined and what it leaves.",
+            "fields": [
+              {
+                "name": "transfer_id",
+                "type": "string",
+                "description": "The transfer."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Refused. Terminal, and on the record with its reason (BR-5, BR-11, E10)."
+              },
+              {
+                "name": "refusal_reason",
+                "type": "string",
+                "description": "What the leaving branch and the family were told, in this branch's words."
+              },
+              {
+                "name": "student_stays_at",
+                "type": "string",
+                "description": "The leaving branch. Nothing about their enrolment changed (BR-5)."
+              },
+              {
+                "name": "access_ended",
+                "type": "string",
+                "description": "The scoped sight each branch had of the other closes now (BR-3, E9)."
+              },
+              {
+                "name": "can_be_raised_again",
+                "type": "boolean",
+                "description": "True. A refusal closes this transfer, not the possibility — where the reason was an unsettled balance, settling it and raising a fresh transfer is the route (BR-5, BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "Refused with no reason.",
+              "written": "Nothing.",
+              "notWritten": "The transfer stays awaiting acceptance.",
+              "note": "The leaving branch and the family are told it (BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. The leaving branch **and the family** both read it, so \"not accepted\" leaves a family with a child who cannot move and no idea why (BR-5, E5).",
+          "derivedFrom": [
+            "BR-5",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say what the refusal does not close. A transfer refused because the balance is unsettled can be raised again once it is settled — the refusal ends this transfer, not the possibility (BR-5, BR-11).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the scoped access ends now. Each branch's temporary sight of the other closes with the refusal, so anything either needed from the other has to be dealt with before this (BR-3, E9).",
+          "derivedFrom": [
+            "BR-3",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say the student is unaffected. They stay enrolled at the leaving branch exactly as they were — nothing about their class, section or fees changed while the transfer was open (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "student.transfer.raise",
+        "statement": "A fresh transfer is raised at the leaving branch. The refused one stays on the record with its reason (BR-11, E10) — there is no reopening of the same transfer."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye transfer qabool nahi kar sakte, Grade 4 ke dono sections bhare hue hain",
+            "lang": "ur-Latn",
+            "gloss": "we cannot accept this transfer, both Grade 4 sections are full"
+          },
+          "context": "School Admin at Johar Town.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.transfer.refuse",
+              "inputs": {
+                "transfer_id": "$request.transfer_phrase → Ayesha Khan's transfer",
+                "refusal_reason": "as they gave it — Grade 4 Section A and B are both full for this session",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words, and the family reads them (PR-1)."
+            }
+          ],
+          "outcome": "Refused, and both the Main campus and the family are told in those words. Ayesha stays where she is with nothing about her enrolment changed. The refusal stays on the record — and a transfer can be raised again for a later session when a place exists."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-23-04-PC-5",
+      "intent": {
+        "name": "student.transfer.place",
+        "summary": "Give the student a class, a section and a roll number here. This is what completes the transfer.",
+        "routesHere": [
+          "place Ayesha in Grade 4 Section B with roll number 18",
+          {
+            "text": "Ayesha ko Grade 4 Section B mein daal dein",
+            "lang": "ur-Latn",
+            "gloss": "put Ayesha in Grade 4 Section B"
+          },
+          {
+            "text": "class aur section de dein, roll number bhi",
+            "lang": "ur-Latn",
+            "gloss": "assign the class and section, and the roll number"
+          },
+          "place the transferring student"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "student ID bhi naya de dein",
+              "lang": "ur-Latn",
+              "gloss": "give them a new student ID as well"
+            },
+            "goesTo": "Refused.",
+            "note": "The student identifier does not change. Every historical reference in results, the fee ledger and the audit trail depends on it — only the roll number, which is a position within a class, is reissued (BR-7, E7)."
+          },
+          {
+            "request": {
+              "text": "abhi place na karein, baad mein dekh lenge",
+              "lang": "ur-Latn",
+              "gloss": "do not place them yet, we will see later"
+            },
+            "goesTo": "Possible, and say what it leaves.",
+            "note": "The transfer does not complete until they are placed: the record has not moved, the leaving branch still holds them, and the family has not been told (BR-7, BR-8, BR-9)."
+          },
+          {
+            "request": {
+              "text": "purana result aur attendance dobara daalna paray ga?",
+              "lang": "ur-Latn",
+              "gloss": "will the old results and attendance have to be entered again?"
+            },
+            "goesTo": "No.",
+            "note": "Attendance, fee and result history moves with the record and stays readable here. Nothing is re-entered (BR-8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.transfer.place",
+            "inputs": {
+              "transfer_id": "$request.transfer_phrase",
+              "class_id": "$request.class_phrase",
+              "section_id": "$request.section_phrase",
+              "roll_number": "$request.roll_number",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One step, and it completes the transfer: the record moves, the history comes with it, access at the leaving branch ends and the guardian is told (BR-7, BR-8, BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. An attempt to change the student identifier refuses the whole placement — every historical reference depends on it (E7).",
+        "atomicity": "One act with four effects: the placement, the record moving with its attendance, fee and result history, the end of the leaving branch's access, and the guardian being told (BR-7, BR-8, BR-9). **The leaving branch retains no visibility of the student thereafter** beyond what its own historical records already hold (BR-8, E8), and the scoped sight each branch had of the other closes (BR-3)."
+      },
+      "operations": [
+        {
+          "name": "student.transfer.place",
+          "method": "POST",
+          "path": "/api/v1/student-transfers/{transfer_id}/place",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "transfer_id, since a transfer is placed once and a repeat would move the record twice and notify the family twice",
+          "purpose": "Assign a class, section and roll number, and complete the transfer.",
+          "parameters": [
+            {
+              "name": "transfer_id",
+              "source": "resolved",
+              "sourceRef": "$request.transfer_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student_transfer",
+                "fromPhrase": "$request.transfer_phrase",
+                "onNoMatch": "Refuse. No accepted transfer awaiting placement at this branch matches.",
+                "onAmbiguous": "Ask, naming the transfers that match with their students, the other branch and where each stands."
+              },
+              "notes": "The transfer, named by the student."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No such class at this branch this session.",
+                "onAmbiguous": "Ask, naming the classes that match with how full each section is."
+              },
+              "notes": "The class at this branch."
+            },
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No such section of that class.",
+                "onAmbiguous": "Ask, naming the sections with their current strength."
+              },
+              "notes": "The section of the chosen class."
+            },
+            {
+              "name": "roll_number",
+              "source": "request",
+              "sourceRef": "$request.roll_number",
+              "required": true,
+              "type": "number",
+              "notes": "Reissued here. It is a position within a class, which is why it changes when the class does — unlike the student identifier, which does not (BR-7, E7)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What arrived and what closed behind it.",
+            "fields": [
+              {
+                "name": "transfer_id",
+                "type": "string",
+                "description": "The transfer."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Complete (BR-8, BR-9)."
+              },
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "**Unchanged.** Every historical reference in results, the fee ledger and the audit trail depends on it (BR-7, E7)."
+              },
+              {
+                "name": "roll_number",
+                "type": "string",
+                "description": "Reissued at this branch. A position within a class, not an identity (BR-7)."
+              },
+              {
+                "name": "class_and_section",
+                "type": "string",
+                "description": "Where the student now sits."
+              },
+              {
+                "name": "history_moved",
+                "type": "string[]",
+                "description": "Attendance, fee and result history, readable here (BR-8)."
+              },
+              {
+                "name": "leaving_branch_access",
+                "type": "string",
+                "description": "Ended. That branch retains no visibility of the student beyond what its own historical records already hold (BR-8, E8)."
+              },
+              {
+                "name": "scoped_access_closed",
+                "type": "boolean",
+                "description": "True. The temporary sight each branch had of the other ends with the transfer (BR-3, E9)."
+              },
+              {
+                "name": "guardian_notified",
+                "type": "boolean",
+                "description": "True. The family is told the transfer is complete (BR-9)."
+              },
+              {
+                "name": "part_term_result",
+                "type": "string",
+                "description": "Where the student transfers mid-term with a term result already partly recorded, the history moves but a part-term result at two campuses is not addressed anywhere (OQ-4)."
+              },
+              {
+                "name": "processes_bypassed",
+                "type": "string[]",
+                "description": "The withdrawal process and the admission pipeline. Both record this as an exception rather than being silently sidestepped (BR-10, E11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "STUDENT_ID_CHANGED",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "An attempt was made to change the student identifier.",
+              "written": "Nothing.",
+              "notWritten": "There is no such route.",
+              "note": "Every historical reference depends on it; only the roll number is reissued (BR-7)."
+            },
+            {
+              "code": "LEAVING_BRANCH_ACCESS",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "The leaving branch opened the student after completion.",
+              "written": "Nothing.",
+              "notWritten": "Nothing beyond its own historical records is returned (BR-8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never change the student identifier. It is what every result, every ledger entry and every audit row about this child points at, and the roll number — a position within a class — is the only thing reissued (BR-7, E7).",
+          "derivedFrom": [
+            "BR-7",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the leaving branch loses sight of the student now. After completion it retains no visibility beyond its own historical records, so anything it still needed from or about the child had to be dealt with before this (BR-8, E8).",
+          "derivedFrom": [
+            "BR-8",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the history came with them. Attendance, fee and result history is readable here and nothing is re-entered — this campus is not starting a new file (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Raise the mid-term case where it applies. A student transferring with a term result already partly recorded has their history moved, and a part-term result across two campuses is not addressed anywhere (OQ-4).",
+          "derivedFrom": [
+            "OQ-4"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say that the guardian is told on completion, and not before. Nothing has reached the family through any of the earlier steps (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Complete is terminal. The record has moved, the guardian has been told and the leaving branch's access has ended — bringing the student back is a fresh transfer raised from this branch, not a reversal (BR-8, BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ko Grade 4 Section B mein daal dein, roll number 18",
+            "lang": "ur-Latn",
+            "gloss": "put Ayesha in Grade 4 Section B, roll number 18"
+          },
+          "context": "Coordinator at Johar Town, transfer accepted with the balance carried forward.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.transfer.place",
+              "inputs": {
+                "transfer_id": "$request.transfer_phrase → Ayesha Khan's transfer",
+                "class_id": "$request.class_phrase → Grade 4",
+                "section_id": "$request.section_phrase → Section B",
+                "roll_number": "18",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "This completes it (PR-2)."
+            }
+          ],
+          "outcome": "Complete. Her student ID is unchanged — 2026-0417, the same one every past result and ledger entry points at — and only her roll number is new. Her attendance, fee and result history came with her and is readable here. The Main campus can no longer see her at all beyond its own historical records, and the family has been told."
+        },
+        {
+          "request": {
+            "text": "place kar dein aur naya student ID bhi de dein, hamare campus ka format alag hai",
+            "lang": "ur-Latn",
+            "gloss": "place her and give a new student ID too, our campus uses a different format"
+          },
+          "context": "Coordinator at Johar Town.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.transfer.place",
+              "inputs": {
+                "transfer_id": "$request.transfer_phrase → the transfer",
+                "class_id": "$request.class_phrase",
+                "section_id": "$request.section_phrase",
+                "roll_number": "as given",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The placement can proceed; the identifier cannot change (PR-1)."
+            }
+          ],
+          "outcome": "The placement is fine and the identifier is not. Every result, every fee ledger entry and every audit row about this child points at 2026-0417 — changing it would orphan all of them, which is why there is no route that does. The roll number is the thing that is reissued, and it is a position within a class rather than an identity."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-23-04-PC-6",
+      "intent": {
+        "name": "student.transfers.read",
+        "summary": "See which transfers are open, which are stuck waiting on the other branch, and which were refused.",
+        "routesHere": [
+          "which student transfers are open?",
+          {
+            "text": "kaunse transfers abhi chal rahe hain?",
+            "lang": "ur-Latn",
+            "gloss": "which transfers are currently in progress?"
+          },
+          {
+            "text": "kis transfer ka jawab nahi aaya?",
+            "lang": "ur-Latn",
+            "gloss": "which transfer has had no answer?"
+          },
+          {
+            "text": "is saal kitne students doosre campus gaye hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many students moved to the other campus this year?"
+          },
+          "show me the transfers we refused and why"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "naya transfer bana dein",
+              "lang": "ur-Latn",
+              "gloss": "raise a new transfer"
+            },
+            "goesTo": "student.transfer.raise — this use case.",
+            "note": "Reading and raising are separate."
+          },
+          {
+            "request": {
+              "text": "doosre campus ke students dikha dein",
+              "lang": "ur-Latn",
+              "gloss": "show me the other campus's students"
+            },
+            "goesTo": "Refused.",
+            "note": "Branches are sealed. Only the student in an open transfer is visible across the boundary, and only for its duration (BR-3, E9, UC-23-01 BR-5)."
+          },
+          {
+            "request": {
+              "text": "jo transfer ho chuka us bache ka record dikhayein",
+              "lang": "ur-Latn",
+              "gloss": "show the record of a student already transferred"
+            },
+            "goesTo": "Not offered at the leaving branch.",
+            "note": "After completion the leaving branch retains no visibility of the student beyond what its own historical records already hold (BR-8, E8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "student.transfers.read",
+            "inputs": {
+              "status": "$request.status",
+              "from_date": "$request.from_date",
+              "to_date": "$request.to_date",
+              "branch_id": "$session.branch_id",
+              "session_id": "$session.session_id"
+            },
+            "note": "One read, of the transfers this branch is a party to — either as the leaving branch or as the receiving one (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written and a refused transfer is still in what it reads — nothing is deleted (BR-11, E10)."
+      },
+      "operations": [
+        {
+          "name": "student.transfers.read",
+          "method": "GET",
+          "path": "/api/v1/student-transfers",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List transfers this branch is party to, with their status and reasons.",
+          "parameters": [
+            {
+              "name": "status",
+              "source": "request",
+              "sourceRef": "$request.status",
+              "required": false,
+              "type": "string",
+              "notes": "One of the lifecycle states — Raised, Awaiting release, Released, Awaiting acceptance, Accepted, Refused, Placed or Complete. The use case defines these in the lifecycle rather than as a value list on a field, so they are carried as written rather than as an enum."
+            },
+            {
+              "name": "from_date",
+              "source": "request",
+              "sourceRef": "$request.from_date",
+              "required": false,
+              "type": "date",
+              "notes": "The start of the period asked about."
+            },
+            {
+              "name": "to_date",
+              "source": "request",
+              "sourceRef": "$request.to_date",
+              "required": false,
+              "type": "date",
+              "notes": "The end of it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What is moving, what is stuck and what was refused.",
+            "fields": [
+              {
+                "name": "transfers",
+                "type": "object[]",
+                "description": "Student, the other branch, direction, status, balance and dates."
+              },
+              {
+                "name": "awaiting_our_answer",
+                "type": "object[]",
+                "description": "Transfers released to this branch and not yet accepted or refused. Each is a student still enrolled elsewhere waiting on a decision here (BR-4)."
+              },
+              {
+                "name": "awaiting_their_answer",
+                "type": "object[]",
+                "description": "Transfers this branch released that the other has not answered. **No timeout exists** — the student stays enrolled here indefinitely and nothing chases it (E4, OQ-2)."
+              },
+              {
+                "name": "accepted_not_placed",
+                "type": "object[]",
+                "description": "Accepted and not yet given a class, section and roll number. The record has not moved, the leaving branch still holds the student and the family has not been told (BR-7, BR-9)."
+              },
+              {
+                "name": "refused",
+                "type": "object[]",
+                "description": "With their reasons. Kept on the record — a family refused twice for the same reason is visible only because nothing is deleted (BR-5, BR-11)."
+              },
+              {
+                "name": "balances_carried_forward",
+                "type": "object[]",
+                "description": "Debts that arrived with a transferring student. Whose ledger they sit in is unresolved (BR-6, OQ-1)."
+              },
+              {
+                "name": "cards_or_items_outstanding",
+                "type": "object[]",
+                "description": "Transfers held because the student still holds cards or items. After completion this branch cannot ask for them at all (BR-2, BR-8, E3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "BEYOND_SCOPE",
+              "mapsTo": "E9",
+              "httpStatus": 403,
+              "meaning": "The actor is asking about a transfer this branch is not party to.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned.",
+              "note": "Each branch sees of the other only what the transfer requires (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Separate what is waiting on us from what is waiting on them. A transfer awaiting this branch's answer is work; one awaiting the other branch's is a student sitting in limbo that nobody here can move (BR-4, E4).",
+          "derivedFrom": [
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the transfers the other branch has never answered, with how long they have waited. **No timeout is modelled** — the student stays enrolled here, the transfer stays open, and nothing chases it (E4, OQ-2).",
+          "derivedFrom": [
+            "E4",
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name what is accepted and not placed. The record has not moved, the leaving branch still holds the student, and the family has not been told — it looks finished on both screens and is not (BR-7, BR-9).",
+          "derivedFrom": [
+            "BR-7",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Keep the refused ones in the answer with their reasons. A family refused twice for the same reason is visible only because a refused transfer stays on the record (BR-5, BR-11, E10).",
+          "derivedFrom": [
+            "BR-5",
+            "BR-11",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Name any transfer held on cards or items. That is the last moment this branch can ask for them, and after completion it has no visibility of the student at all (BR-2, BR-8).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id and session_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "kaunse transfers abhi latke hue hain?",
+            "lang": "ur-Latn",
+            "gloss": "which transfers are stuck at the moment?"
+          },
+          "context": "School Admin at the Main campus.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.transfers.read",
+              "inputs": {
+                "status": "omitted — everything open",
+                "from_date": "omitted",
+                "to_date": "omitted",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "Both directions (PR-1)."
+            }
+          ],
+          "outcome": "Split it two ways. Two transfers are waiting on **us** to accept or refuse — those are decisions somebody here has to make. Three were released by us and Johar Town has never answered: the oldest is 41 days old, those students are still on this branch's roll, and nothing chases them because no timeout exists. Two more are accepted and not placed, which looks finished and is not."
+        },
+        {
+          "request": {
+            "text": "is saal kitne transfers rad hue aur kyun?",
+            "lang": "ur-Latn",
+            "gloss": "how many transfers were refused this year and why?"
+          },
+          "context": "Principal, all branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "student.transfers.read",
+              "inputs": {
+                "status": "Refused",
+                "from_date": "1 January",
+                "to_date": "today",
+                "branch_id": "$session.branch_id",
+                "session_id": "$session.session_id"
+              },
+              "note": "The refusals, with their reasons (PR-4)."
+            }
+          ],
+          "outcome": "Give each with the reason as it was written, since the family read those words too. Point out any student refused more than once — that is visible only because a refused transfer is never deleted, and a family turned away twice for the same reason is a decision somebody should be making deliberately rather than twice by accident."
+        }
+      ]
+    }
+  ]
+}

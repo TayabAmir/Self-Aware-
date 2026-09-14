@@ -1,0 +1,1642 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-18-01",
+    "name": "Create a stock item once, with the unit it is counted in and the level at which it must be bought again",
+    "module": "Inventory, Assets & Point-of-Sale",
+    "file": "../UseCases/UC-18-01.json",
+    "featureRef": "18.1 Setting up a stock item"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-18-01-PC-1",
+      "intent": {
+        "name": "stock.item.create",
+        "summary": "Create a stock item once, with the unit it is counted in and the level at which it must be bought again.",
+        "routesHere": [
+          "create a stock item for black whiteboard markers, counted in pieces, reorder at 20",
+          {
+            "text": "stock mein naya item banana hai — whiteboard marker, piece mein ginti hogi",
+            "lang": "ur-Latn",
+            "gloss": "I want to create a new stock item — whiteboard marker, counted in pieces"
+          },
+          {
+            "text": "A4 paper ka item bana dein, ream mein, 10 pe dobara mangwana hai",
+            "lang": "ur-Latn",
+            "gloss": "create an item for A4 paper, in reams, reorder at 10"
+          },
+          {
+            "text": "projector remote ko returnable item ke tor par daal dein",
+            "lang": "ur-Latn",
+            "gloss": "add the projector remote as a returnable item"
+          },
+          "set up a new item under Lab consumables"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "stock mein 40 likh do",
+              "lang": "ur-Latn",
+              "gloss": "write 40 in the stock"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is no field anywhere that sets the quantity on hand. It comes from receipts, issues and counts (BR-5, E6, AC-9). A balance typed in is a balance nobody counted."
+          },
+          {
+            "request": {
+              "text": "ye item bilkul delete kar do",
+              "lang": "ur-Latn",
+              "gloss": "delete this item completely"
+            },
+            "goesTo": "stock.item.deactivate — this use case.",
+            "note": "There is no delete. Receipts, issues and counts reference the item, and removing it would leave a past count unreadable (BR-9, E8, AC-11)."
+          },
+          {
+            "request": {
+              "text": "ye cheez mangwani hai",
+              "lang": "ur-Latn",
+              "gloss": "I need to order this"
+            },
+            "goesTo": "stock.request.submit — UC-18-02.",
+            "note": "Creating the item and asking for it to be bought are separate. The item has to exist before anybody can request against it (BR-1)."
+          },
+          {
+            "request": {
+              "text": "projector ko register mein daal dein",
+              "lang": "ur-Latn",
+              "gloss": "put the projector on the register"
+            },
+            "goesTo": "asset.register — UC-18-07.",
+            "note": "A longer-lived item is registered individually on the asset register rather than counted as stock. A stock item carries a balance; an asset carries a serial number, a location and a holder."
+          },
+          {
+            "request": {
+              "text": "item ki qeemat bhi daal dein",
+              "lang": "ur-Latn",
+              "gloss": "put the item's price in as well"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nothing here holds a price. Accounts are listed as valuing the stock held and no field in this use case carries a value — an open question the use case raises and does not answer (OQ-2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.item.create",
+            "inputs": {
+              "name": "$request.name",
+              "category_id": "$request.category_phrase",
+              "unit": "$request.unit",
+              "reorder_level": "$request.reorder_level",
+              "item_type": "$request.item_type",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and all five matter. The unit and the type are the two that cannot be put right later — the unit is fixed once anything moves against the item (BR-2), and the type decides whether an issue of it ever closes (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. A duplicate name in the category, a missing unit or a missing reorder level each refuses the item, and nothing half-created is left behind.",
+        "atomicity": "One write: the item with its name, category, unit, reorder level and type. It is available at once for requests, receipts, issues and counts, and its quantity on hand is zero because nothing has been received (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "stock.item.create",
+          "method": "POST",
+          "path": "/api/v1/stock-items",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "name + category + branch, so a double press does not leave two items for one shelf",
+          "purpose": "Create a stock item with its unit, reorder level and type.",
+          "parameters": [
+            {
+              "name": "name",
+              "source": "request",
+              "sourceRef": "$request.name",
+              "required": true,
+              "type": "string",
+              "notes": "2 to 100 characters, unique within its category (BR-6, E1). Two entries for the same thing is two balances for one shelf."
+            },
+            {
+              "name": "category_id",
+              "source": "resolved",
+              "sourceRef": "$request.category_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_category",
+                "fromPhrase": "$request.category_phrase",
+                "onNoMatch": "Refuse. No such category. Who maintains the category list, and whether one may be created while creating an item, is an open question this use case raises and does not answer (OQ-1).",
+                "onAmbiguous": "Ask, naming the categories that match."
+              },
+              "notes": "What kind of item it is. Lists and counts group by it."
+            },
+            {
+              "name": "unit",
+              "source": "request",
+              "sourceRef": "$request.unit",
+              "required": true,
+              "type": "enum: Piece|Box|Ream|Packet|Litre|Kilogram|Metre|Set",
+              "notes": "The unit the item is counted in (E2). **Fixed once anything moves against the item** — changing it would make every past receipt, issue and count mean something different from what it meant when it was recorded (BR-2, E5, AC-5)."
+            },
+            {
+              "name": "reorder_level",
+              "source": "request",
+              "sourceRef": "$request.reorder_level",
+              "required": true,
+              "type": "number",
+              "notes": "Zero or more (E3). The quantity at which the item must be bought again. A standing commitment to buy rather than a description, which is why only the School Admin sets it (BR-3, E4, AC-4)."
+            },
+            {
+              "name": "item_type",
+              "source": "request",
+              "sourceRef": "$request.item_type",
+              "required": true,
+              "type": "enum: Consumable|Returnable",
+              "notes": "A consumable is used up once issued. A returnable is expected back and **stays outstanding against the person who took it** until it is returned (BR-4, AC-6, AC-7). Never guessed from the item's name."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The item and what it now permits.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "name",
+                "type": "string",
+                "description": "As entered, unique within its category."
+              },
+              {
+                "name": "unit",
+                "type": "string",
+                "description": "What it is counted in, from here on and permanently (BR-2)."
+              },
+              {
+                "name": "reorder_level",
+                "type": "number",
+                "description": "The level at which it is flagged for buying (BR-7)."
+              },
+              {
+                "name": "item_type",
+                "type": "string",
+                "description": "Consumable or returnable, which decides whether an issue of it ever closes (BR-4)."
+              },
+              {
+                "name": "on_hand",
+                "type": "number",
+                "description": "Zero. The quantity comes from receipts, issues and counts and is never typed (BR-5, E6)."
+              },
+              {
+                "name": "available_for",
+                "type": "string[]",
+                "description": "Requests, receipts, issues and counts (AC-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DUPLICATE_NAME",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "An item of the same name already exists in that category.",
+              "written": "Nothing.",
+              "notWritten": "The item is not created.",
+              "note": "Two entries called the same thing in one category is how a store ends up with two balances for one shelf (BR-6, AC-2)."
+            },
+            {
+              "code": "NO_UNIT",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No unit was selected.",
+              "written": "Nothing.",
+              "notWritten": "The item is not created."
+            },
+            {
+              "code": "NO_REORDER_LEVEL",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "No reorder level was set.",
+              "written": "Nothing.",
+              "notWritten": "The item is not created.",
+              "note": "It is what triggers buying the item again (BR-3, AC-3)."
+            },
+            {
+              "code": "NOT_SCHOOL_ADMIN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "A member of staff attempted to set the reorder level.",
+              "written": "Nothing.",
+              "notWritten": "The item is not created.",
+              "note": "A reorder level commits the school to buying, so it sits with the School Admin and not with whoever holds the store (BR-3, AC-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never guess the unit. It is fixed the moment anything moves against the item and cannot be changed afterwards by any route (BR-2, E5, AC-5) — a marker counted in boxes and a marker counted in pieces are the same shelf and two different balances. Ask which.",
+          "derivedFrom": [
+            "BR-2",
+            "E5",
+            "AC-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never guess consumable or returnable. It decides whether an issue of the item ever closes: a returnable stays outstanding against the person who took it, a consumable does not (BR-4, AC-6, AC-7). A projector remote read as a consumable is an item nobody is ever asked to bring back.",
+          "derivedFrom": [
+            "BR-4",
+            "AC-6",
+            "AC-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never set or suggest a reorder level of your own. It is a standing commitment to buy, it belongs to the School Admin, and a level nobody chose is a purchasing decision nobody made (BR-3, BR-8, E4).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-8",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never offer to set the quantity on hand. There is no such field — the balance comes from receipts, issues and counts (BR-5, E6, AC-9).",
+          "derivedFrom": [
+            "BR-5",
+            "E6",
+            "AC-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Check the name against the category before creating. A near-duplicate is refused only on an exact match, and \"Marker, black\" beside \"Whiteboard marker, black\" passes the check and splits the shelf in two (BR-1, BR-6).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-6",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "stock.item.deactivate",
+        "statement": "An item created in error is deactivated with a reason and stays readable, because receipts, issues and counts reference it (BR-9, E8). There is no deletion. An item with the wrong unit cannot be corrected at all once it is in use — it is deactivated and a new one created, so past counts keep their meaning (A4)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "whiteboard marker ka item bana dein, kaale wale, piece mein ginti hogi, 20 pe dobara mangwana hai",
+            "lang": "ur-Latn",
+            "gloss": "create an item for whiteboard markers, the black ones, counted in pieces, reorder at 20"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.item.create",
+              "inputs": {
+                "name": "Whiteboard marker, black",
+                "category_id": "$request.category_phrase → Stationery",
+                "unit": "Piece",
+                "reorder_level": "20",
+                "item_type": "asked — a marker is used up, but the answer is theirs",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The unit and the level came from them; the type is asked rather than assumed (PR-2)."
+            }
+          ],
+          "outcome": "Ask whether it is consumable or returnable before saving — it reads obvious for a marker and it is the field that decides whether an issue of it ever closes. After: report that the unit is now fixed, that the balance starts at zero and rises only on a receipt, and that it will flag for buying at 20."
+        },
+        {
+          "request": {
+            "text": "A4 paper ka item bana dein",
+            "lang": "ur-Latn",
+            "gloss": "create an item for A4 paper"
+          },
+          "context": "School Admin, with \"A4 paper\" already existing in Stationery, counted in reams.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.item.create",
+              "inputs": {
+                "name": "A4 paper",
+                "category_id": "$request.category_phrase → Stationery",
+                "unit": "$request.unit — absent",
+                "reorder_level": "$request.reorder_level — absent",
+                "item_type": "$request.item_type — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused on the duplicate before anything else is asked (PR-5)."
+            }
+          ],
+          "outcome": "Nothing is created. Say that A4 paper already exists in Stationery, counted in reams, with 40 on hand — and that a second entry for it would give the store two balances for one shelf. If a different paper is meant, name it so the two can be told apart on the shelf as well as on the screen."
+        },
+        {
+          "request": {
+            "text": "projector remote ka item bana dein, ye wapas aana chahiye",
+            "lang": "ur-Latn",
+            "gloss": "create an item for the projector remote, this should come back"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.item.create",
+              "inputs": {
+                "name": "Projector remote",
+                "category_id": "$request.category_phrase → asked, no category named",
+                "unit": "Piece",
+                "reorder_level": "asked — it commits the school to buying",
+                "item_type": "Returnable",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Returnable, because they said it should come back (PR-2)."
+            }
+          ],
+          "outcome": "Ask for the category and the reorder level — the level is the School Admin's decision and a level nobody chose is a purchasing decision nobody made. After: report that every issue of this item will stay outstanding against whoever takes it until it is recorded back, and will appear on their exit checklist if they leave."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-01-PC-2",
+      "intent": {
+        "name": "stock.item.update",
+        "summary": "Change an item as circumstances change — but never its unit once anything has moved against it.",
+        "routesHere": [
+          "change the reorder level on A4 paper to 15",
+          {
+            "text": "A4 paper ka reorder level 15 kar dein",
+            "lang": "ur-Latn",
+            "gloss": "change the reorder level on A4 paper to 15"
+          },
+          {
+            "text": "is item ka naam theek kar dein",
+            "lang": "ur-Latn",
+            "gloss": "correct the name of this item"
+          },
+          {
+            "text": "marker ko returnable se consumable kar dein",
+            "lang": "ur-Latn",
+            "gloss": "change the marker from returnable to consumable"
+          },
+          "move the lab reagents into a different category"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "stock mein 40 likh dein",
+              "lang": "ur-Latn",
+              "gloss": "write 40 in the stock"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is no field anywhere that sets the quantity on hand. It comes from receipts, issues and counts (BR-5, E6, AC-9). A balance typed in is a balance nobody counted."
+          },
+          {
+            "request": {
+              "text": "unit ream se box kar dein",
+              "lang": "ur-Latn",
+              "gloss": "change the unit from reams to boxes"
+            },
+            "goesTo": "Refused where anything has moved.",
+            "note": "The unit is fixed once the item is in use. Changing it would make every past receipt, issue and count mean something different from what it meant when it was recorded (BR-2, E5, AC-5). The route is deactivating the item and creating a new one, so past counts keep their meaning (A4)."
+          },
+          {
+            "request": {
+              "text": "balance theek kar dein, shelf pe 12 hain",
+              "lang": "ur-Latn",
+              "gloss": "correct the balance, there are 12 on the shelf"
+            },
+            "goesTo": "stock.adjustment.raise — UC-18-06.",
+            "note": "A balance that disagrees with the shelf is corrected by a count and an approved adjustment, not by editing the item (BR-5)."
+          },
+          {
+            "request": {
+              "text": "ye item ab nahi rakhte",
+              "lang": "ur-Latn",
+              "gloss": "we do not stock this any more"
+            },
+            "goesTo": "stock.item.deactivate — this use case.",
+            "note": "An item no longer stocked is deactivated with a reason, not edited into something else."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.item.update",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "name": "$request.name",
+              "category_id": "$request.category_phrase",
+              "reorder_level": "$request.reorder_level",
+              "item_type": "$request.item_type",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and the unit is not among the parameters at all. Every change is recorded with who made it (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. A change refused leaves the item exactly as it was, and a duplicate name is refused like any other (BR-6).",
+        "atomicity": "One write and one row in the item's change history, with the previous value and who made the change. The history is append only (BR-8, AC-7 of the item's own record)."
+      },
+      "operations": [
+        {
+          "name": "stock.item.update",
+          "method": "PATCH",
+          "path": "/api/v1/stock-items/{item_id}",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "item_id + the fields submitted, so a double press does not leave two identical rows in the change history",
+          "purpose": "Change an item's name, category, reorder level or type. The unit cannot be changed here.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No such item.",
+                "onAmbiguous": "Ask, naming the items that match with their category and the unit each is counted in — two items that sound alike may be counted in boxes and in pieces."
+              },
+              "notes": "The stock item, named the way the store names it."
+            },
+            {
+              "name": "name",
+              "source": "request",
+              "sourceRef": "$request.name",
+              "required": false,
+              "type": "string",
+              "notes": "The corrected name, still unique within its category (BR-6, E1)."
+            },
+            {
+              "name": "category_id",
+              "source": "resolved",
+              "sourceRef": "$request.category_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_category",
+                "fromPhrase": "$request.category_phrase",
+                "onNoMatch": "Refuse. No such category (OQ-1).",
+                "onAmbiguous": "Ask, naming the categories that match."
+              },
+              "notes": "Where the item is being moved to a different category."
+            },
+            {
+              "name": "reorder_level",
+              "source": "request",
+              "sourceRef": "$request.reorder_level",
+              "required": false,
+              "type": "number",
+              "notes": "The new level. Only the School Admin may set it, and the change is recorded with who made it — a level that moved without explanation is a purchasing decision nobody made (BR-3, BR-8, E4, A5)."
+            },
+            {
+              "name": "item_type",
+              "source": "request",
+              "sourceRef": "$request.item_type",
+              "required": false,
+              "type": "enum: Consumable|Returnable",
+              "notes": "Where the item was recorded as the wrong kind. Changing it changes what happens to every future issue, not to the ones already out (BR-4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What changed and what it now means.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "changed",
+                "type": "object[]",
+                "description": "Field by field, from and to, with who changed it (BR-8)."
+              },
+              {
+                "name": "unit",
+                "type": "string",
+                "description": "Unchanged, always. It is not a parameter of this operation (BR-2)."
+              },
+              {
+                "name": "open_issues_affected",
+                "type": "integer",
+                "description": "Returnable issues already outstanding against people. A change of type does not close them or open them — it applies from here on (BR-4, BR-5)."
+              },
+              {
+                "name": "below_reorder_level",
+                "type": "boolean",
+                "description": "Whether the new level puts the item below it at once, which offers it for the next request (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "UNIT_CHANGE_REFUSED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "A change to the unit was attempted on an item already in use.",
+              "written": "Nothing.",
+              "notWritten": "The item is unchanged.",
+              "note": "It has receipts and issues against it, and changing the unit would make them mean something different (BR-2, AC-5). The route is deactivating it and creating a new item (A4)."
+            },
+            {
+              "code": "DUPLICATE_NAME",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The new name already exists in that category.",
+              "written": "Nothing.",
+              "notWritten": "The item is unchanged.",
+              "note": "One name, one balance (BR-6)."
+            },
+            {
+              "code": "NOT_SCHOOL_ADMIN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "A member of staff attempted to change the reorder level.",
+              "written": "Nothing.",
+              "notWritten": "The item is unchanged.",
+              "note": "A reorder level commits the school to buying (BR-3, AC-4)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never attempt the unit. It is not a parameter here and it cannot be changed by any route once the item is in use — say so plainly and name the alternative: deactivate this item and create a new one, so past counts keep the meaning they had (BR-2, E5, A4).",
+          "derivedFrom": [
+            "BR-2",
+            "E5",
+            "A4",
+            "AC-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say who a reorder-level change binds. It is a standing commitment to buy, it is recorded with the name of whoever moved it, and it takes effect the moment the balance crosses it (BR-3, BR-7, BR-8, A5).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-7",
+            "BR-8",
+            "A5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say what a change of type does not do. Turning a consumable into a returnable does not open the issues already made, and turning a returnable into a consumable does not close the ones outstanding — it applies from here on, and the items already out stay exactly as they were (BR-4, BR-5).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never correct a balance here. The quantity on hand is not editable on this screen or any other; a shelf that disagrees with the system is settled by a count (BR-5, E6).",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no undo. A further change is another change and both rows stay in the history, which is the point — a reorder level that moved without explanation is a purchasing decision nobody made (BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "A4 paper ka reorder level 15 kar dein, 10 pe hamesha khatam ho jata hai",
+            "lang": "ur-Latn",
+            "gloss": "change the reorder level on A4 paper to 15, at 10 it always runs out"
+          },
+          "context": "School Admin, Johar Town branch, 12 reams on hand.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.item.update",
+              "inputs": {
+                "item_id": "$request.item_phrase → A4 paper",
+                "name": "unchanged",
+                "category_id": "unchanged",
+                "reorder_level": "15",
+                "item_type": "unchanged",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the level, and it is recorded with their name (PR-2)."
+            }
+          ],
+          "outcome": "Report the change and the consequence they have not asked about: with 12 on hand the item is now below its level immediately, so it will be offered for inclusion the moment anybody opens a request."
+        },
+        {
+          "request": {
+            "text": "is item ki unit ream se box kar dein, ab box mein aata hai",
+            "lang": "ur-Latn",
+            "gloss": "change this item's unit from reams to boxes, it comes in boxes now"
+          },
+          "context": "School Admin, item with 18 receipts and 40 issues against it.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.item.update",
+              "inputs": {
+                "item_id": "$request.item_phrase → A4 paper",
+                "name": "unchanged",
+                "category_id": "unchanged",
+                "reorder_level": "unchanged",
+                "item_type": "unchanged",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The unit is not a parameter. Nothing is sent for it (PR-1)."
+            }
+          ],
+          "outcome": "Refuse plainly. This item has 18 receipts and 40 issues against it, and every one of them means a number of reams — changing the unit would silently reprice the whole history. The route is to deactivate A4 paper and create a new item counted in boxes; the old balance stays readable and the two never mix."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-01-PC-3",
+      "intent": {
+        "name": "stock.item.deactivate",
+        "summary": "Take an item out of use with a reason. It stops being requestable and stays readable.",
+        "routesHere": [
+          "deactivate the old marker item, we have moved to refillables",
+          {
+            "text": "ye item band kar dein, ab hum ye nahi rakhte",
+            "lang": "ur-Latn",
+            "gloss": "deactivate this item, we do not stock it any more"
+          },
+          {
+            "text": "purana marker wala item hata dein list se",
+            "lang": "ur-Latn",
+            "gloss": "take the old marker item off the list"
+          },
+          "retire the discontinued reagent"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "bilkul mita dein, record mein bhi na rahe",
+              "lang": "ur-Latn",
+              "gloss": "erase it completely, not even in the record"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is no delete control. Receipts, issues and counts reference the item, and deleting it would leave a past count unreadable (BR-9, E8, AC-11)."
+          },
+          {
+            "request": {
+              "text": "naam badal dein, hatana nahi",
+              "lang": "ur-Latn",
+              "gloss": "change the name, do not deactivate it"
+            },
+            "goesTo": "stock.item.update — this use case.",
+            "note": "An item still stocked under a different name is edited. Deactivation is for one the school no longer holds."
+          },
+          {
+            "request": {
+              "text": "shelf pe abhi 6 pare hain",
+              "lang": "ur-Latn",
+              "gloss": "there are still 6 on the shelf"
+            },
+            "goesTo": "Still deactivate, and say so.",
+            "note": "A deactivated item cannot be requested, received or issued, but it still appears in a count of what is physically on the shelf until the shelf is clear (BR-10). The six do not disappear."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.item.deactivate",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "deactivation_reason": "$request.deactivation_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The item leaves the request, receipt and issue lists and keeps its history (BR-9, BR-10, AC-10)."
+          }
+        ],
+        "onFailure": "Stop and report. A deactivation with no reason is refused (E7), and the item stays exactly as it was.",
+        "atomicity": "One state change. Nothing is removed: the item, its history and every receipt, issue and count against it stay readable, because a past count that cannot name its item is not a record of anything (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "stock.item.deactivate",
+          "method": "POST",
+          "path": "/api/v1/stock-items/{item_id}/deactivate",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "item_id, since an item is deactivated once and a repeat is the same state",
+          "purpose": "Deactivate a stock item with the reason recorded.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No such item, or it is already deactivated.",
+                "onAmbiguous": "Ask, naming the items that match with their category and the unit each is counted in — two items that sound alike may be counted in boxes and in pieces."
+              },
+              "notes": "The stock item, named the way the store names it."
+            },
+            {
+              "name": "deactivation_reason",
+              "source": "request",
+              "sourceRef": "$request.deactivation_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters, the School Admin's own. Required (BR-9, E7) — an item that vanished from the list with no reason is one somebody will recreate next term."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What stops and what stays.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Deactivated. Never deleted (BR-9, AC-11)."
+              },
+              {
+                "name": "on_hand_at_deactivation",
+                "type": "number",
+                "description": "What was still on the shelf when it was deactivated. It does not vanish — the item still appears in a physical count until the shelf is clear (BR-10)."
+              },
+              {
+                "name": "open_returnable_issues",
+                "type": "integer",
+                "description": "Returnable items of this kind still outstanding against people. Deactivating the item does not bring them back."
+              },
+              {
+                "name": "blocked_from",
+                "type": "string[]",
+                "description": "Requests, receipts and issues. All three refuse it from now on (BR-10, E9, AC-10)."
+              },
+              {
+                "name": "history_retained",
+                "type": "boolean",
+                "description": "True. Receipts, issues and counts still name it (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "No reason was given.",
+              "written": "Nothing.",
+              "notWritten": "The item stays active."
+            },
+            {
+              "code": "NOT_SCHOOL_ADMIN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The acting user is not the School Admin.",
+              "written": "Nothing.",
+              "notWritten": "The item stays active.",
+              "note": "The same seat that sets the reorder level (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. An item that left the list with no explanation is one somebody recreates next term, and then the store has two entries for one shelf (BR-6, BR-9, E7).",
+          "derivedFrom": [
+            "BR-9",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say what is still on the shelf. A deactivated item cannot be requested, received or issued, but the stock already there does not disappear — it still appears in a physical count until the shelf is clear (BR-10).",
+          "derivedFrom": [
+            "BR-10",
+            "AC-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say what is still out. Returnable items of this kind outstanding against people stay outstanding; deactivating the item does not bring them back or close them (BR-4, BR-10).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never offer deletion. There is no such control anywhere, and every receipt, issue and count references the item (BR-9, E8, AC-11).",
+          "derivedFrom": [
+            "BR-9",
+            "E8",
+            "AC-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "stock.item.reactivate",
+        "statement": "It is brought back into use, with its unit, its history and its balance intact. Nothing was lost, which is why deactivation is the answer to almost every request to remove an item (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "purana marker wala item band kar dein, ab refillable pe aa gaye hain",
+            "lang": "ur-Latn",
+            "gloss": "deactivate the old marker item, we have moved to refillables"
+          },
+          "context": "School Admin, Johar Town branch, 6 on hand and 2 returnable issues out.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.item.deactivate",
+              "inputs": {
+                "item_id": "$request.item_phrase → Whiteboard marker, black",
+                "deactivation_reason": "as they gave it — the school has moved to refillable markers",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Report that it can no longer be requested, received or issued. Then the two things the screen does not say: six are still on the shelf and will keep appearing in a physical count until they are used, and it can be brought back at any time with its history intact if the school changes its mind."
+        },
+        {
+          "request": {
+            "text": "ye item hata dein",
+            "lang": "ur-Latn",
+            "gloss": "remove this item"
+          },
+          "context": "School Admin, item named clearly.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.item.deactivate",
+              "inputs": {
+                "item_id": "$request.item_phrase → the item named",
+                "deactivation_reason": "$request.deactivation_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The reason is required (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is deactivated. Ask why it is going — and say plainly that \"remove\" here means deactivate, not delete: the item stays readable because every receipt, issue and count in the store's history names it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-01-PC-4",
+      "intent": {
+        "name": "stock.item.reactivate",
+        "summary": "Bring a deactivated item back into use, with its unit, history and balance intact.",
+        "routesHere": [
+          "bring back the old marker item, we are stocking it again",
+          {
+            "text": "wo item dobara chalu kar dein, hum phir se rakh rahe hain",
+            "lang": "ur-Latn",
+            "gloss": "reactivate that item, we are stocking it again"
+          },
+          {
+            "text": "galti se band kar diya tha, wapas laa dein",
+            "lang": "ur-Latn",
+            "gloss": "it was deactivated by mistake, bring it back"
+          },
+          "reactivate the reagent, the lab needs it again"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "naya item bana dein isi naam se",
+              "lang": "ur-Latn",
+              "gloss": "create a new item with the same name"
+            },
+            "goesTo": "stock.item.create — this use case, and it will be refused.",
+            "note": "A deactivated item still holds the name in its category, so a new one is refused as a duplicate (BR-6, E1). Reactivating is the route, and it keeps the balance and the history."
+          },
+          {
+            "request": {
+              "text": "unit badal kar wapas laa dein",
+              "lang": "ur-Latn",
+              "gloss": "bring it back with a different unit"
+            },
+            "goesTo": "Not offered.",
+            "note": "The unit is fixed for the life of the item (BR-2). An item that needs a different unit is a different item."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.item.reactivate",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It is requestable, receivable and issuable again, with the balance it had."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One state change. The unit, the reorder level, the type, the balance and the whole history come back exactly as they were — nothing was lost when it was deactivated (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "stock.item.reactivate",
+          "method": "POST",
+          "path": "/api/v1/stock-items/{item_id}/reactivate",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "item_id, since an item is reactivated once and a repeat is the same state",
+          "purpose": "Bring a deactivated stock item back into use.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No deactivated item matches. Deactivated items are named here just as active ones are.",
+                "onAmbiguous": "Ask, naming the items that match with their category and the unit each is counted in — two items that sound alike may be counted in boxes and in pieces."
+              },
+              "notes": "The stock item, named the way the store names it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What comes back.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Active."
+              },
+              {
+                "name": "unit",
+                "type": "string",
+                "description": "Unchanged from before it was deactivated, and unchangeable (BR-2)."
+              },
+              {
+                "name": "on_hand",
+                "type": "number",
+                "description": "The balance it carried, which is whatever the last receipt, issue or count left (BR-5)."
+              },
+              {
+                "name": "reorder_level",
+                "type": "number",
+                "description": "As it was. Worth checking — a level set for the way the school used to buy may be wrong for the way it buys now (BR-3)."
+              },
+              {
+                "name": "deactivated_for",
+                "type": "string",
+                "description": "How long it was out of use, and the reason given at the time (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_SCHOOL_ADMIN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The acting user is not the School Admin.",
+              "written": "Nothing.",
+              "notWritten": "The item stays deactivated."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report the balance it comes back with. It is whatever the last movement left, possibly months ago, and it is almost certainly not what is on the shelf — a count is the way to settle that, not an edit (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say the reorder level is the old one. It was set for the way the school bought before, and nothing revisits it on reactivation (BR-3, BR-7).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never offer a different unit on the way back. It is fixed for the life of the item, and an item needing another unit is a different item (BR-2).",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "stock.item.deactivate",
+        "statement": "It is deactivated again, with a reason, and nothing is lost either way (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "wo marker wala item dobara chalu kar dein, lab ko phir chahiye",
+            "lang": "ur-Latn",
+            "gloss": "reactivate that marker item, the lab needs it again"
+          },
+          "context": "School Admin, Johar Town branch, item deactivated eight months ago with 6 on hand at the time.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.item.reactivate",
+              "inputs": {
+                "item_id": "$request.item_phrase → Whiteboard marker, black",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One state change (PR-1)."
+            }
+          ],
+          "outcome": "Report that it is available again — and that it comes back showing 6 on hand, the figure from eight months ago. That is what the system last recorded, not what is on the shelf now. A count is the way to settle it, and its reorder level is still the one set before the school changed how it buys."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-01-PC-5",
+      "intent": {
+        "name": "stock.items.read",
+        "summary": "See what the store carries, what is on hand, and what has fallen to the level where it must be bought again.",
+        "routesHere": [
+          "what is below its reorder level?",
+          {
+            "text": "kaunse items reorder level se neeche aa gaye hain?",
+            "lang": "ur-Latn",
+            "gloss": "which items have fallen below their reorder level?"
+          },
+          {
+            "text": "store mein A4 paper kitna para hai?",
+            "lang": "ur-Latn",
+            "gloss": "how much A4 paper is there in the store?"
+          },
+          {
+            "text": "stationery mein kya kya hai aur kitna hai?",
+            "lang": "ur-Latn",
+            "gloss": "what is in stationery and how much of each?"
+          },
+          "list the returnable items we stock"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye cheezein mangwa dein",
+              "lang": "ur-Latn",
+              "gloss": "order these things"
+            },
+            "goesTo": "stock.request.submit — UC-18-02.",
+            "note": "Seeing what is short and asking for it to be bought are separate acts. Nothing here buys anything."
+          },
+          {
+            "request": {
+              "text": "balance theek kar dein",
+              "lang": "ur-Latn",
+              "gloss": "correct the balance"
+            },
+            "goesTo": "stock.adjustment.raise — UC-18-06.",
+            "note": "A balance that disagrees with the shelf is settled by a count and an approved adjustment (BR-5, E6)."
+          },
+          {
+            "request": {
+              "text": "is item mein kya kya badla gaya tha?",
+              "lang": "ur-Latn",
+              "gloss": "what was changed on this item?"
+            },
+            "goesTo": "stock.item.history.read — this use case.",
+            "note": "What the item is now is one question. What it was before somebody changed it is another, and a reorder level that moved is a purchasing decision (BR-8)."
+          },
+          {
+            "request": {
+              "text": "kis kis ke paas kya kya para hai?",
+              "lang": "ur-Latn",
+              "gloss": "who is holding what?"
+            },
+            "goesTo": "stock.issues.outstanding.read — UC-18-05.",
+            "note": "What is on the shelf and what is out with people are two different quantities, and only the first is here."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.items.read",
+            "inputs": {
+              "category_phrase": "$request.category_phrase",
+              "item_type": "$request.item_type",
+              "below_reorder_level": "$request.below_reorder_level",
+              "status": "$request.status",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. Nothing is written and no balance changes."
+          }
+        ],
+        "onFailure": "Stop and report. A category nobody matches is asked about rather than dropped, since a silently widened filter answers a different question from the one asked.",
+        "atomicity": "A read. The quantity on hand it reports is derived from receipts, issues and counts, never typed (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "stock.items.read",
+          "method": "GET",
+          "path": "/api/v1/stock-items",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List stock items with their unit, quantity on hand, reorder level and type.",
+          "parameters": [
+            {
+              "name": "category_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.category_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_category",
+                "fromPhrase": "$request.category_phrase",
+                "onNoMatch": "Refuse. No such category.",
+                "onAmbiguous": "Ask, naming the categories that match."
+              },
+              "notes": "Where the question is about one category."
+            },
+            {
+              "name": "item_type",
+              "source": "request",
+              "sourceRef": "$request.item_type",
+              "required": false,
+              "type": "enum: Consumable|Returnable",
+              "notes": "Where the question is about what is expected back rather than what is used up (BR-4)."
+            },
+            {
+              "name": "below_reorder_level",
+              "source": "request",
+              "sourceRef": "$request.below_reorder_level",
+              "required": false,
+              "type": "boolean",
+              "notes": "Only the items at or below their level, which are the ones offered for inclusion in a request (BR-7)."
+            },
+            {
+              "name": "status",
+              "source": "request",
+              "sourceRef": "$request.status",
+              "required": false,
+              "type": "enum: Active|Deactivated",
+              "notes": "Deactivated items are out of the answer unless the question reaches for them. They cannot be requested, received or issued, but stock of them may still be on the shelf (BR-10)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What the store carries and where each item stands.",
+            "fields": [
+              {
+                "name": "items",
+                "type": "object[]",
+                "description": "Item, category, unit, quantity on hand, reorder level, consumable or returnable, and status."
+              },
+              {
+                "name": "below_reorder_level",
+                "type": "object[]",
+                "description": "Items at or below their level, with the shortfall against it. These are offered for inclusion when a request is raised (BR-7, AC-8)."
+              },
+              {
+                "name": "on_hand_source",
+                "type": "string",
+                "description": "Receipts, issues and counts. There is no field that sets it (BR-5, E6, AC-9)."
+              },
+              {
+                "name": "returnable_out",
+                "type": "object[]",
+                "description": "Returnable items with quantity outstanding against people. What is on the shelf and what the school owns are not the same number (BR-4)."
+              },
+              {
+                "name": "never_counted",
+                "type": "object[]",
+                "description": "Items whose balance has never been confirmed by a physical count. The figure is arithmetic from receipts and issues, and nobody has looked at the shelf."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the stock item screens.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned.",
+              "note": "The list is open to the School Admin, staff, Accounts and the Principal; the reorder level is the School Admin's to set (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say where the quantity on hand comes from. It is arithmetic over receipts, issues and counts — not a measurement — and an item nobody has counted has a balance nobody has confirmed (BR-5, AC-9).",
+          "derivedFrom": [
+            "BR-5",
+            "E6",
+            "AC-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Give the shortfall, not only the flag. \"Below reorder level\" says an item needs buying; 4 on hand against a level of 20 says how badly, and the two read the same on a screen (BR-7, AC-8).",
+          "derivedFrom": [
+            "BR-7",
+            "AC-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Separate what is on the shelf from what is out. A returnable item shows a low balance because people are holding it, not because the school is short of it, and buying more is the wrong answer to that (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never suggest editing a balance that looks wrong. There is no such field; the answer is a count (BR-5, E6).",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "kaunse items reorder level se neeche hain?",
+            "lang": "ur-Latn",
+            "gloss": "which items are below their reorder level?"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.items.read",
+              "inputs": {
+                "category_phrase": "omitted",
+                "item_type": "omitted",
+                "below_reorder_level": "true",
+                "status": "Active",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only active items — a deactivated one cannot be requested anyway (PR-1 covers where the figure comes from)."
+            }
+          ],
+          "outcome": "Give each item with its shortfall against the level, not just the list. Then two things the screen does not separate: any returnable item here is low because people are holding it rather than because the school is short, and any item never confirmed by a count has a balance that is arithmetic rather than a fact."
+        },
+        {
+          "request": {
+            "text": "store mein A4 paper kitna para hai?",
+            "lang": "ur-Latn",
+            "gloss": "how much A4 paper is there in the store?"
+          },
+          "context": "Staff (storekeeper), Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.items.read",
+              "inputs": {
+                "category_phrase": "omitted",
+                "item_type": "omitted",
+                "below_reorder_level": "omitted",
+                "status": "Active",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read; the answer is a single item's balance."
+            }
+          ],
+          "outcome": "Give the figure in reams, which is how this item is counted, and say when it was last confirmed by a count. If it never has been, say so — the number is what receipts and issues add up to, and the shelf is the only place that settles it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-01-PC-6",
+      "intent": {
+        "name": "stock.item.history.read",
+        "summary": "See what changed on an item, who changed it and when — a reorder level that moved is a purchasing decision.",
+        "routesHere": [
+          "who changed the reorder level on A4 paper?",
+          {
+            "text": "A4 paper ka reorder level kis ne badla tha?",
+            "lang": "ur-Latn",
+            "gloss": "who changed the reorder level on A4 paper?"
+          },
+          {
+            "text": "is item mein ab tak kya kya tabdeeli hui hai?",
+            "lang": "ur-Latn",
+            "gloss": "what changes have been made to this item so far?"
+          },
+          {
+            "text": "ye item kab aur kyun band kiya gaya tha?",
+            "lang": "ur-Latn",
+            "gloss": "when and why was this item deactivated?"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "abhi kitna para hai?",
+              "lang": "ur-Latn",
+              "gloss": "how much is there right now?"
+            },
+            "goesTo": "stock.items.read — this use case.",
+            "note": "What the item is now is the other question."
+          },
+          {
+            "request": {
+              "text": "is item ki receipts aur issues dikha dein",
+              "lang": "ur-Latn",
+              "gloss": "show me the receipts and issues for this item"
+            },
+            "goesTo": "Not offered here.",
+            "note": "This is the record of changes to the item's own definition — its name, category, reorder level and type. What moved in and out of the store is the receipt and issue record."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "stock.item.history.read",
+            "inputs": {
+              "item_id": "$request.item_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read of an append-only record. Nothing in it can be edited (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. An item that cannot be identified returns no history, since the history of the wrong item is worse than none.",
+        "atomicity": "A read. The record is append only — a change adds a row and never rewrites one (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "stock.item.history.read",
+          "method": "GET",
+          "path": "/api/v1/stock-items/{item_id}/history",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return every change made to an item's definition, with the previous value and who made it.",
+          "parameters": [
+            {
+              "name": "item_id",
+              "source": "resolved",
+              "sourceRef": "$request.item_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "stock_item",
+                "fromPhrase": "$request.item_phrase",
+                "onNoMatch": "Refuse. No item matches, active or deactivated.",
+                "onAmbiguous": "Ask, naming the items that match with their category and unit."
+              },
+              "notes": "The item, including one already deactivated — its history stays readable (BR-9)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Everything that has been changed about the item.",
+            "fields": [
+              {
+                "name": "item_id",
+                "type": "string",
+                "description": "The item."
+              },
+              {
+                "name": "changes",
+                "type": "object[]",
+                "description": "When, which field, from what to what, and who changed it (BR-8)."
+              },
+              {
+                "name": "reorder_level_changes",
+                "type": "object[]",
+                "description": "Set apart, because each one is a standing decision to start buying at a different point and it binds the school until somebody moves it again (BR-3, A5)."
+              },
+              {
+                "name": "type_changes",
+                "type": "object[]",
+                "description": "Changes between consumable and returnable. Each applies from that moment on and did nothing to the issues already outstanding (BR-4)."
+              },
+              {
+                "name": "created",
+                "type": "object",
+                "description": "Who created the item and when, with the unit they fixed."
+              },
+              {
+                "name": "deactivation",
+                "type": "object",
+                "description": "When it was deactivated, by whom and the reason given (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the item history.",
+              "written": "Nothing.",
+              "notWritten": "No history is returned.",
+              "note": "The history screen is open to the School Admin and the Principal."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Give the reorder-level changes as decisions, not as edits. Each one changed the point at which the school starts buying, and the name against it is the person who decided that (BR-3, BR-8, A5).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-8",
+            "A5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say what a change of type did and did not do. It applied from that moment on; the issues already outstanding were untouched, so a returnable turned consumable left items out with nobody expected to bring them back (BR-4, BR-5).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Name the unit as the thing that never changed. It was fixed at creation and no row will ever show it moving, which is what makes every past count readable (BR-2).",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing. The record it reads cannot be edited by anybody, which is what makes it worth reading."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "A4 paper ka reorder level kis ne aur kab badla tha?",
+            "lang": "ur-Latn",
+            "gloss": "who changed the reorder level on A4 paper and when?"
+          },
+          "context": "Principal, all branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.item.history.read",
+              "inputs": {
+                "item_id": "$request.item_phrase → A4 paper",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read."
+            }
+          ],
+          "outcome": "Give each change with the level before and after, the date and the name. Say plainly that a level moved from 10 to 25 means the school now starts buying fifteen reams earlier every time, and that it has bound the school since that date without anything else being decided."
+        },
+        {
+          "request": {
+            "text": "ye item kab aur kyun band kiya gaya tha?",
+            "lang": "ur-Latn",
+            "gloss": "when and why was this item deactivated?"
+          },
+          "context": "School Admin, item deactivated.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "stock.item.history.read",
+              "inputs": {
+                "item_id": "$request.item_phrase → the deactivated item",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A deactivated item has a history like any other — that is why it was never deleted (PR-3 names the unit; the record itself is complete)."
+            }
+          ],
+          "outcome": "Give the date, the name and the reason as it was written. Add what the record also shows: what was on the shelf when it went out of use, since that stock did not disappear and still appears in a physical count."
+        }
+      ]
+    }
+  ]
+}

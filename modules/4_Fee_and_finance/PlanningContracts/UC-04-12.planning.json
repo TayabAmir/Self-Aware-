@@ -1,0 +1,938 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-12",
+    "name": "Correct a payment that did not happen, or was recorded against the wrong person",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-12.json",
+    "featureRef": "4.12 Correcting a wrongly recorded payment"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-12-PC-1",
+      "intent": {
+        "name": "fee.payment.correction.raise",
+        "summary": "Propose correcting a payment record that does not match what actually happened — the money never arrived, or it belongs to somebody else. One step, and it corrects nothing on its own.",
+        "routesHere": [
+          "raise a correction — this payment was recorded against the wrong student",
+          {
+            "text": "ye payment galat student ke against lag gayi hai",
+            "lang": "ur-Latn",
+            "gloss": "this payment went against the wrong student"
+          },
+          {
+            "text": "reconciliation mein pata chala ye payment hui hi nahi thi",
+            "lang": "ur-Latn",
+            "gloss": "reconciliation found this payment never happened"
+          },
+          {
+            "text": "paisa bhai ka tha, behan ke against lag gaya",
+            "lang": "ur-Latn",
+            "gloss": "the money was the brother's, it went against the sister"
+          },
+          {
+            "text": "raqam galat likhi gayi thi",
+            "lang": "ur-Latn",
+            "gloss": "the amount was recorded wrongly"
+          },
+          "correct the date on this receipt, it was keyed a day late"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "charge hi galat tha",
+              "lang": "ur-Latn",
+              "gloss": "the charge itself was wrong"
+            },
+            "goesTo": "fee.cancellation.raise — UC-04-08, or fee.credit.raise — UC-04-10",
+            "note": "This corrects the record of a payment, not a charge. Where the charge is wrong the cancellation or credit route applies (BR-2, E7)."
+          },
+          {
+            "request": {
+              "text": "paisa wapas karna hai",
+              "lang": "ur-Latn",
+              "gloss": "the money has to go back"
+            },
+            "goesTo": "fee.refund.raise — UC-04-11",
+            "note": "A correction moves a record; it does not return money."
+          },
+          {
+            "request": {
+              "text": "nayi payment record karo",
+              "lang": "ur-Latn",
+              "gloss": "record a new payment"
+            },
+            "goesTo": "fee.payment.record — UC-04-05",
+            "note": "Where the money genuinely arrived and was never recorded, that is a fresh payment."
+          },
+          {
+            "request": {
+              "text": "pehle wali correction theek karo",
+              "lang": "ur-Latn",
+              "gloss": "fix the earlier correction"
+            },
+            "goesTo": "Not offered.",
+            "note": "A correction cannot be raised against a payment already corrected. The current record is corrected instead (BR-13, E4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.payment.correction.raise",
+            "inputs": {
+              "payment_id": "$request.payment_phrase",
+              "correction_type": "$request.correction_type",
+              "what_actually_happened": "$request.what_actually_happened",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, producing a proposal at Awaiting approval. Nothing is reversed, no receipt is superseded and no invoice status moves until a School Admin approves it (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing account of what happened, money that would be left unattached, a settled receiving invoice and a payment already corrected are all enforced by the API and arrive as errors.",
+        "atomicity": "One write: the proposal with its type, its account of what happened and the account the money should sit on, together with the audit entry or not at all. The payment, the receipt and both invoices are untouched. Nothing posts."
+      },
+      "operations": [
+        {
+          "name": "fee.payment.correction.raise",
+          "method": "POST",
+          "path": "/api/v1/fee-payment-corrections",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "payment_id, since a payment carries one open correction at a time and BR-13 forbids correcting a corrected one",
+          "purpose": "Raise a proposal to correct a payment record, naming what was wrong and where the money actually belongs.",
+          "parameters": [
+            {
+              "name": "payment_id",
+              "source": "resolved",
+              "sourceRef": "$request.payment_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "payment",
+                "fromPhrase": "$request.payment_phrase",
+                "onNoMatch": "Refuse. No payment matches, or it has already been corrected (BR-13).",
+                "onAmbiguous": "Ask, naming the candidates with receipt number, student, amount and date."
+              },
+              "notes": "The recorded payment that is wrong."
+            },
+            {
+              "name": "correction_type",
+              "source": "request",
+              "sourceRef": "$request.correction_type",
+              "required": true,
+              "type": "enum: Payment never happened | Recorded against the wrong student | Recorded against the wrong household | Recorded against the wrong invoice | Wrong amount recorded | Wrong date recorded",
+              "notes": "What was wrong with the record (BR-3). Read from what the actor stated, never chosen to fit."
+            },
+            {
+              "name": "what_actually_happened",
+              "source": "request",
+              "sourceRef": "$request.what_actually_happened",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters. It is what somebody reads a year later when the entry is questioned (BR-4, E1). The actor's own account."
+            },
+            {
+              "name": "correct_student_id",
+              "source": "resolved",
+              "sourceRef": "$request.correct_student_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.correct_student_phrase",
+                "onNoMatch": "Refuse. No student matches.",
+                "onAmbiguous": "Ask, naming the candidates with class and section."
+              },
+              "notes": "Where the money belongs to another account, the student it should be recorded against. Required unless the payment never happened, or the money is to be held as a household credit — money left unattached is refused (BR-5, E2)."
+            },
+            {
+              "name": "correct_invoice_id",
+              "source": "resolved",
+              "sourceRef": "$request.correct_invoice_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "invoice",
+                "fromPhrase": "$request.correct_invoice_phrase",
+                "onNoMatch": "Refuse. No invoice matches with an outstanding balance.",
+                "onAmbiguous": "Ask, naming the candidates with period and balance."
+              },
+              "notes": "The invoice the payment should be applied to. Must carry an outstanding balance (E5)."
+            },
+            {
+              "name": "correct_amount",
+              "source": "request",
+              "sourceRef": "$request.correct_amount",
+              "required": false,
+              "type": "money",
+              "notes": "Where the amount recorded was wrong. Exactly the figure the actor states."
+            },
+            {
+              "name": "correct_date",
+              "source": "request",
+              "sourceRef": "$request.correct_date",
+              "required": false,
+              "type": "date",
+              "notes": "Where the date recorded was wrong."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The proposal as raised.",
+            "fields": [
+              {
+                "name": "correction_id",
+                "type": "string",
+                "description": "The proposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. Nothing is reversed yet."
+              },
+              {
+                "name": "correction_type",
+                "type": "string",
+                "description": "What was wrong."
+              },
+              {
+                "name": "original_payment",
+                "type": "object",
+                "description": "receipt_number, student, invoice, amount, date — what is on record now."
+              },
+              {
+                "name": "destination",
+                "type": "object",
+                "description": "Where the money would sit afterwards: a student and invoice, a household credit, or nothing where the payment never happened (BR-10, BR-11)."
+              },
+              {
+                "name": "cash_total_unchanged",
+                "type": "boolean",
+                "description": "True where the money merely moves between accounts — the school's cash total does not change and reconciliation must still balance (BR-7)."
+              },
+              {
+                "name": "invoices_affected",
+                "type": "object[]",
+                "description": "Both invoices and the status each would return to (BR-9)."
+              },
+              {
+                "name": "raised_by",
+                "type": "string",
+                "description": "The acting user, who may not also approve it (BR-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ACCOUNT_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "No account of what actually happened was given.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "Message: \"Describe what actually happened.\" It is what somebody reads a year later (BR-4). Ask; never compose one."
+            },
+            {
+              "code": "MONEY_LEFT_UNATTACHED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The correction would leave the money attached to nothing.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "Reversing without re-recording leaves the school holding money nothing accounts for (BR-5). Name the account, or hold it as a household credit (BR-10)."
+            },
+            {
+              "code": "ALREADY_CORRECTED",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The payment has already been corrected.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "The message names the date. The current record is corrected instead (BR-13)."
+            },
+            {
+              "code": "RECEIVING_INVOICE_SETTLED",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The invoice named has no outstanding balance.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "Hold the payment as a household credit instead, which is the actor's decision (BR-10)."
+            },
+            {
+              "code": "CHARGE_IS_WRONG",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The charge is wrong rather than the payment record.",
+              "written": "Nothing.",
+              "notWritten": "No proposal raised.",
+              "note": "The payment record is right and the charge is not. Cancellation or credit applies (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the account of what happened. It is what somebody reads a year later when the entry is questioned (BR-4), and a planner's version describes what it inferred rather than what occurred.",
+          "derivedFrom": [
+            "BR-4",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never leave the money unattached. Reversing without re-recording leaves the school holding money nothing accounts for (BR-5); where it belongs to no charge it is held as a household credit (BR-10), and which of those applies is the actor's decision.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-10",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never use a correction where the charge is wrong. E7 is BR-2 working — the payment record is right and the bill is not, which is a cancellation or a credit with its own approval.",
+          "derivedFrom": [
+            "BR-2",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Choose the correction type from what the actor stated, never to fit the fix. \"The payment never happened\" and \"it went against the wrong student\" produce entirely different entries — one reverses and records nothing, the other moves the money (BR-3, BR-11).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain the approval. Moving a payment record between households is not something one hand does alone (BR-1), and a pattern of corrections by one person is a control matter (BR-12).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-12",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report whether the school's cash total changes. Where money merely moved between accounts it does not (BR-7), and reconciliation must still balance — saying so is what stops somebody looking for a missing sum.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A proposal is approved or returned by the School Admin; nothing here withdraws one. The payment, the receipt and both invoices are untouched until it is approved."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "paisa Bilal ka tha lekin Ayesha ke against lag gaya — theek karwao",
+            "lang": "ur-Latn",
+            "gloss": "the money was Bilal's but went against Ayesha — get it corrected"
+          },
+          "context": "Accounts, Johar Town branch. Both children are in the same household.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.correction.raise",
+              "inputs": {
+                "payment_id": "$request.payment_phrase → \"RCP/LHR/2026/0417\"",
+                "correction_type": "Recorded against the wrong student",
+                "what_actually_happened": "The guardian paid for Bilal at the counter and the receipt was written against Ayesha.",
+                "correct_student_id": "$request.correct_student_phrase → \"Bilal\"",
+                "correct_invoice_id": "$request.correct_invoice_phrase → \"Bilal, Sep 2026\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The destination account is named, so the money is not left unattached (PR-2)."
+            }
+          ],
+          "outcome": "A proposal at Awaiting approval. cash_total_unchanged comes back true — the money merely moves between siblings, so reconciliation still balances (PR-6). Nothing is reversed yet and both invoices are unchanged."
+        },
+        {
+          "request": {
+            "text": "reconciliation mein pata chala ye payment hui hi nahi thi",
+            "lang": "ur-Latn",
+            "gloss": "reconciliation found this payment never happened"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.correction.raise",
+              "inputs": {
+                "payment_id": "$request.payment_phrase",
+                "correction_type": "Payment never happened",
+                "what_actually_happened": "Reconciliation against the bank statement found no matching deposit. The receipt was entered from a challan copy that was never stamped.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No destination is named, which is correct for this type — the entry is reversed and nothing is recorded in its place (BR-11, PR-4)."
+            }
+          ],
+          "outcome": "A proposal that would reverse the entry entirely. The invoice returns to unpaid and back into overdue tracking on approval (BR-9). This is the case reconciliation is most likely to surface."
+        },
+        {
+          "request": {
+            "text": "ye charge hi galat tha, payment theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "the charge itself was wrong, correct the payment"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.correction.raise",
+              "inputs": {
+                "payment_id": "$request.payment_phrase",
+                "correction_type": "$request.correction_type",
+                "what_actually_happened": "$request.what_actually_happened",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns CHARGE_IS_WRONG (E7)."
+            }
+          ],
+          "outcome": "Nothing is raised. Report that the payment record is right and the bill is not — the money did arrive, so this is a credit under UC-04-10 rather than a correction (PR-3)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-12-PC-2",
+      "intent": {
+        "name": "fee.payment.correction.approve",
+        "summary": "Approve a payment correction, which reverses the entry, records it where it belongs, supersedes the receipt and restores both invoices. School Admin only, one step.",
+        "routesHere": [
+          "approve the correction on this payment",
+          {
+            "text": "payment correction approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the payment correction"
+          },
+          {
+            "text": "ye correction manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this correction"
+          },
+          "sign off the correction Accounts raised"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "correction wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the correction back"
+            },
+            "goesTo": "fee.payment.correction.return — UC-04-12-PC-3"
+          },
+          {
+            "request": {
+              "text": "correction raise karo",
+              "lang": "ur-Latn",
+              "gloss": "raise a correction"
+            },
+            "goesTo": "fee.payment.correction.raise — UC-04-12-PC-1"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.payment.correction.approve",
+            "inputs": {
+              "correction_id": "$request.correction_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it does the whole correction: reverses the payment, records it on the correct account, supersedes the receipt and restores both invoices to their correct statuses."
+          }
+        ],
+        "onFailure": "Stop and report. The acting role, a receiving invoice settled while the proposal waited, and a ledger posting that fails part way are all enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the reversal, the re-recording, the superseded receipt, the new receipt and both invoice statuses together or not at all (E6). The original payment is marked reversed and stays visible — nothing is deleted, so the books show what was entered as well as what was corrected (BR-6). The original receipt is marked superseded rather than destroyed, and a receipt is issued to whoever actually paid (BR-8). Both invoices return to their correct status and neither is edited; an invoice that is now unpaid goes back into overdue tracking (BR-9). Where the money merely moved between accounts the school's cash total is unchanged (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "fee.payment.correction.approve",
+          "method": "POST",
+          "path": "/api/v1/fee-payment-corrections/{correction_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "correction_id, since a proposal carries one approval and a repeat must not reverse the payment twice",
+          "purpose": "Approve a correction, reverse the payment, record it on the correct account, supersede the receipt and restore both invoice statuses.",
+          "parameters": [
+            {
+              "name": "correction_id",
+              "source": "resolved",
+              "sourceRef": "$request.correction_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "payment_correction",
+                "fromPhrase": "$request.correction_phrase",
+                "onNoMatch": "Refuse. No correction matches awaiting a decision.",
+                "onAmbiguous": "Ask, naming the candidates with the payment, the student, the amount and who raised it."
+              },
+              "notes": "The correction, resolved from how the actor named it — the reference, or the payment and student."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What was reversed, what was recorded and what changed.",
+            "fields": [
+              {
+                "name": "correction_id",
+                "type": "string",
+                "description": "The approved correction."
+              },
+              {
+                "name": "original_payment_status",
+                "type": "string",
+                "description": "Reversed, and still visible (BR-6)."
+              },
+              {
+                "name": "original_receipt_status",
+                "type": "string",
+                "description": "Superseded, not destroyed (BR-8)."
+              },
+              {
+                "name": "new_receipt_number",
+                "type": "string",
+                "description": "Issued to whoever actually paid. Absent where the payment never happened (BR-11)."
+              },
+              {
+                "name": "invoices_restored",
+                "type": "object[]",
+                "description": "Both invoices and the status each returned to (BR-9)."
+              },
+              {
+                "name": "returned_to_overdue",
+                "type": "object[]",
+                "description": "Invoices now unpaid again and back in overdue tracking (BR-9)."
+              },
+              {
+                "name": "household_credit_held",
+                "type": "string",
+                "description": "Where the money belonged to no charge and is held against the household instead (BR-10)."
+              },
+              {
+                "name": "cash_total_unchanged",
+                "type": "boolean",
+                "description": "True where the money merely moved between accounts (BR-7)."
+              },
+              {
+                "name": "family_notified",
+                "type": "string",
+                "description": "Delivery status of the notice to whoever holds the superseded receipt."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to approve their own correction.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Moving a payment record between households is not something one hand does alone (BR-1)."
+            },
+            {
+              "code": "POSTING_FAILED",
+              "mapsTo": "E6",
+              "httpStatus": 500,
+              "meaning": "The ledger posting failed part way.",
+              "written": "Nothing. Both payments and both invoices are unchanged.",
+              "notWritten": "All of it.",
+              "note": "Message: \"The correction could not be posted. Nothing has changed.\""
+            },
+            {
+              "code": "RECEIVING_INVOICE_SETTLED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The receiving invoice was settled while the correction awaited approval.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "The money has nowhere to go now. Holding it as a household credit is the alternative, and it is a fresh decision (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a correction the acting user raised. E3 is BR-1 working, and BR-12 makes a pattern of corrections by one person a control matter rather than a clerical one.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-12",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report both invoices and their new statuses. An invoice that is now unpaid goes back into overdue tracking (BR-9) — a family who was settled this morning may be on the defaulter list this afternoon, and somebody should know before they are chased.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the original payment and receipt still exist. Nothing is deleted (BR-6, BR-8), and a family holding a superseded receipt needs telling — otherwise they present it later and nobody can explain it.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never treat RECEIVING_INVOICE_SETTLED as a reason to pick another invoice. The money has nowhere to go; holding it as a household credit is a fresh decision somebody takes (BR-10).",
+          "derivedFrom": [
+            "BR-10",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report whether the school's cash total changed. Where money merely moved between accounts it did not (BR-7), and saying so stops somebody hunting a missing sum at reconciliation.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A correction is not itself corrected — BR-13 forbids it. Where the corrected record is still wrong, the current record is corrected afresh, and every version stays visible. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Bilal wali correction approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the correction moving it to Bilal"
+          },
+          "context": "School Admin, Johar Town branch. PKR 5,000 recorded against Ayesha, belonging to Bilal.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.correction.approve",
+              "inputs": {
+                "correction_id": "$request.correction_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Ayesha's payment is reversed and stays visible, her receipt is superseded, and PKR 5,000 is recorded against Bilal with a new receipt. Ayesha's invoice returns to unpaid and back into overdue tracking — report that, because she will otherwise be chased without warning (PR-2). The cash total is unchanged."
+        },
+        {
+          "request": {
+            "text": "jo payment hui hi nahi thi, us ki correction approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the correction for the payment that never happened"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.correction.approve",
+              "inputs": {
+                "correction_id": "$request.correction_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The entry is reversed and nothing is recorded in its place (BR-11). The invoice is unpaid again and back in overdue tracking, and the receipt is superseded. cash_total_unchanged comes back false — the school's cash is genuinely lower than the books said, which is the point of the correction."
+        },
+        {
+          "request": {
+            "text": "correction approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the correction"
+          },
+          "context": "School Admin, Johar Town branch, where the receiving invoice was paid yesterday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.correction.approve",
+              "inputs": {
+                "correction_id": "$request.correction_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns RECEIVING_INVOICE_SETTLED (E8)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the invoice was settled while this waited, so the money has nowhere to go — holding it as a household credit is the alternative and needs a fresh proposal (PR-4)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-12-PC-3",
+      "intent": {
+        "name": "fee.payment.correction.return",
+        "summary": "Send a payment correction back to Accounts with why it was not approved. School Admin only, one step.",
+        "routesHere": [
+          "return this correction, the charge is what's wrong not the payment",
+          {
+            "text": "correction wapas bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the correction back"
+          },
+          {
+            "text": "ye correction theek nahi, wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "this correction is not right, send it back"
+          },
+          "send it back — it doesn't say where the money should go"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "correction approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the correction"
+            },
+            "goesTo": "fee.payment.correction.approve — UC-04-12-PC-2"
+          },
+          {
+            "request": {
+              "text": "ye credit hona chahiye",
+              "lang": "ur-Latn",
+              "gloss": "this should be a credit"
+            },
+            "goesTo": "fee.credit.raise — UC-04-10",
+            "note": "Returning says so; raising it is Accounts' work in their own session."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.payment.correction.return",
+            "inputs": {
+              "correction_id": "$request.correction_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing is reversed, no receipt is superseded and both invoices keep their current statuses."
+          }
+        ],
+        "onFailure": "Stop and report. The reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the status change, the reason and the audit entry together or not at all. The payment, the receipt and both invoices are untouched."
+      },
+      "operations": [
+        {
+          "name": "fee.payment.correction.return",
+          "method": "POST",
+          "path": "/api/v1/fee-payment-corrections/{correction_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "correction_id + return_reason",
+          "purpose": "Send a correction back to Accounts with the reason it was not approved.",
+          "parameters": [
+            {
+              "name": "correction_id",
+              "source": "resolved",
+              "sourceRef": "$request.correction_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "payment_correction",
+                "fromPhrase": "$request.correction_phrase",
+                "onNoMatch": "Refuse. No correction matches awaiting a decision.",
+                "onAmbiguous": "Ask, naming the candidates with the payment, the student, the amount and who raised it."
+              },
+              "notes": "The correction, resolved from how the actor named it — the reference, or the payment and student."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required. The approver's own words — often that the charge is wrong rather than the record, which is a different route entirely."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The proposal as returned.",
+            "fields": [
+              {
+                "name": "correction_id",
+                "type": "string",
+                "description": "The proposal."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "As given, shown to Accounts."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The acting School Admin."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            },
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E3",
+              "httpStatus": 403,
+              "meaning": "The acting user is not a School Admin.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the return reason. Often the point is that the charge is wrong rather than the record (BR-2), which sends Accounts to a completely different route.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never chain a cancellation or credit onto a return. Correcting the charge is Accounts' work with its own approval.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the payment record is unchanged. Whoever queried it is still holding a receipt that says what it said before.",
+          "derivedFrom": [
+            "BR-6",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not undone. Accounts correct the proposal and raise it again, which is a fresh proposal and a fresh decision."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye correction wapas bhej do — payment to theek hai, bill galat tha",
+            "lang": "ur-Latn",
+            "gloss": "send this correction back — the payment is right, the bill was wrong"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.correction.return",
+              "inputs": {
+                "correction_id": "$request.correction_phrase",
+                "return_reason": "The payment record is correct. The charge was wrong, so this needs a credit rather than a correction.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned with the route named. Raising the credit is Accounts' next act under UC-04-10 (PR-2)."
+        },
+        {
+          "request": "send it back — it doesn't say where the money should be recorded",
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.correction.return",
+              "inputs": {
+                "correction_id": "$request.correction_phrase",
+                "return_reason": "The proposal does not name the account the money belongs to.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned. The payment stays exactly where it is until Accounts name the destination or choose to hold it as a household credit."
+        },
+        {
+          "request": {
+            "text": "correction wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "send the correction back"
+          },
+          "context": "School Admin, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.payment.correction.return",
+              "inputs": {
+                "correction_id": "$request.correction_phrase",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what is wrong with it."
+        }
+      ]
+    }
+  ]
+}

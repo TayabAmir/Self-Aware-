@@ -1,0 +1,2079 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-06-02",
+    "name": "Record each student's score for a subject, including grace marks, and lock the marks once final",
+    "module": "Examination",
+    "file": "../UseCases/UC-06-02.json",
+    "featureRef": "6.2 Marks entry"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-06-02-PC-1",
+      "intent": {
+        "name": "exam.mark.set",
+        "summary": "Record one student's score for a subject in an exam. One step, and every figure is the teacher's.",
+        "routesHere": [
+          "record Ayesha's maths mark as 64",
+          {
+            "text": "Ayesha ke maths mein 64 number laga do",
+            "lang": "ur-Latn",
+            "gloss": "record 64 marks for Ayesha in maths"
+          },
+          {
+            "text": "is bache ke number darj karo",
+            "lang": "ur-Latn",
+            "gloss": "record this student's marks"
+          },
+          {
+            "text": "Ali ke physics ke 48 kar do",
+            "lang": "ur-Latn",
+            "gloss": "make Ali's physics 48"
+          },
+          "enter 71 for this student in the mid-term English paper"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye bacha ghair haazir tha",
+              "lang": "ur-Latn",
+              "gloss": "this student was absent"
+            },
+            "goesTo": "exam.paper.attendance.mark — UC-06-15",
+            "note": "Absent is a state on the mark, not a score of zero, and an absent student's marks field is closed (BR-8)."
+          },
+          {
+            "request": {
+              "text": "grace ke number de do",
+              "lang": "ur-Latn",
+              "gloss": "award grace marks"
+            },
+            "goesTo": "exam.mark.grace.award — UC-06-02-PC-2",
+            "note": "Grace is a separate award with its own limits, and a pass achieved on it is recorded as such (BR-7)."
+          },
+          {
+            "request": {
+              "text": "jama karaye hue number badal do",
+              "lang": "ur-Latn",
+              "gloss": "change a mark already submitted"
+            },
+            "goesTo": "exam.mark.correct — UC-06-02-PC-4",
+            "note": "After submission the teacher cannot change a mark themselves; the Coordinator changes it with a reason (BR-9, BR-10)."
+          },
+          {
+            "request": {
+              "text": "grade laga do",
+              "lang": "ur-Latn",
+              "gloss": "assign the grade"
+            },
+            "goesTo": "Not offered.",
+            "note": "A grade is never adjusted by hand. It is calculated from the mark by the subject's bands (UC-06-03 BR-3, BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.mark.set",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "class_id": "$request.class_phrase",
+              "subject_id": "$request.subject_phrase",
+              "student_id": "$request.student_phrase",
+              "score": "$request.score",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The score is validated against the paper's total, which was fixed when the exam was created and cannot be moved (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. A score above the total, a negative score, a mark against an absent student and a subject not assigned to the actor all arrive as errors.",
+        "atomicity": "One write: the mark and the audit entry together or not at all. Entering a mark produces no grade — grading is calculated separately from the bands the teacher defined (BR-13), so nothing is visible to a family from this."
+      },
+      "operations": [
+        {
+          "name": "exam.mark.set",
+          "method": "PUT",
+          "path": "/api/v1/exams/{exam_id}/classes/{class_id}/subjects/{subject_id}/marks/{student_id}",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + class_id + subject_id + student_id, since a student carries one mark per subject per exam",
+          "purpose": "Record or replace one student's score for a subject before submission.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam the paper belongs to."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class whose sheet this is."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not in this exam, or is not assigned to the actor.",
+                "onAmbiguous": "Ask, naming the subjects the actor may enter."
+              },
+              "notes": "The subject. A teacher enters marks for their own subject only (BR-1, E11)."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student on this sheet matches.",
+                "onAmbiguous": "Ask, naming the candidates with their roll number."
+              },
+              "notes": "The student entered for the paper."
+            },
+            {
+              "name": "score",
+              "source": "request",
+              "sourceRef": "$request.score",
+              "required": true,
+              "type": "number",
+              "notes": "The mark awarded, between zero and the paper's total (BR-2, E1, E2). The teacher's own figure — a planner that read a score off anything else is inventing a child's result."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The mark as recorded.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student."
+              },
+              {
+                "name": "score",
+                "type": "number",
+                "description": "As recorded."
+              },
+              {
+                "name": "total_marks",
+                "type": "number",
+                "description": "The paper's total, fixed at exam creation (BR-2)."
+              },
+              {
+                "name": "passing_marks",
+                "type": "number",
+                "description": "The pass mark for this subject."
+              },
+              {
+                "name": "shortfall",
+                "type": "number",
+                "description": "How far below the pass mark the score is, where it is below. What grace is measured against (BR-4)."
+              },
+              {
+                "name": "entered_by",
+                "type": "string",
+                "description": "Who actually entered it, which may be the Coordinator on the teacher's behalf (A4)."
+              },
+              {
+                "name": "students_without_entry",
+                "type": "integer",
+                "description": "Students on the sheet still carrying neither a score nor the Absent state. The sheet cannot be submitted until this is zero (BR-3, E7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ABOVE_TOTAL",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The score is above the paper's total marks.",
+              "written": "Nothing.",
+              "notWritten": "No mark recorded.",
+              "note": "The message names the total. It was fixed at exam creation and cannot be moved (BR-2)."
+            },
+            {
+              "code": "NEGATIVE_SCORE",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "A negative score was entered.",
+              "written": "Nothing.",
+              "notWritten": "No mark recorded."
+            },
+            {
+              "code": "STUDENT_ABSENT",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The student is recorded absent from this paper.",
+              "written": "Nothing.",
+              "notWritten": "No mark recorded.",
+              "note": "An absent student's marks field is closed. Absent is a state, not a zero (BR-8)."
+            },
+            {
+              "code": "SUBJECT_NOT_ASSIGNED",
+              "mapsTo": "E11",
+              "httpStatus": 403,
+              "meaning": "The subject is not assigned to the acting teacher.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "A mark entered by somebody who did not mark the paper is not evidence of anything (BR-1)."
+            },
+            {
+              "code": "MARKS_LOCKED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The marks for this subject are locked.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "After the lock no change is possible without the exam being reopened, which is a separate and deliberate act (BR-11)."
+            },
+            {
+              "code": "ALREADY_SUBMITTED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The sheet is submitted and the actor is the teacher.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "After submission the teacher cannot change a mark themselves. The Coordinator changes it with a reason (BR-9, BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply a score the actor did not state. It is a child's result, read by their family and carried into every grade and average that follows — a figure a planner produced is a mark nobody awarded.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never record a zero for an absent student. Absent is a state on the mark, not a score, and the two are treated differently by grade calculation (BR-8, UC-06-03 BR-4).",
+          "derivedFrom": [
+            "BR-8",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never round or cap a score to fit the total. E1 is BR-2 working — report the total and let the teacher say what the mark actually is.",
+          "derivedFrom": [
+            "BR-2",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never add grace as part of setting a mark. Grace has its own limits, its own refusals and its own record on the result (BR-4 to BR-7), and a score quietly raised to a pass hides something the school decided.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the shortfall where the score is below the pass mark. It is what grace is measured against (BR-4), and the teacher deciding whether to award it needs the figure.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report how many students still carry no entry. The sheet cannot be submitted while any is blank, and a blank is not a mark (BR-3, E7).",
+          "derivedFrom": [
+            "BR-3",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never describe a mark as producing a grade. Entering marks produces no grade; grading is calculated separately (BR-13).",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Before submission a mark is simply set again. After submission only the Coordinator changes it, with a reason and the previous value kept (BR-10); after the lock nothing changes without the exam being reopened (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ke maths mein 64 laga do",
+            "lang": "ur-Latn",
+            "gloss": "record 64 for Ayesha in maths"
+          },
+          "context": "Teacher, Johar Town branch, maths assigned to them, sheet in progress.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.mark.set",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase → \"maths\"",
+                "student_id": "$request.student_phrase → \"Ayesha\"",
+                "score": "64",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The score is the teacher's, taken verbatim (PR-1)."
+            }
+          ],
+          "outcome": "Recorded. Report how many students still have no entry (PR-6) — the sheet cannot be submitted while any is blank."
+        },
+        {
+          "request": {
+            "text": "Ali ke 37 hain, pass mark 40 hai — 40 kar do",
+            "lang": "ur-Latn",
+            "gloss": "Ali has 37, the pass mark is 40 — make it 40"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.mark.set",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "student_id": "$request.student_phrase → \"Ali\"",
+                "score": "37",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "37 is recorded — the mark the student earned. Raising it to the pass mark is not a mark, it is grace, and grace has its own record (PR-4)."
+            }
+          ],
+          "outcome": "37 recorded, with a shortfall of 3 reported (PR-5). Report that three grace marks would bring Ali to exactly the pass mark and would be recorded as a pass by grace — which is the honest way to do what was asked."
+        },
+        {
+          "request": {
+            "text": "jo bacha ghair haazir tha us ke sifar laga do",
+            "lang": "ur-Latn",
+            "gloss": "put a zero for the child who was absent"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.mark.set",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "student_id": "$request.student_phrase",
+                "score": "0",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Absent is a state on the mark, not a score of zero (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that the absence is recorded as an absence and then classified — an excused one is left out of the percentage, an unexcused one counts as zero. A typed zero would settle that question without anybody deciding it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-02-PC-2",
+      "intent": {
+        "name": "exam.mark.grace.award",
+        "summary": "Award grace marks to a student who narrowly fell short, up to the pass mark and no further. One step, and the pass is recorded as achieved by grace.",
+        "routesHere": [
+          "give Ali three grace marks — he got 37 against a pass of 40",
+          {
+            "text": "Ali ko 3 grace ke number de do",
+            "lang": "ur-Latn",
+            "gloss": "give Ali 3 grace marks"
+          },
+          {
+            "text": "thora sa reh gaya hai, grace laga do",
+            "lang": "ur-Latn",
+            "gloss": "he fell just short, award grace"
+          },
+          {
+            "text": "grace de kar pass kar do",
+            "lang": "ur-Latn",
+            "gloss": "pass them with grace"
+          },
+          "award grace to bring this student up to the pass mark"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "number hi barha do",
+              "lang": "ur-Latn",
+              "gloss": "just raise the mark"
+            },
+            "goesTo": "exam.mark.set — UC-06-02-PC-1",
+            "note": "Raising the score hides the decision. Grace is recorded as grace, and the result shows the pass was by grace and how many marks were given (BR-7)."
+          },
+          {
+            "request": {
+              "text": "pass mark kam kar do",
+              "lang": "ur-Latn",
+              "gloss": "lower the pass mark"
+            },
+            "goesTo": "Not offered.",
+            "note": "The passing marks are fixed when the exam is created and cannot be changed afterwards (UC-06-01 BR-3)."
+          },
+          {
+            "request": {
+              "text": "grace ki hadd barha do",
+              "lang": "ur-Latn",
+              "gloss": "raise the grace limit"
+            },
+            "goesTo": "Not offered.",
+            "note": "The maximum grace is fixed at exam creation too. A student who missed by twice the limit is not brought up (BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.mark.grace.award",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "class_id": "$request.class_phrase",
+              "subject_id": "$request.subject_phrase",
+              "student_id": "$request.student_phrase",
+              "grace_marks": "$request.grace_marks",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Grace lifts a student only as far as the pass mark and never beyond (BR-5) — it exists to turn a near miss into a pass, not to improve a grade."
+          }
+        ],
+        "onFailure": "Stop and report, with one exception: grace that would carry a student past the pass mark is capped there rather than refused, and the capping is reported.",
+        "atomicity": "One write: the grace, the recomputed total and the passed-by-grace flag together or not at all. The result will show that the pass was by grace and how many marks were given (BR-7) — a pass that reads identically to an earned one hides something the school decided."
+      },
+      "operations": [
+        {
+          "name": "exam.mark.grace.award",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/classes/{class_id}/subjects/{subject_id}/marks/{student_id}/grace",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + class_id + subject_id + student_id, since a student carries one grace award per subject",
+          "purpose": "Award grace marks to a student who fell short of the pass mark by no more than the exam's grace limit.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam the paper belongs to."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class whose sheet this is."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not in this exam, or is not assigned to the actor.",
+                "onAmbiguous": "Ask, naming the subjects the actor may act on."
+              },
+              "notes": "The subject. A teacher acts on their own subject only (BR-1, E11)."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student on this sheet matches.",
+                "onAmbiguous": "Ask, naming the candidates with their roll number and score."
+              },
+              "notes": "The student, who already carries a score below the pass mark."
+            },
+            {
+              "name": "grace_marks",
+              "source": "request",
+              "sourceRef": "$request.grace_marks",
+              "required": false,
+              "type": "number",
+              "notes": "How many marks to award, within the exam's grace limit (BR-4, E3). Where the actor asked to bring the student to the pass mark without naming a figure, omit it and the API awards exactly the shortfall — never compute the difference in the plan."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The grace as awarded.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student."
+              },
+              {
+                "name": "score",
+                "type": "number",
+                "description": "The earned mark, unchanged."
+              },
+              {
+                "name": "grace_marks",
+                "type": "number",
+                "description": "Awarded, capped at the pass mark where necessary (BR-5, E5)."
+              },
+              {
+                "name": "total_with_grace",
+                "type": "number",
+                "description": "The score plus grace. Never above the pass mark."
+              },
+              {
+                "name": "passed_by_grace",
+                "type": "boolean",
+                "description": "True. The result will show the pass was by grace and how many marks were given (BR-7)."
+              },
+              {
+                "name": "grace_limit",
+                "type": "number",
+                "description": "The maximum for this subject, fixed at exam creation."
+              },
+              {
+                "name": "capped",
+                "type": "boolean",
+                "description": "True where less grace was awarded than asked, because it would have carried the student past the pass mark (E5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "ABOVE_GRACE_LIMIT",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "More grace was awarded than the exam's limit allows.",
+              "written": "Nothing.",
+              "notWritten": "No grace awarded.",
+              "note": "The message names the limit and the shortfall. A student who missed by more than the limit is not brought up (BR-4)."
+            },
+            {
+              "code": "ALREADY_PASSING",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The student is already at or above the pass mark.",
+              "written": "Nothing.",
+              "notWritten": "No grace awarded.",
+              "note": "Grace turns a near miss into a pass; it does not improve a grade (BR-5, BR-6)."
+            },
+            {
+              "code": "STUDENT_ABSENT",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The student is recorded absent from this paper.",
+              "written": "Nothing.",
+              "notWritten": "No grace awarded.",
+              "note": "No grace may be awarded to an absent student (BR-8)."
+            },
+            {
+              "code": "CAPPED_AT_PASS",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "The grace asked for would carry the student past the pass mark.",
+              "written": "Grace up to the pass mark is awarded.",
+              "notWritten": "Nothing beyond it.",
+              "treatedAsSuccess": true,
+              "note": "Not a refusal. Report how much was actually awarded (BR-5)."
+            },
+            {
+              "code": "MARKS_LOCKED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The marks for this subject are locked.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never raise the score instead of awarding grace. The result shows that a pass was by grace and how many marks were given (BR-7) — a score quietly lifted to the pass mark hides a decision the school made about a child.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compute the shortfall in the plan. Where the actor asked to bring a student up to the pass mark, omit the figure and let the API award exactly what is needed — a planner's arithmetic on somebody's result is a mark nobody checked.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never award grace above the limit, and never split an award to get past it. E3 is BR-4 working: a student who missed by twice the limit is not brought up.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-6",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report where the award was capped. E5 is a success, not a refusal, and a teacher who asked for five marks and got three should be told which (BR-5).",
+          "derivedFrom": [
+            "BR-5",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never award grace to an absent student. There is no score to lift, and absence is settled by classification rather than by grace (BR-8).",
+          "derivedFrom": [
+            "BR-8",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Say plainly that the pass will read as a pass by grace. That is the point of recording it, and the family will see it on the result (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Before submission grace is awarded again with a different figure. After submission only the Coordinator changes a mark, with a reason (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ali ke 37 hain aur pass 40 par hai — grace laga kar pass kar do",
+            "lang": "ur-Latn",
+            "gloss": "Ali has 37 and the pass is at 40 — award grace and pass him"
+          },
+          "context": "Teacher, Johar Town branch, grace limit 3 for this subject.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.mark.grace.award",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "student_id": "$request.student_phrase → \"Ali\"",
+                "grace_marks": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The figure is left to the API, which awards exactly the shortfall (PR-2). The plan does not do the subtraction."
+            }
+          ],
+          "outcome": "Three marks awarded, bringing Ali to exactly 40. Report that the result will show the pass was by grace and that three marks were given (PR-6)."
+        },
+        {
+          "request": {
+            "text": "is bache ko 5 grace de do",
+            "lang": "ur-Latn",
+            "gloss": "give this student 5 grace marks"
+          },
+          "context": "Teacher, Johar Town branch, on a student who scored 35 against a pass of 40 with a limit of 3.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.mark.grace.award",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "student_id": "$request.student_phrase",
+                "grace_marks": "5",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns ABOVE_GRACE_LIMIT (E3)."
+            }
+          ],
+          "outcome": "No grace awarded. Report the limit of 3 against a shortfall of 5 — the student missed by more than the limit and is not brought up (PR-3). Awarding 3 would not pass them either, and is a different decision."
+        },
+        {
+          "request": {
+            "text": "Sara ke 41 hain, thora grace de kar grade behtar kar do",
+            "lang": "ur-Latn",
+            "gloss": "Sara has 41, give a little grace to improve her grade"
+          },
+          "context": "Teacher, Johar Town branch, pass mark 40.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.mark.grace.award",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "student_id": "$request.student_phrase → \"Sara\"",
+                "grace_marks": "$request.grace_marks",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns ALREADY_PASSING (E4)."
+            }
+          ],
+          "outcome": "No grace awarded. Report that Sara is already above the pass mark — grace exists to turn a near miss into a pass, not to improve a grade (PR-1)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-02-PC-3",
+      "intent": {
+        "name": "exam.marks.submit",
+        "summary": "Submit a subject's marks sheet once every student carries a score or the Absent state. One step, and the teacher cannot change a mark afterwards.",
+        "routesHere": [
+          "submit the maths marks for class 8",
+          {
+            "text": "maths ke number jama kara do",
+            "lang": "ur-Latn",
+            "gloss": "submit the maths marks"
+          },
+          {
+            "text": "sheet mukammal hai, jama kar do",
+            "lang": "ur-Latn",
+            "gloss": "the sheet is complete, submit it"
+          },
+          {
+            "text": "class 8 ke number bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send class 8's marks"
+          },
+          "submit before the deadline"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "jama karane ke baad number badalna hai",
+              "lang": "ur-Latn",
+              "gloss": "we need to change a mark after submitting"
+            },
+            "goesTo": "exam.mark.correct — UC-06-02-PC-4",
+            "note": "After submission the teacher cannot change a mark themselves. The Coordinator changes it with a reason (BR-9, BR-10)."
+          },
+          {
+            "request": {
+              "text": "number pakka kar do",
+              "lang": "ur-Latn",
+              "gloss": "make the marks final"
+            },
+            "goesTo": "exam.marks.lock — UC-06-02-PC-5",
+            "note": "Submitting hands the sheet on. Locking freezes it, and that is the School Admin's act (BR-11)."
+          },
+          {
+            "request": {
+              "text": "natija shaya kar do",
+              "lang": "ur-Latn",
+              "gloss": "publish the result"
+            },
+            "goesTo": "exam.results.approve — UC-06-03",
+            "note": "Submitting marks produces no grade and nothing visible to a family (BR-13)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.marks.submit",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "class_id": "$request.class_phrase",
+              "subject_id": "$request.subject_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every student entered for the paper carries either a score or the Absent state before it goes — a blank is not a mark (BR-3, E7)."
+          }
+        ],
+        "onFailure": "Stop and report. A blank entry is enforced by the API and arrives as an error naming the students.",
+        "atomicity": "One write: the submission and the audit entry together or not at all. After it the teacher cannot change a mark themselves (BR-9), and grade calculation reads these marks (UC-06-03 BR-3) — but nothing is visible to a student or a family until the Coordinator approves the release."
+      },
+      "operations": [
+        {
+          "name": "exam.marks.submit",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/classes/{class_id}/subjects/{subject_id}/submit",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + class_id + subject_id, since a sheet is submitted once",
+          "purpose": "Submit the subject's marks sheet.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam the paper belongs to."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class whose sheet this is."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not in this exam, or is not assigned to the actor.",
+                "onAmbiguous": "Ask, naming the subjects the actor may act on."
+              },
+              "notes": "The subject. A teacher acts on their own subject only (BR-1, E11)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The submission.",
+            "fields": [
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Submitted."
+              },
+              {
+                "name": "students_entered",
+                "type": "integer",
+                "description": "Carrying a score."
+              },
+              {
+                "name": "students_absent",
+                "type": "integer",
+                "description": "Carrying the Absent state, which counts as entered for completeness (BR-12)."
+              },
+              {
+                "name": "passed_by_grace",
+                "type": "integer",
+                "description": "Students whose pass was achieved by grace (BR-7)."
+              },
+              {
+                "name": "marks_deadline",
+                "type": "date",
+                "description": "The deadline set for this subject at exam creation (BR-5)."
+              },
+              {
+                "name": "submitted_late",
+                "type": "boolean",
+                "description": "True where the submission is after that deadline."
+              },
+              {
+                "name": "submitted_by",
+                "type": "string",
+                "description": "Who submitted, which may be the Coordinator on the teacher's behalf (A4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "BLANK_ENTRIES",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "One or more students carry neither a score nor the Absent state.",
+              "written": "Nothing.",
+              "notWritten": "Not submitted.",
+              "note": "The message names the students. A blank is not a mark (BR-3)."
+            },
+            {
+              "code": "SUBJECT_NOT_ASSIGNED",
+              "mapsTo": "E11",
+              "httpStatus": 403,
+              "meaning": "The subject is not assigned to the acting teacher.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            },
+            {
+              "code": "MARKS_LOCKED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The marks for this subject are locked.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never fill a blank to get the sheet submitted. E7 is BR-3 working — a blank is not a mark, and a student is either scored or recorded absent by somebody who knows which.",
+          "derivedFrom": [
+            "BR-3",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the students who blocked the submission by name. \"Some entries are missing\" sends a teacher down a list of forty.",
+          "derivedFrom": [
+            "BR-3",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say plainly that the teacher cannot change a mark afterwards. That is what submission does (BR-9), and it is worth knowing before rather than after.",
+          "derivedFrom": [
+            "BR-9",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never describe submission as producing a result. Grading is calculated separately and nothing is visible to a family until the Coordinator releases it (BR-13, UC-06-03 BR-6).",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report a late submission as a fact, not a refusal. The deadline makes the completeness check mean something (BR-5); it does not close the sheet.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A submission is not withdrawn. A wrong mark is corrected by the Coordinator with a reason before the lock (BR-10); after the lock the exam is reopened, which is a separate and deliberate act (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "class 8 ke maths ke number jama kara do",
+            "lang": "ur-Latn",
+            "gloss": "submit class 8's maths marks"
+          },
+          "context": "Teacher, Johar Town branch, every student entered.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.marks.submit",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase → \"class 8\"",
+                "subject_id": "$request.subject_phrase → \"maths\"",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Submitted. Report the counts, including how many passed by grace, and that the teacher can no longer change a mark themselves (PR-3)."
+        },
+        {
+          "request": {
+            "text": "jama kara do, do bachon ke number baad mein daal denge",
+            "lang": "ur-Latn",
+            "gloss": "submit it, we will enter two students' marks later"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.marks.submit",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns BLANK_ENTRIES (E7)."
+            }
+          ],
+          "outcome": "Not submitted. Name the two students (PR-2) and report that each needs either a score or the Absent state — a blank is not a mark, and there is no route past it."
+        },
+        {
+          "request": {
+            "text": "jo bache ghair haazir the un ke sifar daal kar jama kar do",
+            "lang": "ur-Latn",
+            "gloss": "put zeros for the absent students and submit"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.marks.submit",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The submission only. No zeros are written (PR-1)."
+            }
+          ],
+          "outcome": "Report first that an absent student is recorded absent, not scored zero — an absence counts as entered for completeness on its own (BR-12), so the sheet submits without them. Whether that absence counts as zero is settled by its classification, and that is a different decision."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-02-PC-4",
+      "intent": {
+        "name": "exam.mark.correct",
+        "summary": "Change a submitted mark before the lock, with the reason and the previous value kept. Coordinator only, one step.",
+        "routesHere": [
+          "correct Ayesha's maths mark to 68 — a page was missed in marking",
+          {
+            "text": "jama karaye hue number theek karo, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "correct a submitted mark, with the reason"
+          },
+          {
+            "text": "Ayesha ke maths ke 68 kar do, ek safha reh gaya tha",
+            "lang": "ur-Latn",
+            "gloss": "make Ayesha's maths 68, a page was left out"
+          },
+          {
+            "text": "Coordinator number durust kare",
+            "lang": "ur-Latn",
+            "gloss": "let the Coordinator correct the mark"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "teacher khud theek kar le",
+              "lang": "ur-Latn",
+              "gloss": "let the teacher correct it themselves"
+            },
+            "goesTo": "Not offered.",
+            "note": "After submission the teacher cannot change a mark themselves (BR-9). The Coordinator changes it against their own name."
+          },
+          {
+            "request": {
+              "text": "number pakka hone ke baad badalna hai",
+              "lang": "ur-Latn",
+              "gloss": "we need to change it after the lock"
+            },
+            "goesTo": "exam.marks.reopen — UC-06-02-PC-6",
+            "note": "After the lock no change is possible without the exam being reopened, which is a separate and deliberate act (BR-11)."
+          },
+          {
+            "request": {
+              "text": "grade bhi theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix the grade too"
+            },
+            "goesTo": "Not offered.",
+            "note": "A grade is never adjusted by hand. It is recalculated by the same bands when the mark changes (UC-06-03 BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.mark.correct",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "class_id": "$request.class_phrase",
+              "subject_id": "$request.subject_phrase",
+              "student_id": "$request.student_phrase",
+              "new_score": "$request.new_score",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every change is recorded against the Coordinator's name with the previous value and a reason (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. A change with no reason, and any change after the lock, arrive as errors.",
+        "atomicity": "One write: the new mark, the previous value, the reason and who made the change together or not at all (BR-10). Where the result has already been released, the grade is recalculated by the same bands and republished with the change visible rather than quietly replaced (UC-06-03 BR-10, BR-12) — a family that saw one grade and later sees another is owed an explanation."
+      },
+      "operations": [
+        {
+          "name": "exam.mark.correct",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/classes/{class_id}/subjects/{subject_id}/marks/{student_id}/correct",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + class_id + subject_id + student_id + new_score, since a repeat must not stack change records",
+          "purpose": "Change a submitted mark before the lock, recording the previous value and the reason.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam the paper belongs to."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class whose sheet this is."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not in this exam, or is not assigned to the actor.",
+                "onAmbiguous": "Ask, naming the subjects the actor may act on."
+              },
+              "notes": "The subject. A teacher acts on their own subject only (BR-1, E11)."
+            },
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No student on this sheet matches.",
+                "onAmbiguous": "Ask, naming the candidates with their roll number and current mark."
+              },
+              "notes": "The student whose mark is being changed."
+            },
+            {
+              "name": "new_score",
+              "source": "request",
+              "sourceRef": "$request.new_score",
+              "required": true,
+              "type": "number",
+              "notes": "The corrected mark, between zero and the paper's total (BR-2). The Coordinator's figure, never derived from anything."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (BR-10, E9). Why the mark changed. It stays on the record beside the previous value."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The correction.",
+            "fields": [
+              {
+                "name": "student_id",
+                "type": "string",
+                "description": "The student."
+              },
+              {
+                "name": "previous_score",
+                "type": "number",
+                "description": "What it was, kept on the record (BR-10)."
+              },
+              {
+                "name": "new_score",
+                "type": "number",
+                "description": "What it is now."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "changed_by",
+                "type": "string",
+                "description": "The Coordinator."
+              },
+              {
+                "name": "result_republished",
+                "type": "boolean",
+                "description": "True where the result had been released and has been recalculated and republished with the change visible (UC-06-03 BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E9",
+              "httpStatus": 400,
+              "meaning": "A change was made with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            },
+            {
+              "code": "MARKS_LOCKED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The marks are locked.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "The exam has to be reopened first, which is a separate and deliberate act (BR-11)."
+            },
+            {
+              "code": "ABOVE_TOTAL",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The new score is above the paper's total.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            },
+            {
+              "code": "NOT_SUBMITTED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The sheet is still in progress.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Before submission the mark is simply set again."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. It sits on the record beside the previous value for as long as the result exists (BR-10), and a reason a planner wrote explains a changed result in words nobody chose.",
+          "derivedFrom": [
+            "BR-10",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply the new score. It is a child's result and the Coordinator's to state — a planner that worked one out from a total has awarded a mark.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never plan a grade adjustment alongside. The grade is recalculated by the same bands automatically, so a grade always follows from a mark (UC-06-03 BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report where the result had already been released. It is recalculated and republished with the change visible (UC-06-03 BR-12), and a family that saw one grade will see another.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never correct after the lock by reopening in the same breath. Reopening is a separate and deliberate act (BR-11), and chaining it past a refusal would defeat what the lock is.",
+          "derivedFrom": [
+            "BR-11",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A correction is not undone. A further change is another correction, each recorded with its own previous value and reason (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ayesha ke maths ke 68 kar do — marking mein ek safha reh gaya tha",
+            "lang": "ur-Latn",
+            "gloss": "make Ayesha's maths 68 — a page was missed in marking"
+          },
+          "context": "Coordinator, Johar Town branch, on a submitted and unlocked sheet.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.mark.correct",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "student_id": "$request.student_phrase → \"Ayesha\"",
+                "new_score": "68",
+                "reason": "A page was missed in marking and has now been marked.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Both the figure and the reason are the Coordinator's (PR-1, PR-2)."
+            }
+          ],
+          "outcome": "Corrected, with 64 kept as the previous value against the Coordinator's name. If the result was already released, report that it has been recalculated and republished with the change visible (PR-4)."
+        },
+        {
+          "request": {
+            "text": "is bache ke number theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "correct this student's mark"
+          },
+          "context": "Coordinator, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.mark.correct",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "student_id": "$request.student_phrase",
+                "new_score": "$request.new_score",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The reason has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why the mark is changing — it stays on the record beside the previous value, and a changed result with no explanation is the thing this rule exists to prevent."
+        },
+        {
+          "request": {
+            "text": "number pakke ho chuke hain, phir bhi theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "the marks are locked, correct it anyway"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.mark.correct",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "student_id": "$request.student_phrase",
+                "new_score": "$request.new_score",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged, and no reopen is chained onto the refusal (PR-5). The API returns MARKS_LOCKED (E10)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the School Admin reopens the marks with a reason, the correction is made, and they are locked again — three deliberate acts, which is what a lock is for."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-02-PC-5",
+      "intent": {
+        "name": "exam.marks.lock",
+        "summary": "Lock a subject's marks once they are final. School Admin only, one step, and nothing changes afterwards without a deliberate reopening.",
+        "routesHere": [
+          "lock the maths marks for class 8",
+          {
+            "text": "number pakke kar do",
+            "lang": "ur-Latn",
+            "gloss": "lock the marks"
+          },
+          {
+            "text": "maths ke number final kar do",
+            "lang": "ur-Latn",
+            "gloss": "make the maths marks final"
+          },
+          {
+            "text": "ab koi tabdeeli nahi honi chahiye",
+            "lang": "ur-Latn",
+            "gloss": "no further change should be possible"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "natija pakka kar do",
+              "lang": "ur-Latn",
+              "gloss": "lock the result"
+            },
+            "goesTo": "exam.results.lock — UC-06-03",
+            "note": "The two locks do different things. This one freezes the raw number so the grade is computed on something stable; the result lock freezes what was published (BR-8)."
+          },
+          {
+            "request": {
+              "text": "pakka karne ke baad theek karna hai",
+              "lang": "ur-Latn",
+              "gloss": "we need to correct it after locking"
+            },
+            "goesTo": "exam.marks.reopen — UC-06-02-PC-6"
+          },
+          {
+            "request": {
+              "text": "natija shaya kar do",
+              "lang": "ur-Latn",
+              "gloss": "release the result"
+            },
+            "goesTo": "exam.results.approve — UC-06-03",
+            "note": "Locking the marks publishes nothing. Releasing a result is the Coordinator's separate act (UC-06-03 BR-6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.marks.lock",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "class_id": "$request.class_phrase",
+              "subject_id": "$request.subject_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. After the lock no change is possible without the exam being reopened, which is a separate and deliberate act (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the lock and the audit entry together or not at all. It freezes the raw marks so the grade is computed on something stable (BR-8). Nothing becomes visible to a student or a family — that is the result release, and it is somebody else's decision."
+      },
+      "operations": [
+        {
+          "name": "exam.marks.lock",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/classes/{class_id}/subjects/{subject_id}/lock",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + class_id + subject_id, since a sheet is locked once",
+          "purpose": "Lock a submitted subject's marks.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam the paper belongs to."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class whose sheet this is."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not in this exam.",
+                "onAmbiguous": "Ask, naming the subjects in the exam and their status."
+              },
+              "notes": "The subject whose marks are being frozen or reopened."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The lock.",
+            "fields": [
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Locked."
+              },
+              {
+                "name": "locked_at",
+                "type": "datetime",
+                "description": "When."
+              },
+              {
+                "name": "locked_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "students_locked",
+                "type": "integer",
+                "description": "Marks now frozen."
+              },
+              {
+                "name": "corrections_before_lock",
+                "type": "integer",
+                "description": "Changes the Coordinator made after submission (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_SUBMITTED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The sheet has not been submitted.",
+              "written": "Nothing.",
+              "notWritten": "Nothing locked.",
+              "note": "There is nothing final to freeze yet."
+            },
+            {
+              "code": "ALREADY_LOCKED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The marks are already locked.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never lock as a step after submitting. Submission is the teacher's act and the lock is the School Admin's, and between them sits the Coordinator's correction window (BR-8, BR-10) — a chained lock closes that window before anybody has looked.",
+          "derivedFrom": [
+            "BR-10",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never confuse this with the result lock. This freezes the raw number so the grade is computed on something stable; the other freezes what was published (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say plainly what the lock closes. No change is possible afterwards without the exam being reopened (BR-11), which is deliberate and visible.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never describe locking as publishing. Nothing reaches a student or a family from it (UC-06-03 BR-6).",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "exam.marks.reopen",
+        "statement": "Reopening the marks, which is a separate and deliberate act carrying a reason (BR-11). It is never chained onto a refusal."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "class 8 ke maths ke number pakke kar do",
+            "lang": "ur-Latn",
+            "gloss": "lock class 8's maths marks"
+          },
+          "context": "School Admin, Johar Town branch, on a submitted sheet.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.marks.lock",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Locked. Report how many corrections the Coordinator made before it, and that nothing changes now without a reopening (PR-3)."
+        },
+        {
+          "request": {
+            "text": "number jama kara ke pakke bhi kar do",
+            "lang": "ur-Latn",
+            "gloss": "submit the marks and lock them too"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.marks.lock",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The sheet has not been submitted, and submitting it is the teacher's own act — the lock is the School Admin's and does not follow it in one breath (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is locked. Report that the teacher submits the sheet first, and that the Coordinator's correction window then opens — collapsing the two would close that window before anybody had checked a mark."
+        },
+        {
+          "request": {
+            "text": "sab kuch pakka kar do — number bhi, natija bhi",
+            "lang": "ur-Latn",
+            "gloss": "lock everything — the marks and the result"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.marks.lock",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The marks lock only. The result lock is a different capability with a different meaning (PR-2)."
+            }
+          ],
+          "outcome": "The marks are locked. Report that the result lock is separate — it freezes what was published, and only after the correction period has run (UC-06-03 BR-9)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-06-02-PC-6",
+      "intent": {
+        "name": "exam.marks.reopen",
+        "summary": "Reopen locked marks so a wrong one can be corrected. School Admin only, one step, and it carries a reason.",
+        "routesHere": [
+          "reopen the maths marks — a mark was found wrong after the lock",
+          {
+            "text": "number dobara khol do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "reopen the marks, with the reason"
+          },
+          {
+            "text": "pakke number mein ghalti hai, khol do",
+            "lang": "ur-Latn",
+            "gloss": "there is a mistake in the locked marks, reopen them"
+          },
+          {
+            "text": "imtihan dobara khol do taake tasheeh ho sake",
+            "lang": "ur-Latn",
+            "gloss": "reopen the exam so the correction can be made"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "seedha number theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "just correct the mark"
+            },
+            "goesTo": "exam.mark.correct — UC-06-02-PC-4",
+            "note": "A correction is refused while the marks are locked (E10). Reopening comes first, deliberately and on its own."
+          },
+          {
+            "request": {
+              "text": "natija bhi dobara khol do",
+              "lang": "ur-Latn",
+              "gloss": "reopen the result as well"
+            },
+            "goesTo": "exam.results.reopen — UC-06-03",
+            "note": "The two locks are separate, and so are the two reopenings (BR-8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "exam.marks.reopen",
+            "inputs": {
+              "exam_id": "$request.exam_phrase",
+              "class_id": "$request.class_phrase",
+              "subject_id": "$request.subject_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and only this step. The correction that follows is the Coordinator's separate act, and the relock is the School Admin's (BR-11, A6)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the reopening, its reason and the audit entry together or not at all. The marks become changeable by the Coordinator again. Where a result had been released from these marks, correcting one recalculates the grade by the same bands and republishes it with the change visible (UC-06-03 BR-10, BR-12)."
+      },
+      "operations": [
+        {
+          "name": "exam.marks.reopen",
+          "method": "POST",
+          "path": "/api/v1/exams/{exam_id}/classes/{class_id}/subjects/{subject_id}/reopen",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "exam_id + class_id + subject_id, since a sheet is reopened once per lock",
+          "purpose": "Reopen a locked marks sheet so corrections can be made.",
+          "parameters": [
+            {
+              "name": "exam_id",
+              "source": "resolved",
+              "sourceRef": "$request.exam_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam",
+                "fromPhrase": "$request.exam_phrase",
+                "onNoMatch": "Refuse. No exam matches within the actor's scope for this session.",
+                "onAmbiguous": "Ask, naming the candidates with their code and dates."
+              },
+              "notes": "The exam the paper belongs to."
+            },
+            {
+              "name": "class_id",
+              "source": "resolved",
+              "sourceRef": "$request.class_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "class",
+                "fromPhrase": "$request.class_phrase",
+                "onNoMatch": "Refuse. No class matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "The class whose sheet this is."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "exam_subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not in this exam.",
+                "onAmbiguous": "Ask, naming the subjects in the exam and their status."
+              },
+              "notes": "The subject whose marks are being frozen or reopened."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Why a locked sheet is being reopened. This is the record of a deliberate act, so it says what was found wrong."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The reopening.",
+            "fields": [
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Reopened."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "reopened_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "previously_locked_at",
+                "type": "datetime",
+                "description": "When it had been locked."
+              },
+              {
+                "name": "result_released",
+                "type": "boolean",
+                "description": "True where a result was already released from these marks. A correction will recalculate and republish it (UC-06-03 BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_LOCKED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The marks are not locked.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "There is nothing to reopen; the Coordinator can already correct them."
+            },
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E9",
+              "httpStatus": 400,
+              "meaning": "A reopening was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never chain a reopening onto a refused correction. The lock exists so that changing a final mark is a deliberate act by a different person (BR-11) — a plan that reopened, corrected and relocked in one breath would make the lock decorative.",
+          "derivedFrom": [
+            "BR-11",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never compose the reason. It is the record of why final marks were unfrozen, and it is read long afterwards by whoever asks how a result changed.",
+          "derivedFrom": [
+            "BR-11",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where a result was already released from these marks. A correction will recalculate the grade and republish it with the change visible, and families will see it (UC-06-03 BR-12).",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never relock in the same plan. The correction has to happen in between, and it is the Coordinator's (A6).",
+          "derivedFrom": [
+            "BR-10",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "exam.marks.lock",
+        "statement": "Locking the marks again, after the correction has been made. That is the School Admin's separate act and never part of this plan."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "maths ke number dobara khol do — ek bache ka number ghalat chadha hai",
+            "lang": "ur-Latn",
+            "gloss": "reopen the maths marks — one student's mark was entered wrong"
+          },
+          "context": "School Admin, Johar Town branch, on a locked sheet.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.marks.reopen",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "reason": "A student's mark was entered wrong and was found after the lock.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reopening only. Neither the correction nor the relock is chained (PR-1, PR-4)."
+            }
+          ],
+          "outcome": "Reopened. Report that the Coordinator now makes the correction with its own reason, and that the School Admin locks it again afterwards. If a result was released from these marks, it will be recalculated and republished with the change visible (PR-3)."
+        },
+        {
+          "request": {
+            "text": "khol do, theek karo aur phir pakka kar do",
+            "lang": "ur-Latn",
+            "gloss": "reopen it, correct it and lock it again"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.marks.reopen",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reopening alone (PR-1). The correction is the Coordinator's and needs its own reason and its own figure."
+            }
+          ],
+          "outcome": "Reopened. Report the remaining two steps and who makes each — a lock that could be opened and shut inside one plan would not be a lock."
+        },
+        {
+          "request": {
+            "text": "number khol do",
+            "lang": "ur-Latn",
+            "gloss": "reopen the marks"
+          },
+          "context": "School Admin, Johar Town branch, on a sheet that was never locked.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "exam.marks.reopen",
+              "inputs": {
+                "exam_id": "$request.exam_phrase",
+                "class_id": "$request.class_phrase",
+                "subject_id": "$request.subject_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_LOCKED (E10)."
+            }
+          ],
+          "outcome": "Nothing changes. Report that the sheet is not locked and the Coordinator can already correct a mark with a reason."
+        }
+      ]
+    }
+  ]
+}

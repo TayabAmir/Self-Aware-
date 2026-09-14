@@ -1,0 +1,1112 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-23-02",
+    "name": "Give a user access to a branch and record the role they hold there",
+    "module": "Multi-branch",
+    "file": "../UseCases/UC-23-02.json",
+    "featureRef": "23.2 Assigning a user to a branch"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-23-02-PC-1",
+      "intent": {
+        "name": "branch.user.assign",
+        "summary": "Give a user access to this branch and record the role they hold here.",
+        "routesHere": [
+          "assign Imran to this branch as a teacher",
+          {
+            "text": "Imran ko is branch mein teacher ke tor par assign kar dein",
+            "lang": "ur-Latn",
+            "gloss": "assign Imran to this branch as a teacher"
+          },
+          {
+            "text": "naye coordinator ko campus ka access de dein",
+            "lang": "ur-Latn",
+            "gloss": "give the new coordinator access to the campus"
+          },
+          {
+            "text": "ye staff member ab yahan kaam karenge, assignment bana dein",
+            "lang": "ur-Latn",
+            "gloss": "this staff member will work here now, create the assignment"
+          },
+          "add the new accounts officer to this campus"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye teacher permanently doosri branch ja rahe hain",
+              "lang": "ur-Latn",
+              "gloss": "this teacher is moving permanently to the other branch"
+            },
+            "goesTo": "Inter-branch staff transfer — UC-23-05, **which is not written**.",
+            "note": "Moving branches permanently is a transfer, not an ordinary assignment (BR-7). The use case is named here and in the branch rules and does not exist as a document, so there is nothing to route to."
+          },
+          {
+            "request": {
+              "text": "ye teacher dono campus par parhayenge",
+              "lang": "ur-Latn",
+              "gloss": "this teacher will teach at both campuses"
+            },
+            "goesTo": "Multi-branch assignment — UC-23-06, **which is not written**.",
+            "note": "Holding a post at a second branch at the same time is a multi-branch assignment with its own approval (BR-7). It is one of the only two exceptions to the sealed-branch rule (UC-23-01 BR-9) and it does not exist as a document."
+          },
+          {
+            "request": {
+              "text": "in ka doosra account bana dein",
+              "lang": "ur-Latn",
+              "gloss": "create a second account for them"
+            },
+            "goesTo": "Refused.",
+            "note": "One person is one account, however many branches they work at. Two accounts produce two attendance records, two payroll entries and two leave balances (BR-6, E5)."
+          },
+          {
+            "request": {
+              "text": "doosri branch mein assign kar dein",
+              "lang": "ur-Latn",
+              "gloss": "assign them to the other branch"
+            },
+            "goesTo": "Refused.",
+            "note": "A School Admin assigns only to their own branch, since branches are sealed (BR-10, E1)."
+          },
+          {
+            "request": {
+              "text": "in ka role badal dein",
+              "lang": "ur-Latn",
+              "gloss": "change their role"
+            },
+            "goesTo": "branch.user.role.change — this use case.",
+            "note": "A user already holding an active assignment here has their role changed rather than a second assignment created (BR-8, E3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "branch.user.assign",
+            "inputs": {
+              "user_id": "$request.user_phrase",
+              "role": "$request.role",
+              "assigned_on": "$request.assigned_on",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and the branch is the acting user's own — never named in the request (BR-10, E1). The role belongs to **this** assignment, not to the person (BR-2)."
+          }
+        ],
+        "onFailure": "Stop and report. A closed branch, no role, or an assignment that already exists here each refuses the assignment, and the last of the three is a role change rather than a failure.",
+        "atomicity": "One write. The role is recorded against the assignment rather than against the user, so somebody who is School Admin at one campus and a teacher at another holds two assignments on one account (BR-2, BR-6)."
+      },
+      "operations": [
+        {
+          "name": "branch.user.assign",
+          "method": "POST",
+          "path": "/api/v1/branch-assignments",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "user + branch, since a person holds one active assignment at a branch and a repeat is the same assignment",
+          "purpose": "Assign a user to this branch with the role they hold here.",
+          "parameters": [
+            {
+              "name": "user_id",
+              "source": "resolved",
+              "sourceRef": "$request.user_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.user_phrase",
+                "onNoMatch": "Refuse. No user account matches. A person with no account gets one first, not a second account here (BR-6, E5).",
+                "onAmbiguous": "Ask, naming the candidates with their identifiers and how many branch assignments each already holds."
+              },
+              "notes": "The person being assigned. **One person is one account**, however many branches they work at — two accounts for one person produce two attendance records, two payroll entries and two leave balances (BR-6, E5)."
+            },
+            {
+              "name": "role",
+              "source": "request",
+              "sourceRef": "$request.role",
+              "required": true,
+              "type": "enum: Principal / Director|School Admin|Coordinator|Teacher|Accounts|Staff",
+              "notes": "The role the user holds **here**. Required (BR-2, E4) — it belongs to the assignment, not to the person, so it is not carried across from whatever they are at another campus."
+            },
+            {
+              "name": "assigned_on",
+              "source": "request",
+              "sourceRef": "$request.assigned_on",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the future."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What the person can now do, and where.",
+            "fields": [
+              {
+                "name": "assignment_id",
+                "type": "string",
+                "description": "The assignment."
+              },
+              {
+                "name": "user",
+                "type": "string",
+                "description": "The person. One account, however many branches (BR-6)."
+              },
+              {
+                "name": "role",
+                "type": "string",
+                "description": "What they are **here**. It may differ from what they are elsewhere (BR-2)."
+              },
+              {
+                "name": "assigned_by",
+                "type": "string",
+                "description": "The School Admin of this branch. Never the Super Admin, who is kept out of operational work (BR-1, BR-3, E6)."
+              },
+              {
+                "name": "other_branches",
+                "type": "integer",
+                "description": "How many other assignments this person holds. **Only the number** — what they do there is not shown, because branches are sealed (BR-2, E9)."
+              },
+              {
+                "name": "can_now_switch",
+                "type": "boolean",
+                "description": "True where they now hold more than one. They move between branches by switching rather than signing in twice (BR-4)."
+              },
+              {
+                "name": "reactivated",
+                "type": "boolean",
+                "description": "True where a withdrawn assignment at this branch was brought back rather than a second created. A user cannot hold two active assignments at one branch (BR-8, E3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "OTHER_BRANCH",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The School Admin attempted to assign to a branch other than their own.",
+              "written": "Nothing.",
+              "notWritten": "No assignment is made.",
+              "note": "Branches are sealed (BR-10)."
+            },
+            {
+              "code": "BRANCH_DEACTIVATED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The branch is closed.",
+              "written": "Nothing.",
+              "notWritten": "No assignment is made (BR-9)."
+            },
+            {
+              "code": "ALREADY_ASSIGNED",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The user already holds an active assignment at this branch.",
+              "written": "Nothing.",
+              "notWritten": "No second assignment is created.",
+              "note": "The role is changed on the existing one instead (BR-8)."
+            },
+            {
+              "code": "NO_ROLE",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No role was selected.",
+              "written": "Nothing.",
+              "notWritten": "The assignment is not saved (BR-2)."
+            },
+            {
+              "code": "SECOND_ACCOUNT",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "A second account was created for the same person.",
+              "written": "Nothing.",
+              "notWritten": "There is no such route.",
+              "note": "One person is one account. An assignment is added to the account they have (BR-6)."
+            },
+            {
+              "code": "SUPER_ADMIN_ASSIGNING",
+              "mapsTo": "E6",
+              "httpStatus": 403,
+              "meaning": "The Super Admin attempted to assign a user.",
+              "written": "Nothing.",
+              "notWritten": "No assignment is made.",
+              "note": "Users are assigned to a branch by that branch's own School Admin (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never carry a role across from another campus. The role belongs to the assignment, not to the person — somebody who is School Admin at one branch may be a teacher at this one, and assuming otherwise hands them powers this campus never granted (BR-2, E4).",
+          "derivedFrom": [
+            "BR-2",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never create a second account. One person is one account however many branches they work at, and two accounts produce two attendance records, two payroll entries and two leave balances for one human being (BR-6, E5).",
+          "derivedFrom": [
+            "BR-6",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say only that they hold an assignment elsewhere, never what it is. Branches are sealed and the count is all this branch may see (BR-2, E9).",
+          "derivedFrom": [
+            "BR-2",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Distinguish the three things this is not. A permanent move is a transfer, a post held at two branches at once is a multi-branch assignment with its own approval, and neither is an ordinary assignment made here — **and neither use case is written** (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never route around the seat. The Super Admin does not assign users and a School Admin assigns only to their own branch; both refusals are the design rather than obstacles (BR-3, BR-10, E1, E6).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-10",
+            "E1",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "branch.user.assignment.withdraw",
+        "statement": "The assignment is withdrawn with a reason and the record is kept — a person who worked at a campus for two years should still be traceable there (BR-5, E8). It is never deleted."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Imran ko is branch mein teacher ke tor par assign kar dein",
+            "lang": "ur-Latn",
+            "gloss": "assign Imran to this branch as a teacher"
+          },
+          "context": "School Admin at Johar Town, Imran already School Admin at the Main campus.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.user.assign",
+              "inputs": {
+                "user_id": "$request.user_phrase → Imran Sultan",
+                "role": "Teacher",
+                "assigned_on": "today",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Teacher here, whatever he is elsewhere (PR-1)."
+            }
+          ],
+          "outcome": "Assigned as a teacher at this campus. Say the part that matters: he is a School Admin at another branch and that role does not follow him here — at Johar Town he is a teacher and nothing more. He now holds two assignments on one account and moves between them by switching branch rather than signing in twice."
+        },
+        {
+          "request": {
+            "text": "ye teacher dono campus par parhayenge, dono jagah assign kar dein",
+            "lang": "ur-Latn",
+            "gloss": "this teacher will teach at both campuses, assign them at both"
+          },
+          "context": "School Admin at Johar Town.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.user.assign",
+              "inputs": {
+                "user_id": "$request.user_phrase → the teacher named",
+                "role": "Teacher",
+                "assigned_on": "today",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "This branch only. The other is not this School Admin's to assign (PR-5)."
+            }
+          ],
+          "outcome": "The assignment here can be made. The other campus cannot be — branches are sealed and only that branch's own School Admin assigns to it. But say the larger thing: somebody holding a post at two branches at the same time is a multi-branch assignment with its own approval, not two ordinary assignments, and that use case is named in the specification and does not exist. Two separate assignments is not the same arrangement."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-23-02-PC-2",
+      "intent": {
+        "name": "branch.user.role.change",
+        "summary": "Change the role somebody holds at this branch. It replaces the role rather than adding a second assignment.",
+        "routesHere": [
+          "make Imran a coordinator at this branch instead of a teacher",
+          {
+            "text": "Imran ka role yahan coordinator kar dein",
+            "lang": "ur-Latn",
+            "gloss": "change Imran's role here to coordinator"
+          },
+          {
+            "text": "ye ab accounts mein kaam karenge, role badal dein",
+            "lang": "ur-Latn",
+            "gloss": "they work in accounts now, change the role"
+          },
+          "promote the teacher to coordinator at this campus"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "dono role rakh dein",
+              "lang": "ur-Latn",
+              "gloss": "let them hold both roles"
+            },
+            "goesTo": "Not offered.",
+            "note": "A user cannot hold two active assignments at the same branch. A change of role replaces the role on the existing one (BR-8, E3)."
+          },
+          {
+            "request": {
+              "text": "doosri branch mein bhi role badal dein",
+              "lang": "ur-Latn",
+              "gloss": "change their role at the other branch too"
+            },
+            "goesTo": "Refused.",
+            "note": "A School Admin acts only within their own branch, and what somebody does elsewhere is not visible here (BR-10, E1, E9)."
+          },
+          {
+            "request": {
+              "text": "ye ab yahan kaam nahi karte",
+              "lang": "ur-Latn",
+              "gloss": "they no longer work here"
+            },
+            "goesTo": "branch.user.assignment.withdraw — this use case.",
+            "note": "Somebody leaving the campus has their assignment withdrawn with a reason, not their role changed (BR-5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "branch.user.role.change",
+            "inputs": {
+              "assignment_id": "$request.assignment_phrase",
+              "role": "$request.role",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The role on the existing assignment is replaced; no second assignment is created (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. No role selected refuses the change, and the person keeps whatever they had.",
+        "atomicity": "One write. It changes what they can do **at this branch only** — their role at any other campus is untouched and invisible from here (BR-2, BR-10, E9)."
+      },
+      "operations": [
+        {
+          "name": "branch.user.role.change",
+          "method": "PATCH",
+          "path": "/api/v1/branch-assignments/{assignment_id}",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "assignment_id + the role, so a double press does not record the same change twice",
+          "purpose": "Replace the role on an existing assignment at this branch.",
+          "parameters": [
+            {
+              "name": "assignment_id",
+              "source": "resolved",
+              "sourceRef": "$request.assignment_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "branch_assignment",
+                "fromPhrase": "$request.assignment_phrase",
+                "onNoMatch": "Refuse. No active assignment at this branch matches. A School Admin sees only their own branch's assignments (BR-10, E1).",
+                "onAmbiguous": "Ask, naming the people who match with the role each holds at this branch."
+              },
+              "notes": "The assignment at this branch, named by the person who holds it."
+            },
+            {
+              "name": "role",
+              "source": "request",
+              "sourceRef": "$request.role",
+              "required": true,
+              "type": "enum: Principal / Director|School Admin|Coordinator|Teacher|Accounts|Staff",
+              "notes": "The role they now hold here. Required (BR-2, E4). It replaces what they had rather than being added to it (BR-8)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What they can do now, and where.",
+            "fields": [
+              {
+                "name": "assignment_id",
+                "type": "string",
+                "description": "The assignment."
+              },
+              {
+                "name": "role_before",
+                "type": "string",
+                "description": "What they held here."
+              },
+              {
+                "name": "role_after",
+                "type": "string",
+                "description": "What they hold here now (BR-2)."
+              },
+              {
+                "name": "changed_by",
+                "type": "string",
+                "description": "The School Admin of this branch (BR-1)."
+              },
+              {
+                "name": "other_branches_unaffected",
+                "type": "integer",
+                "description": "Assignments at other campuses. Untouched, and what they do there is not visible from here (BR-2, E9)."
+              },
+              {
+                "name": "was_school_admin",
+                "type": "boolean",
+                "description": "Whether this change removes a School Admin role. Where it leaves the branch with no active School Admin, nothing can be assigned here at all and who rescues a stranded branch is not specified anywhere (BR-1, OQ-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_ROLE",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No role was selected.",
+              "written": "Nothing.",
+              "notWritten": "The assignment is unchanged (BR-2)."
+            },
+            {
+              "code": "OTHER_BRANCH",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The assignment belongs to another branch.",
+              "written": "Nothing.",
+              "notWritten": "No change is made (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say it changes nothing anywhere else. The role belongs to this assignment, so somebody promoted here is still whatever they were at their other campus (BR-2, E9).",
+          "derivedFrom": [
+            "BR-2",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say when a change removes the last School Admin. A branch with no active School Admin can have nobody assigned to it, and the Super Admin seeds only a **new** branch — who rescues a stranded one is not written down anywhere (BR-1, BR-3, OQ-1).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-3",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never add a role instead of replacing one. A user cannot hold two active assignments at one branch, and the second would be two sets of permissions for one person at one campus (BR-8, E3).",
+          "derivedFrom": [
+            "BR-8",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say plainly what the new role can do that the old could not, where it is a School Admin role. A School Admin can assign users — including another School Admin — and whether that should be possible is an open question this use case raises and does not answer (OQ-2).",
+          "derivedFrom": [
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "branch.user.role.change",
+        "statement": "The role is changed back, which is another change. Nothing is deleted and the assignment itself was never replaced (BR-5, BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Imran ka role yahan coordinator kar dein",
+            "lang": "ur-Latn",
+            "gloss": "change Imran's role here to coordinator"
+          },
+          "context": "School Admin at Johar Town, Imran a teacher here and School Admin at the Main campus.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.user.role.change",
+              "inputs": {
+                "assignment_id": "$request.assignment_phrase → Imran's Johar Town assignment",
+                "role": "Coordinator",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "This branch's assignment only (PR-1)."
+            }
+          ],
+          "outcome": "He is a coordinator at Johar Town from now. His assignment at the Main campus is untouched — and what he is there is not visible from this branch, so nothing here can tell you whether the two make sense together."
+        },
+        {
+          "request": {
+            "text": "ye School Admin ab sirf teacher rahenge",
+            "lang": "ur-Latn",
+            "gloss": "this School Admin will now just be a teacher"
+          },
+          "context": "School Admin at Johar Town, changing the branch's only other School Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.user.role.change",
+              "inputs": {
+                "assignment_id": "$request.assignment_phrase → their assignment",
+                "role": "Teacher",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Allowed, and worth a warning first (PR-2)."
+            }
+          ],
+          "outcome": "Before making the change: this leaves the branch with one School Admin, and if that one leaves, nobody at this campus can assign anybody. The Super Admin seeds only a new branch — the specification does not say who rescues a stranded one, and it raises the question itself."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-23-02-PC-3",
+      "intent": {
+        "name": "branch.user.assignment.withdraw",
+        "summary": "End somebody's access to this branch, with a reason. The record of it is kept.",
+        "routesHere": [
+          "withdraw Imran's assignment at this branch, he isn't teaching here next session",
+          {
+            "text": "Imran ki is branch ki assignment khatam kar dein",
+            "lang": "ur-Latn",
+            "gloss": "end Imran's assignment at this branch"
+          },
+          {
+            "text": "ye ab yahan nahi parhate, access hata dein",
+            "lang": "ur-Latn",
+            "gloss": "they no longer teach here, remove the access"
+          },
+          "end the coordinator's assignment at this campus"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "assignment bilkul mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete the assignment completely"
+            },
+            "goesTo": "Not offered.",
+            "note": "An assignment is withdrawn, never deleted. A person who worked at a campus for two years should still be traceable there (BR-5, E8)."
+          },
+          {
+            "request": {
+              "text": "ye doosri branch ja rahe hain permanently",
+              "lang": "ur-Latn",
+              "gloss": "they are moving permanently to the other branch"
+            },
+            "goesTo": "Inter-branch staff transfer — UC-23-05, **which is not written**.",
+            "note": "A permanent move is a transfer, not a withdrawal here and an assignment there (BR-7). The use case does not exist, so withdrawing and reassigning is the only route available — and it is not the same act."
+          },
+          {
+            "request": {
+              "text": "in ka account bhi band kar dein",
+              "lang": "ur-Latn",
+              "gloss": "close their account as well"
+            },
+            "goesTo": "Not answerable here.",
+            "note": "Whether withdrawing a user's last assignment disables their account or leaves it with no branch is not specified anywhere. An account with no assignment can do nothing and still exists (OQ-3)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "branch.user.assignment.withdraw",
+            "inputs": {
+              "assignment_id": "$request.assignment_phrase",
+              "withdrawal_reason": "$request.withdrawal_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The assignment ends and the record of it is kept (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. A withdrawal with no reason is refused, and the person keeps their access (E7).",
+        "atomicity": "One state change. The person can no longer work at or switch to this branch (UC-23-03 BR-5), and everything they did here stays on the record (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "branch.user.assignment.withdraw",
+          "method": "POST",
+          "path": "/api/v1/branch-assignments/{assignment_id}/withdraw",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "assignment_id, since an assignment is withdrawn once and a repeat is the same state",
+          "purpose": "End an assignment at this branch, with the reason recorded.",
+          "parameters": [
+            {
+              "name": "assignment_id",
+              "source": "resolved",
+              "sourceRef": "$request.assignment_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "branch_assignment",
+                "fromPhrase": "$request.assignment_phrase",
+                "onNoMatch": "Refuse. No active assignment at this branch matches. A School Admin sees only their own branch's assignments (BR-10, E1).",
+                "onAmbiguous": "Ask, naming the people who match with the role each holds at this branch."
+              },
+              "notes": "The assignment at this branch, named by the person who holds it."
+            },
+            {
+              "name": "withdrawal_reason",
+              "source": "request",
+              "sourceRef": "$request.withdrawal_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters, the School Admin's own. Required (BR-5, E7) — an access that ended with no explanation is one nobody can account for later."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What ends and what stays.",
+            "fields": [
+              {
+                "name": "assignment_id",
+                "type": "string",
+                "description": "The assignment."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Withdrawn. Never deleted — the record of it is kept (BR-5, E8)."
+              },
+              {
+                "name": "withdrawal_reason",
+                "type": "string",
+                "description": "Why, in the School Admin's own words."
+              },
+              {
+                "name": "can_no_longer",
+                "type": "string[]",
+                "description": "Work at this branch, or switch to it. A withdrawn assignment is not switchable to (UC-23-03 BR-5, E3)."
+              },
+              {
+                "name": "remaining_assignments",
+                "type": "integer",
+                "description": "How many the person still holds elsewhere. Where this was the last, the account has no branch at all — whether that disables it is not specified anywhere (OQ-3)."
+              },
+              {
+                "name": "account_status",
+                "type": "string",
+                "description": "Unchanged by this. One person is one account and it survives the loss of an assignment (BR-6, OQ-3)."
+              },
+              {
+                "name": "leaves_branch_without_school_admin",
+                "type": "boolean",
+                "description": "True where this was the branch's last active School Admin. Nobody can then be assigned here at all (BR-1, OQ-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_MISSING",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "No reason was given.",
+              "written": "Nothing.",
+              "notWritten": "The assignment stays active (BR-5)."
+            },
+            {
+              "code": "OTHER_BRANCH",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The assignment belongs to another branch.",
+              "written": "Nothing.",
+              "notWritten": "No change is made (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write the reason. An access that ended with no explanation is one nobody can account for when somebody asks why a person stopped appearing at a campus (BR-5, E7).",
+          "derivedFrom": [
+            "BR-5",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say what is left. Where this was their last assignment the account belongs to no branch at all — it can do nothing and it still exists, and whether that should disable it is not specified anywhere (BR-6, OQ-3).",
+          "derivedFrom": [
+            "BR-6",
+            "OQ-3"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say when it strands the branch. Withdrawing the last active School Admin leaves a campus where nobody can assign anybody, and the Super Admin seeds only a new branch (BR-1, OQ-1).",
+          "derivedFrom": [
+            "BR-1",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never treat a withdrawal here plus an assignment there as a transfer. A permanent move between branches is its own act with its own record, and that use case is named in the specification and does not exist (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "branch.user.assign",
+        "statement": "The person returns to the branch and the withdrawn assignment is brought back rather than a second created — a user cannot hold two active assignments at one branch (BR-8). Nothing was deleted either way (BR-5)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Imran ki is branch ki assignment khatam kar dein, agle session yahan nahi parhate",
+            "lang": "ur-Latn",
+            "gloss": "end Imran's assignment at this branch, he is not teaching here next session"
+          },
+          "context": "School Admin at Johar Town, Imran also assigned at the Main campus.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.user.assignment.withdraw",
+              "inputs": {
+                "assignment_id": "$request.assignment_phrase → Imran's Johar Town assignment",
+                "withdrawal_reason": "as they gave it — no longer teaching at this campus from the new session",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Their words (PR-1)."
+            }
+          ],
+          "outcome": "Ended here. He can no longer work at or switch to Johar Town, and everything he did here stays on the record. He still holds his Main campus assignment, so his account is unaffected — and if he had held only this one, the account would belong to no branch at all, which the specification does not say what to do with."
+        },
+        {
+          "request": {
+            "text": "ye School Admin ab yahan nahi rahenge",
+            "lang": "ur-Latn",
+            "gloss": "this School Admin is leaving this campus"
+          },
+          "context": "School Admin at Johar Town, withdrawing the branch's only other School Admin — and themselves also leaving.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.user.assignment.withdraw",
+              "inputs": {
+                "assignment_id": "$request.assignment_phrase → their assignment",
+                "withdrawal_reason": "as given",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Allowed, and worth stopping over (PR-3)."
+            }
+          ],
+          "outcome": "Before withdrawing: this leaves Johar Town with one active School Admin. If that one goes too, nobody at the campus can assign anybody — and the Super Admin seeds only a **new** branch, not a stranded one. The specification raises this and does not answer it, so somebody has to be assigned before the last School Admin leaves rather than after."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-23-02-PC-4",
+      "intent": {
+        "name": "branch.assignments.read",
+        "summary": "See who is assigned to this branch and in what role.",
+        "routesHere": [
+          "who is assigned to this branch?",
+          {
+            "text": "is branch mein kaun kaun assign hai?",
+            "lang": "ur-Latn",
+            "gloss": "who is assigned to this branch?"
+          },
+          {
+            "text": "yahan kitne teachers hain aur kaun School Admin hai?",
+            "lang": "ur-Latn",
+            "gloss": "how many teachers are here and who is the School Admin?"
+          },
+          {
+            "text": "Imran ki is campus par kya role hai?",
+            "lang": "ur-Latn",
+            "gloss": "what role does Imran hold at this campus?"
+          },
+          "list the withdrawn assignments from last session"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "doosri branch mein kaun kaam karta hai?",
+              "lang": "ur-Latn",
+              "gloss": "who works at the other branch?"
+            },
+            "goesTo": "Refused.",
+            "note": "Branches are sealed. This branch sees its own assignments and, for a person who holds others, only that they do — never what (BR-10, E1, E9)."
+          },
+          {
+            "request": {
+              "text": "in ka role badal dein",
+              "lang": "ur-Latn",
+              "gloss": "change their role"
+            },
+            "goesTo": "branch.user.role.change — this use case.",
+            "note": "Reading and changing are separate."
+          },
+          {
+            "request": {
+              "text": "ye kis kis branch mein switch kar sakte hain?",
+              "lang": "ur-Latn",
+              "gloss": "which branches can they switch to?"
+            },
+            "goesTo": "branch.context.read — UC-23-03, and only for themselves.",
+            "note": "A user sees their own assignments. A School Admin sees the ones at their own branch (BR-2, E9)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "branch.assignments.read",
+            "inputs": {
+              "status": "$request.status",
+              "role": "$request.role",
+              "user_phrase": "$request.user_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read, within this branch alone (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written, and a withdrawn assignment is still in what it reads — the record is kept (BR-5, E8)."
+      },
+      "operations": [
+        {
+          "name": "branch.assignments.read",
+          "method": "GET",
+          "path": "/api/v1/branch-assignments",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List the assignments at this branch with their roles and status.",
+          "parameters": [
+            {
+              "name": "status",
+              "source": "request",
+              "sourceRef": "$request.status",
+              "required": false,
+              "type": "enum: Active|Withdrawn",
+              "notes": "Withdrawn assignments are out of the answer unless the question reaches for them. They are never deleted — a person who worked here for two years is still traceable (BR-5)."
+            },
+            {
+              "name": "role",
+              "source": "request",
+              "sourceRef": "$request.role",
+              "required": false,
+              "type": "enum: Principal / Director|School Admin|Coordinator|Teacher|Accounts|Staff",
+              "notes": "Where the question is about one role at this branch (BR-2)."
+            },
+            {
+              "name": "user_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.user_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.user_phrase",
+                "onNoMatch": "Refuse. Nobody of that name holds an assignment at this branch.",
+                "onAmbiguous": "Ask, naming the candidates with the role each holds here."
+              },
+              "notes": "Where the question is about one person's assignment here."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who works here and in what capacity.",
+            "fields": [
+              {
+                "name": "assignments",
+                "type": "object[]",
+                "description": "Person, role at this branch, assigned on, assigned by and status."
+              },
+              {
+                "name": "by_role",
+                "type": "object[]",
+                "description": "How many hold each role here. The roles are this branch's — the same people may hold others elsewhere (BR-2)."
+              },
+              {
+                "name": "school_admins",
+                "type": "object[]",
+                "description": "Who can assign users at this branch. Where this is empty or one deep, the campus is one departure from being unable to staff itself (BR-1, OQ-1)."
+              },
+              {
+                "name": "also_at_other_branches",
+                "type": "object[]",
+                "description": "People holding an assignment elsewhere too — **the count only**. What they do there is not visible from here (BR-2, E9)."
+              },
+              {
+                "name": "withdrawn",
+                "type": "object[]",
+                "description": "Assignments that have ended, with their reasons and dates. Kept, never deleted (BR-5, E8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "OTHER_BRANCH",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The actor is asking about another branch's assignments.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is returned.",
+              "note": "Branches are sealed (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Say how many School Admins the branch has. One is the number at which a single resignation leaves the campus unable to assign anybody, and nothing in the specification says who rescues it (BR-1, OQ-1).",
+          "derivedFrom": [
+            "BR-1",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Give only the count for other branches, never the detail. That somebody holds an assignment elsewhere is visible; what they do there is not, and that is the seal working rather than a missing feature (BR-2, E9).",
+          "derivedFrom": [
+            "BR-2",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Include the withdrawn assignments when the question is about the past. A person who worked at this campus for two years is still traceable here, which is the reason nothing is deleted (BR-5, E8).",
+          "derivedFrom": [
+            "BR-5",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never present a role as the person's role. It is their role **here** — the same account may carry a different one at another campus (BR-2).",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is branch mein kaun kaun assign hai?",
+            "lang": "ur-Latn",
+            "gloss": "who is assigned to this branch?"
+          },
+          "context": "School Admin at Johar Town.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.assignments.read",
+              "inputs": {
+                "status": "Active",
+                "role": "omitted",
+                "user_phrase": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read, this branch only (PR-2)."
+            }
+          ],
+          "outcome": "Give them by role, and name the School Admins separately — there are two, which is the number that decides whether one resignation strands the campus. Four of these people also hold an assignment at another branch; that is all this branch can see about it, and it is deliberate."
+        },
+        {
+          "request": {
+            "text": "Imran ki is campus par kya role hai?",
+            "lang": "ur-Latn",
+            "gloss": "what role does Imran hold at this campus?"
+          },
+          "context": "School Admin at Johar Town, Imran a teacher here.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "branch.assignments.read",
+              "inputs": {
+                "status": "Active",
+                "role": "omitted",
+                "user_phrase": "$request.user_phrase → Imran Sultan",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One person, at this branch (PR-4)."
+            }
+          ],
+          "outcome": "A teacher **here**. Say it that way, because he holds an assignment at one other branch and what he is there is not visible from this campus — he could be a School Admin there and nothing on this screen would show it."
+        }
+      ]
+    }
+  ]
+}

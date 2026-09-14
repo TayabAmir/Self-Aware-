@@ -1,0 +1,1222 @@
+{
+  "$schema": "./use-case.schema.json",
+  "id": "UC-02-07",
+  "featureRef": "2.7 Eligibility flagging and admission approval",
+  "name": "Flag eligibility, approve the admission, and issue the student and guardian credentials",
+  "module": "Inquiry / Admission",
+  "alsoAffectsModules": [
+    "Student",
+    "Admin — system-wide",
+    "Messaging (SMS, WhatsApp, Email)"
+  ],
+  "priority": "MVP",
+  "priorityReason": "The decision that turns an applicant into a student. Every downstream module depends on the record it creates.",
+  "goal": {
+    "actor": "School Admin and Principal",
+    "capability": "to judge an applicant on their form and score together, decide the admission, and have the credentials issued",
+    "outcome": "an admitted child exists as a student and the family can sign in, without anyone re-typing what we already hold"
+  },
+  "primaryActor": "Principal / Director",
+  "secondaryActors": [
+    {
+      "actor": "School Admin",
+      "involvement": "Reviews the score and the form together and flags who is eligible."
+    },
+    {
+      "actor": "Prospective family",
+      "involvement": "Receives the decision and, on approval, the login credentials."
+    },
+    {
+      "actor": "Staff / Accounts",
+      "involvement": "Completes the enrolment once the admission is confirmed."
+    }
+  ],
+  "externalActors": [
+    {
+      "actor": "WhatsApp Business provider",
+      "involvement": "Delivers the decision and the credentials to the family."
+    }
+  ],
+  "triggers": {
+    "default": true,
+    "additional": [
+      {
+        "type": "event",
+        "description": "A test score is recorded and the applicant becomes ready for eligibility flagging.",
+        "source": "UC-02-06"
+      },
+      {
+        "type": "event",
+        "description": "A re-admission applicant reaches the decision without a new admission form.",
+        "source": "UC-02-09"
+      }
+    ]
+  },
+  "preconditions": [
+    {
+      "condition": "An applicant exists with a completed admission form, or is a re-admission with the school's existing record attached.",
+      "establishedBy": {
+        "id": "UC-02-04",
+        "name": "Admission form completion",
+        "link": "UC-02-04.json"
+      }
+    },
+    {
+      "condition": "A test score or an Absent result is recorded against the applicant.",
+      "establishedBy": {
+        "id": "UC-02-06",
+        "name": "Admission test marking",
+        "link": "UC-02-06.json"
+      }
+    },
+    {
+      "condition": "An authenticated session exists.",
+      "establishedBy": {
+        "id": "UC-01-01",
+        "name": "Login",
+        "link": "UC-01-01.json"
+      }
+    },
+    {
+      "condition": "A class and section with capacity exist for the approved class.",
+      "establishedBy": {
+        "id": "UC-03-07",
+        "name": "Class, section and academic session structure",
+        "link": "UC-03-07.json"
+      }
+    },
+    {
+      "condition": "A numbering pattern is configured, so a student ID and roll number can be generated (BR-6)."
+    }
+  ],
+  "postConditions": [
+    "The applicant carries a recorded eligibility flag with its reason, and a recorded admission decision with its decider and date.",
+    "On approval a student record exists, carrying a generated student ID and roll number, and the applicant's form details are on it rather than re-typed.",
+    "A guardian account exists with a system-generated guardian ID linked to the family code, so the family can sign in.",
+    "The student ID and the guardian credentials have been sent to the contact number and email held on the form, and the send is logged.",
+    "The student is enrolled in a class and section, appears on class registers, and becomes billable.",
+    "On rejection the inquiry is closed with the reason recorded, the family is informed, and no student record or account exists.",
+    "The applicant's temporary ID is retired. Everything from here uses the student ID."
+  ],
+  "screens": [
+    {
+      "name": "Applicants awaiting eligibility",
+      "route": "/admissions/applicants?status=marked",
+      "sidebar": "Inquiry / Admission",
+      "columns": [
+        "Temporary ID",
+        "Child",
+        "Approved class",
+        "Score",
+        "Maximum",
+        "Attendance",
+        "Form",
+        "Days waiting"
+      ],
+      "defaultSort": "Score, highest first",
+      "filters": [
+        "Approved class",
+        "Attendance",
+        "Score range"
+      ],
+      "actions": [
+        "Open",
+        "Flag eligible",
+        "Flag not eligible"
+      ],
+      "visibleTo": [
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Applicant decision",
+      "route": "/admissions/applicants/{id}/decision",
+      "sidebar": "Inquiry / Admission",
+      "columns": [
+        "Admission form",
+        "Test result",
+        "Eligibility",
+        "Decision"
+      ],
+      "actions": [
+        "Flag eligible",
+        "Flag not eligible",
+        "Approve admission",
+        "Reject admission",
+        "Assign section"
+      ],
+      "visibleTo": [
+        "School Admin",
+        "Principal / Director"
+      ]
+    },
+    {
+      "name": "Bulk admission approval",
+      "route": "/admissions/applicants/approve",
+      "sidebar": "Inquiry / Admission",
+      "columns": [
+        "Selected",
+        "Temporary ID",
+        "Child",
+        "Approved class",
+        "Score",
+        "Section",
+        "Eligibility"
+      ],
+      "filters": [
+        "Approved class",
+        "Eligible only",
+        "Score range"
+      ],
+      "actions": [
+        "Select all eligible",
+        "Assign sections",
+        "Approve selected",
+        "Reject selected"
+      ],
+      "visibleTo": [
+        "Principal / Director"
+      ]
+    }
+  ],
+  "dataFields": [
+    {
+      "name": "Eligibility",
+      "type": "enum",
+      "required": "yes",
+      "validation": "Flagged by School Admin before the Principal decides (BR-2).",
+      "example": "Eligible",
+      "enumValues": [
+        "Eligible",
+        "Not eligible"
+      ]
+    },
+    {
+      "name": "Eligibility reason",
+      "type": "text",
+      "required": "yes",
+      "validation": "Maximum 500 characters. Required either way (BR-3).",
+      "example": "Score 72 of 100; form complete; sibling already enrolled."
+    },
+    {
+      "name": "Admission decision",
+      "type": "enum",
+      "required": "yes",
+      "example": "Approve",
+      "enumValues": [
+        "Approve",
+        "Reject"
+      ]
+    },
+    {
+      "name": "Rejection reason",
+      "type": "text",
+      "required": "conditional",
+      "validation": "Maximum 500 characters. Required to reject (BR-4).",
+      "example": "No seat available in Grade 2 for this session.",
+      "requiredWhen": "Decision is Reject"
+    },
+    {
+      "name": "Class",
+      "type": "lookup",
+      "required": "conditional",
+      "validation": "Defaults to the approved class from the inquiry. May be changed here.",
+      "default": "The approved class",
+      "example": "Grade 2",
+      "requiredWhen": "Decision is Approve",
+      "lookupSource": "Classes with capacity"
+    },
+    {
+      "name": "Section",
+      "type": "lookup",
+      "required": "conditional",
+      "validation": "Must belong to the chosen class and have capacity (BR-8).",
+      "example": "Section A",
+      "requiredWhen": "Decision is Approve",
+      "lookupSource": "Sections of the chosen class"
+    },
+    {
+      "name": "Student ID",
+      "type": "generated",
+      "required": "no",
+      "validation": "Generated on approval. Becomes the student's login username (BR-6).",
+      "example": "STD-2026-0417",
+      "format": "STD-<Session>-<Sequence>"
+    },
+    {
+      "name": "Roll number",
+      "type": "generated",
+      "required": "no",
+      "validation": "Generated on approval, per the configured pattern (BR-6).",
+      "example": "2026-0417"
+    },
+    {
+      "name": "Guardian ID",
+      "type": "generated",
+      "required": "no",
+      "validation": "Generated on approval and linked to the family code, so one login covers every child in the family (BR-7).",
+      "example": "GRD-2026-0288",
+      "format": "GRD-<Session>-<Sequence>"
+    },
+    {
+      "name": "Temporary password",
+      "type": "generated",
+      "required": "no",
+      "validation": "Issued with the credentials and must be changed at first sign-in (BR-9).",
+      "example": "—"
+    },
+    {
+      "name": "Selected applicants",
+      "type": "lookup",
+      "required": "conditional",
+      "validation": "For a bulk decision. Only applicants flagged eligible may be selected (BR-10).",
+      "example": "18 applicants",
+      "requiredWhen": "A bulk decision is being taken",
+      "lookupSource": "Eligible applicants"
+    }
+  ],
+  "entities": [
+    {
+      "entity": "Applicant",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Read for the form and score; updated with eligibility, decision and outcome. Not deleted."
+    },
+    {
+      "entity": "Eligibility flag",
+      "operations": [
+        "create"
+      ],
+      "notes": "One row holding the flag, its reason and who set it. Append only."
+    },
+    {
+      "entity": "Admission decision",
+      "operations": [
+        "create"
+      ],
+      "notes": "One row holding the decision, the decider, the date and any reason. Append only."
+    },
+    {
+      "entity": "Student",
+      "operations": [
+        "create"
+      ],
+      "notes": "Created on approval, carrying the form details, student ID and roll number."
+    },
+    {
+      "entity": "Guardian",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "Created on approval, or reused where the family code already exists (BR-7)."
+    },
+    {
+      "entity": "Family",
+      "operations": [
+        "create",
+        "read"
+      ],
+      "notes": "Created or joined, so siblings share one household."
+    },
+    {
+      "entity": "Enrolment",
+      "operations": [
+        "create"
+      ],
+      "notes": "The student in a class and section for the current academic session."
+    },
+    {
+      "entity": "Account",
+      "operations": [
+        "create"
+      ],
+      "notes": "Student and guardian accounts with system-generated usernames."
+    },
+    {
+      "entity": "Inquiry",
+      "operations": [
+        "read",
+        "update"
+      ],
+      "notes": "Closed as admitted or rejected, keeping its full history."
+    },
+    {
+      "entity": "Audit log",
+      "operations": [
+        "create"
+      ],
+      "notes": "Eligibility, decision, record creation and credential issue."
+    }
+  ],
+  "permissions": [
+    {
+      "actor": "School Admin",
+      "actions": [
+        "view",
+        "edit"
+      ],
+      "rowScope": "Own branch; may switch per branch-scope.",
+      "notes": "Flags eligibility. Cannot approve or reject an admission."
+    },
+    {
+      "actor": "Principal / Director",
+      "actions": [
+        "view",
+        "approve"
+      ],
+      "rowScope": "All branches.",
+      "notes": "The only role that may approve or reject an admission, singly or in bulk."
+    },
+    {
+      "actor": "Staff, Accounts",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Own branch.",
+      "notes": "See the outcome and complete the enrolment. Cannot flag or decide."
+    },
+    {
+      "actor": "Coordinator",
+      "actions": [
+        "view"
+      ],
+      "rowScope": "Applicants for classes in their remit."
+    },
+    {
+      "actor": "Prospective family",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access. They receive the decision, they do not view it."
+    },
+    {
+      "actor": "Teacher, Student, Parent / Guardian",
+      "actions": [
+        "none"
+      ],
+      "rowScope": "No access."
+    }
+  ],
+  "businessRules": [
+    {
+      "id": "BR-1",
+      "rule": "The admission form and the test score are shown together. Neither is sufficient on its own, and a decision taken on one without the other is the failure this rule prevents."
+    },
+    {
+      "id": "BR-2",
+      "rule": "Eligibility and approval are separate acts by separate people. The School Admin flags who is worth putting forward; the Principal decides who is admitted."
+    },
+    {
+      "id": "BR-3",
+      "rule": "An eligibility flag requires a reason, whether eligible or not. A flag with no reason tells the Principal nothing and cannot be defended later."
+    },
+    {
+      "id": "BR-4",
+      "rule": "Rejection requires a reason. The family is told why, so an unexplained rejection is not permitted."
+    },
+    {
+      "id": "BR-5",
+      "rule": "Approval creates the student record from the applicant's form. Nothing the family already supplied is re-typed."
+    },
+    {
+      "id": "BR-6",
+      "rule": "On approval the system generates the student ID and roll number according to the configured pattern. They are never typed or chosen by a user, and are never reused."
+    },
+    {
+      "id": "BR-7",
+      "rule": "A guardian account is created with a system-generated guardian ID linked to the family code. Where the family code already exists, because a sibling is enrolled, the existing guardian is reused rather than a second one created."
+    },
+    {
+      "id": "BR-8",
+      "rule": "A section at capacity refuses admission into it. The Principal may choose another section, or approve and place the student later."
+    },
+    {
+      "id": "BR-9",
+      "rule": "Credentials are issued with a temporary password that must be changed at first sign-in. The student ID and the guardian credentials are sent to the contact number and email held on the form."
+    },
+    {
+      "id": "BR-10",
+      "rule": "A bulk approval covers only applicants already flagged eligible, and each is approved individually inside the batch. One failure does not abandon the rest, and each outcome is reported separately."
+    },
+    {
+      "id": "BR-11",
+      "rule": "A decision is never edited. A correction is a further recorded decision, so the sequence of what was decided and when survives."
+    },
+    {
+      "id": "BR-12",
+      "rule": "An applicant recorded absent from the test may still be decided on, but the absence is shown to the decider rather than treated as a score."
+    }
+  ],
+  "stateTransitions": [
+    {
+      "entity": "Applicant",
+      "states": [
+        "Marked",
+        "Flagged eligible",
+        "Flagged not eligible",
+        "Admitted",
+        "Rejected"
+      ],
+      "initial": "Marked",
+      "terminal": [
+        "Admitted",
+        "Rejected"
+      ],
+      "transitions": [
+        {
+          "from": "Marked",
+          "to": "Flagged eligible",
+          "triggeredBy": "School Admin",
+          "condition": "Flagged with a reason (BR-3)."
+        },
+        {
+          "from": "Marked",
+          "to": "Flagged not eligible",
+          "triggeredBy": "School Admin",
+          "condition": "Flagged with a reason."
+        },
+        {
+          "from": "Flagged eligible",
+          "to": "Admitted",
+          "triggeredBy": "Principal / Director",
+          "condition": "Approved, a section with capacity is assigned, and the records are created (BR-5, BR-8)."
+        },
+        {
+          "from": "Flagged eligible",
+          "to": "Rejected",
+          "triggeredBy": "Principal / Director",
+          "condition": "Rejected with a reason (BR-4)."
+        },
+        {
+          "from": "Flagged not eligible",
+          "to": "Rejected",
+          "triggeredBy": "Principal / Director",
+          "condition": "Rejected with a reason."
+        },
+        {
+          "from": "Flagged not eligible",
+          "to": "Flagged eligible",
+          "triggeredBy": "School Admin",
+          "condition": "The flag is revised with a new reason. Both flags stay in the history."
+        }
+      ]
+    }
+  ],
+  "basicFlow": [
+    {
+      "step": 1,
+      "actor": "School Admin",
+      "navigation": "Login → Inquiry / Admission → Applicants awaiting eligibility",
+      "userAction": "Opens the applicant.",
+      "function": "openApplicantForDecision(applicantId)",
+      "systemResponse": "Shows the admission form and the test score together, with the attendance where the applicant was absent.",
+      "rules": [
+        "BR-1",
+        "BR-12"
+      ]
+    },
+    {
+      "step": 2,
+      "actor": "School Admin",
+      "navigation": "Applicant decision → Flag eligibility",
+      "userAction": "Flags the applicant eligible or not eligible and records the reason.",
+      "function": "flagEligibility(applicantId, eligibility, reason)",
+      "systemResponse": "Records the flag, its reason and who set it, and puts eligible applicants to the Principal.",
+      "rules": [
+        "BR-2",
+        "BR-3"
+      ]
+    },
+    {
+      "step": 3,
+      "actor": "Principal / Director",
+      "navigation": "Login → Inquiry / Admission → Applicant decision",
+      "userAction": "Opens an eligible applicant, or selects a batch of them on the bulk approval screen.",
+      "function": "openApplicantDecision(applicantId)",
+      "systemResponse": "Shows the form, the score and the eligibility flag with its reason.",
+      "rules": [
+        "BR-1",
+        "BR-2"
+      ]
+    },
+    {
+      "step": 4,
+      "actor": "Principal / Director",
+      "navigation": "Applicant decision → Assign section → Approve admission",
+      "userAction": "Assigns a section and approves the admission.",
+      "function": "approveAdmission(applicantId, classId, sectionId)",
+      "systemResponse": "Checks the section has capacity, then records the decision, the decider and the date.",
+      "rules": [
+        "BR-8",
+        "BR-11"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "createStudentFromApplicant(applicantId, classId, sectionId)",
+      "systemResponse": "Creates the student record from the applicant's form, generates the student ID and roll number, creates or reuses the guardian and family, and enrols the student.",
+      "rules": [
+        "BR-5",
+        "BR-6",
+        "BR-7"
+      ]
+    },
+    {
+      "step": 6,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "issueCredentials(studentId, guardianId)",
+      "systemResponse": "Creates the student and guardian accounts with system-generated usernames and a temporary password.",
+      "rules": [
+        "BR-9"
+      ]
+    },
+    {
+      "step": 7,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "sendAdmissionOutcome(applicantId)",
+      "systemResponse": "Sends the student ID and the guardian credentials to the contact number and email held on the form, and logs the send.",
+      "rules": [
+        "BR-9"
+      ]
+    },
+    {
+      "step": 8,
+      "actor": "System",
+      "navigation": "—",
+      "userAction": "—",
+      "function": "closeInquiryAsAdmitted(inquiryId, studentId)",
+      "systemResponse": "Closes the inquiry as admitted, links it to the student record, and retires the temporary ID.",
+      "rules": []
+    }
+  ],
+  "alternateFlows": [
+    {
+      "id": "A1",
+      "branchesAtStep": 4,
+      "condition": "The Principal approves a whole batch at once",
+      "actor": "Principal / Director",
+      "navigation": "Login → Inquiry / Admission → Bulk admission approval",
+      "behaviour": "Only applicants already flagged eligible may be selected. Each is approved individually inside the batch, with its own record creation and credential issue. One failure is reported and does not abandon the rest (BR-10).",
+      "function": "approveAdmissions(applicantIds, sectionAssignments)",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A2",
+      "branchesAtStep": 4,
+      "condition": "The Principal rejects the admission",
+      "actor": "Principal / Director",
+      "navigation": "Applicant decision → Reject admission",
+      "behaviour": "The reason is recorded, the inquiry is closed and the family is informed. No student record, guardian account or credential is created (BR-4).",
+      "function": "rejectAdmission(applicantId, reason)"
+    },
+    {
+      "id": "A3",
+      "branchesAtStep": 5,
+      "condition": "A sibling is already enrolled and the family code exists",
+      "actor": "System",
+      "navigation": "—",
+      "behaviour": "The existing guardian and family code are reused rather than a second household created, so siblings bill and are messaged together (BR-7).",
+      "function": "linkExistingFamily(applicantId, familyCode)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A4",
+      "branchesAtStep": 4,
+      "condition": "The chosen section is at capacity",
+      "actor": "Principal / Director",
+      "navigation": "Applicant decision → Assign section",
+      "behaviour": "Another section is chosen, or the admission is approved without a section and the student is placed later. Nothing is over-filled (BR-8).",
+      "function": "approveAdmission(applicantId, classId, null)",
+      "resumesAtStep": 5
+    },
+    {
+      "id": "A5",
+      "branchesAtStep": 3,
+      "condition": "The applicant is a re-admission",
+      "actor": "Principal / Director",
+      "navigation": "Login → Inquiry / Admission → Applicant decision",
+      "behaviour": "The existing student record is reactivated and linked to the new class and session instead of a new one being created. The previous history stays attached (UC-02-09).",
+      "function": "reactivateStudent(studentId, classId, sectionId)",
+      "resumesAtStep": 6
+    },
+    {
+      "id": "A6",
+      "branchesAtStep": 2,
+      "condition": "The School Admin revises an eligibility flag",
+      "actor": "School Admin",
+      "navigation": "Applicant decision → Flag eligibility",
+      "behaviour": "A new flag is recorded with its own reason. Both flags stay in the history, so a changed judgement is visible rather than hidden.",
+      "function": "flagEligibility(applicantId, newEligibility, reason)",
+      "resumesAtStep": 3
+    }
+  ],
+  "exceptions": [
+    {
+      "id": "E1",
+      "atStep": 2,
+      "condition": "An eligibility flag is set with no reason",
+      "systemResponse": "The flag is not recorded.",
+      "messageShown": "Give a reason. The Principal decides on this.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E2",
+      "atStep": 4,
+      "condition": "A School Admin attempts to approve an admission",
+      "systemResponse": "The action is refused.",
+      "messageShown": "Only the Principal can approve an admission.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E3",
+      "atStep": 4,
+      "condition": "Approval is attempted on an applicant not flagged eligible",
+      "systemResponse": "The approval is refused (BR-2).",
+      "messageShown": "This applicant has not been flagged eligible yet.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E4",
+      "atStep": 4,
+      "condition": "Reject is chosen with no reason",
+      "systemResponse": "The decision is not recorded.",
+      "messageShown": "Give a reason. The family is told why.",
+      "messageStyle": "field"
+    },
+    {
+      "id": "E5",
+      "atStep": 4,
+      "condition": "The chosen section is at capacity",
+      "systemResponse": "The admission is not approved into it.",
+      "messageShown": "Section A is full. Choose another section, or approve without a section and place the student later.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E6",
+      "atStep": 5,
+      "condition": "No numbering pattern is configured",
+      "systemResponse": "No student ID or roll number can be generated and nothing is created.",
+      "messageShown": "No student numbering pattern is set up. Ask your administrator to configure one.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E7",
+      "atStep": 5,
+      "condition": "Record creation fails part way",
+      "systemResponse": "The whole approval is rolled back. No student, guardian, enrolment or account is left behind, and the applicant stays flagged eligible.",
+      "messageShown": "The admission could not be completed. Nothing has been created.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E8",
+      "atStep": 7,
+      "condition": "The credentials message fails to send",
+      "systemResponse": "The student record and accounts stand. The send is marked Failed and can be resent. A failed message never unmakes an admission.",
+      "messageShown": "The student has been admitted. The credentials message could not be sent — resend it from the student record.",
+      "messageStyle": "banner"
+    },
+    {
+      "id": "E9",
+      "atStep": 4,
+      "condition": "The applicant has already been decided",
+      "systemResponse": "No second decision is recorded (BR-11).",
+      "messageShown": "This applicant was admitted on 20-09-2026. Open the student record instead.",
+      "messageStyle": "banner"
+    }
+  ],
+  "notifications": [
+    {
+      "event": "Admission approved",
+      "recipient": "Prospective family",
+      "channels": [
+        "whatsapp",
+        "email"
+      ],
+      "template": "ADMISSION_APPROVED",
+      "contents": [
+        "Child name",
+        "Class and section",
+        "Student ID",
+        "Roll number",
+        "Guardian ID",
+        "Temporary password",
+        "How to sign in"
+      ],
+      "retry": "Resend from the student record; each attempt is logged.",
+      "blocking": false
+    },
+    {
+      "event": "Admission rejected",
+      "recipient": "Prospective family",
+      "channels": [
+        "whatsapp"
+      ],
+      "template": "ADMISSION_REJECTED",
+      "contents": [
+        "Child name",
+        "The reason recorded"
+      ],
+      "retry": "Per the Messaging module policy.",
+      "blocking": false
+    },
+    {
+      "event": "Applicants flagged eligible",
+      "recipient": "Principal / Director",
+      "channels": [
+        "inApp"
+      ],
+      "template": "ADMISSIONS_AWAITING_APPROVAL",
+      "contents": [
+        "Count",
+        "Classes affected",
+        "Flagged by"
+      ],
+      "retry": "None.",
+      "blocking": false
+    },
+    {
+      "event": "Admission confirmed",
+      "recipient": "Staff / Accounts",
+      "channels": [
+        "inApp"
+      ],
+      "template": "ENROLMENT_TO_COMPLETE",
+      "contents": [
+        "Student ID",
+        "Child name",
+        "Class and section"
+      ],
+      "retry": "None.",
+      "blocking": false
+    }
+  ],
+  "sideEffects": [
+    {
+      "effect": "The student appears on class registers for attendance marking.",
+      "affects": {
+        "id": "UC-05-01",
+        "name": "Student attendance marking",
+        "link": "UC-05-01.json"
+      }
+    },
+    {
+      "effect": "The student enters the fee structure for their class and becomes billable.",
+      "affects": {
+        "id": "UC-04-02",
+        "name": "Fee invoicing",
+        "link": "UC-04-02.json"
+      }
+    },
+    {
+      "effect": "The guardian gains parent portal access on their guardian ID.",
+      "affects": {
+        "id": "UC-15-01",
+        "name": "Parent and student portal",
+        "link": "UC-15-01.json"
+      }
+    },
+    {
+      "effect": "The student record becomes findable by student ID and roll number in global search.",
+      "affects": {
+        "id": "UC-01-10",
+        "name": "Global search",
+        "link": "UC-01-10.json"
+      }
+    },
+    {
+      "effect": "A rejected applicant's inquiry is closed and enters loss reporting.",
+      "affects": {
+        "id": "UC-02-11",
+        "name": "Marking a lead as declined, and re-opening it",
+        "link": "UC-02-11.json"
+      }
+    }
+  ],
+  "integrations": [
+    {
+      "system": "WhatsApp Business provider",
+      "direction": "outbound",
+      "sends": "The admission decision, and on approval the student ID and guardian credentials",
+      "expects": "Message id and delivery status callbacks",
+      "timeout": "15 seconds to accept",
+      "retry": "3 attempts with backoff, then marked Failed",
+      "onFailure": "The admission stands and the message is resendable from the student record. An admission is never undone because a message failed."
+    }
+  ],
+  "reports": [
+    {
+      "name": "Admission decisions",
+      "formats": [
+        "screen",
+        "pdf",
+        "excel"
+      ],
+      "columns": [
+        "Temporary ID",
+        "Child",
+        "Class",
+        "Score",
+        "Eligibility",
+        "Decision",
+        "Decided by",
+        "Decided on",
+        "Student ID"
+      ],
+      "grouping": "By class",
+      "totals": "Admitted, rejected, and admission rate per class"
+    },
+    {
+      "name": "Credential issue log",
+      "formats": [
+        "screen",
+        "pdf"
+      ],
+      "columns": [
+        "Student ID",
+        "Child",
+        "Guardian ID",
+        "Sent on",
+        "Channel",
+        "Delivery status",
+        "Password changed"
+      ],
+      "grouping": "By send date",
+      "totals": "Issued, delivered and failed"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "given": "An applicant with a score of 72 and a completed form",
+      "when": "the School Admin opens them",
+      "then": "the form and the score are shown together on one screen"
+    },
+    {
+      "id": "AC-2",
+      "given": "An applicant not yet flagged eligible",
+      "when": "the Principal attempts to approve",
+      "then": "the approval is refused"
+    },
+    {
+      "id": "AC-3",
+      "given": "A School Admin flagging eligibility with no reason",
+      "when": "they save",
+      "then": "the flag is not recorded"
+    },
+    {
+      "id": "AC-4",
+      "given": "An eligible applicant",
+      "when": "the Principal approves them into Grade 2 Section A",
+      "then": "a student record exists with a generated student ID and roll number, a guardian account exists, and the student appears on the Grade 2 Section A register"
+    },
+    {
+      "id": "AC-5",
+      "given": "An approved applicant whose sibling is already enrolled",
+      "when": "the approval completes",
+      "then": "no second guardian record is created and both children share one family code"
+    },
+    {
+      "id": "AC-6",
+      "given": "An approval where record creation fails at the guardian step",
+      "when": "the failure occurs",
+      "then": "no student, enrolment or account exists, and the applicant is still flagged eligible"
+    },
+    {
+      "id": "AC-7",
+      "given": "A bulk approval of 18 eligible applicants where one section is full",
+      "when": "the batch runs",
+      "then": "17 are admitted, the one is reported with its reason, and the batch is not abandoned"
+    },
+    {
+      "id": "AC-8",
+      "given": "An admitted student",
+      "when": "the credentials message fails to send",
+      "then": "the student and the accounts still exist and the message can be resent from the student record"
+    },
+    {
+      "id": "AC-9",
+      "given": "A rejected applicant",
+      "when": "the rejection completes",
+      "then": "no student record or account exists, the inquiry is closed, and the family has been told the reason"
+    },
+    {
+      "id": "AC-10",
+      "given": "An admitted student",
+      "when": "they sign in for the first time",
+      "then": "the temporary password must be changed before any other screen is reachable"
+    }
+  ],
+  "dependencies": {
+    "useCases": [
+      {
+        "id": "UC-02-06",
+        "name": "Admission test marking",
+        "link": "UC-02-06.json",
+        "why": "Supplies the score read alongside the form."
+      },
+      {
+        "id": "UC-02-04",
+        "name": "Admission form completion",
+        "link": "UC-02-04.json",
+        "why": "Supplies the applicant's details, which become the student record."
+      },
+      {
+        "id": "UC-25-01",
+        "name": "Role-based access control",
+        "link": "UC-25-01.json",
+        "why": "Restricts approval to the Principal and creates the accounts."
+      },
+      {
+        "id": "UC-03-07",
+        "name": "Class, section and academic session structure",
+        "link": "UC-03-07.json",
+        "why": "Supplies the class and section with capacity."
+      },
+      {
+        "id": "UC-03-01",
+        "name": "Central student database and profile",
+        "link": "UC-03-01.json",
+        "why": "Owns the student record this creates."
+      },
+      {
+        "id": "UC-03-02",
+        "name": "Family and sibling grouping",
+        "link": "UC-03-02.json",
+        "why": "Supplies the family code where a sibling is enrolled.",
+        "optional": true
+      },
+      {
+        "id": "UC-02-09",
+        "name": "Re-admission handling",
+        "link": "UC-02-09.json",
+        "why": "Replaces record creation with reactivation.",
+        "optional": true
+      },
+      {
+        "id": "UC-25-05",
+        "name": "Password management",
+        "link": "UC-25-05.json",
+        "why": "Owns the temporary password and the forced change at first sign-in."
+      },
+      {
+        "id": "UC-02-12",
+        "name": "Messaging an enquiring family",
+        "link": "UC-02-12.json",
+        "why": "Delivers the decision and the credentials."
+      }
+    ],
+    "masterData": [
+      "Student ID and roll number patterns",
+      "Guardian ID pattern",
+      "Classes and sections with capacities",
+      "Message templates"
+    ]
+  },
+  "outOfScope": [
+    {
+      "item": "Recording the test score",
+      "handledBy": {
+        "id": "UC-02-06",
+        "name": "Admission test marking",
+        "link": "UC-02-06.json"
+      }
+    },
+    {
+      "item": "The ongoing student record and its later edits",
+      "handledBy": {
+        "id": "UC-03-01",
+        "name": "Central student database and profile",
+        "link": "UC-03-01.json"
+      }
+    },
+    {
+      "item": "Raising the first fee invoice",
+      "handledBy": {
+        "id": "UC-04-02",
+        "name": "Fee invoicing",
+        "link": "UC-04-02.json"
+      }
+    },
+    {
+      "item": "Issuing an ID card",
+      "handledBy": {
+        "id": "UC-13-01",
+        "name": "Student ID card generation",
+        "link": "UC-13-01.json"
+      }
+    },
+    {
+      "item": "Changing the temporary password",
+      "handledBy": {
+        "id": "UC-25-05",
+        "name": "Password management",
+        "link": "UC-25-05.json"
+      }
+    },
+    {
+      "item": "Closing a rejected inquiry and its loss reason",
+      "handledBy": {
+        "id": "UC-02-11",
+        "name": "Marking a lead as declined, and re-opening it",
+        "link": "UC-02-11.json"
+      }
+    }
+  ],
+  "nonFunctional": {
+    "perConvention": "default-performance-and-retention",
+    "departures": [
+      {
+        "aspect": "Atomicity",
+        "requirement": "Student, guardian, family, enrolment, numbering and accounts are created together or not at all. A half-made admission would leave a child with a roll number and no login, or an account with no student."
+      },
+      {
+        "aspect": "Bulk throughput",
+        "requirement": "A bulk approval of 100 applicants completes within 60 seconds, reporting progress and a per-applicant outcome."
+      },
+      {
+        "aspect": "Numbering integrity",
+        "requirement": "Student IDs and roll numbers are gapless and never reused, even under concurrent approvals."
+      },
+      {
+        "aspect": "Credential handling",
+        "requirement": "The temporary password is sent once and is never retrievable afterwards. It is never written to any log or audit entry."
+      }
+    ]
+  },
+  "openQuestions": [
+    {
+      "question": "Should the student account be created for every admitted child, or only from a certain class upward?",
+      "assumption": "Every child at launch. This needs deciding, because a login for a four-year-old is of no use and is a credential to look after.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "What are the student ID, roll number and guardian ID patterns?",
+      "assumption": "Prefixed sequences per academic session. Not confirmed.",
+      "confirmWith": "School Admin",
+      "blocksBuild": true
+    },
+    {
+      "question": "May the Principal approve an applicant flagged not eligible?",
+      "assumption": "Not at launch. The flag must be revised first.",
+      "confirmWith": "Principal",
+      "blocksBuild": true
+    },
+    {
+      "question": "May the Principal approve into a class other than the one approved at inquiry stage?",
+      "assumption": "Yes, and the change is recorded.",
+      "confirmWith": "Principal",
+      "blocksBuild": false
+    },
+    {
+      "question": "How long is an unadmitted applicant's form and score retained?",
+      "assumption": "3 years with the inquiry.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    },
+    {
+      "question": "Should a rejected family be able to apply again in the same session?",
+      "assumption": "Yes, as a new inquiry.",
+      "confirmWith": "School Admin",
+      "blocksBuild": false
+    }
+  ],
+  "conventionsApplied": [
+    {
+      "name": "session-and-authentication",
+      "area": "Session & authentication",
+      "rule": "Every use case except the login use case assumes an authenticated session. Sign out is available on every screen. An expired or invalid session returns the user to the login screen with the message \"Your session has ended. Please sign in again.\""
+    },
+    {
+      "name": "role-based-access",
+      "area": "Role-based access",
+      "rule": "Access is enforced server-side on every request, not only by hiding menu items. A request for a record outside the actor's permitted scope returns a 403 and the message \"You do not have permission to view this record.\" A use case states additions and restrictions only."
+    },
+    {
+      "name": "branch-scope",
+      "area": "Branch scope",
+      "rule": "Every record carries a branch ID. Users see only their own branch unless the use case states otherwise. Super Admin, School Admin and Principal may switch branch from the header."
+    },
+    {
+      "name": "academic-session-scope",
+      "area": "Academic session scope",
+      "rule": "Every academic record carries an academic session ID. Lists default to the current open session."
+    },
+    {
+      "name": "list-screens",
+      "area": "List screens",
+      "rule": "Every list supports search, column sort and page-size selection. Default page size 25; default sort is most recent first. Filters are applied before printing or exporting."
+    },
+    {
+      "name": "print-and-pdf",
+      "area": "Print & PDF",
+      "rule": "Every report and list offers Print and Download as PDF, honouring the filters currently applied. Each output carries the school name, branch, academic session, report title, filter summary, generation timestamp and the name of the user who generated it."
+    },
+    {
+      "name": "audit-trail",
+      "area": "Audit trail",
+      "rule": "Every create, update, deactivation, approval and reversal writes to the audit log: actor, role, timestamp, record type, record ID, before and after values, and IP address. Audit entries are never editable."
+    },
+    {
+      "name": "deletion",
+      "area": "Deletion",
+      "rule": "Records are deactivated, not physically removed. Deactivated records are excluded from lists and lookups but remain in the audit trail and in historical reports. A record referenced by a financial transaction can never be deactivated."
+    },
+    {
+      "name": "validation-and-messages",
+      "area": "Validation & messages",
+      "rule": "Field-level errors appear inline beneath the field on blur and on submit. Errors that block the whole action appear as a banner at the top of the form. Successful actions show a toast. No action succeeds silently."
+    },
+    {
+      "name": "dates-times-numbers",
+      "area": "Dates, times, numbers",
+      "rule": "Dates display as DD-MM-YYYY; date and time as DD-MM-YYYY HH:mm in 24-hour form. Times are school-local. Phone numbers are stored in the registered mobile format."
+    },
+    {
+      "name": "language",
+      "area": "Language",
+      "rule": "All user-visible strings come from a resource file. No hard-coded text in any screen."
+    },
+    {
+      "name": "concurrency-and-locking",
+      "area": "Concurrency & locking",
+      "rule": "Last write wins, except where a use case defines an approval lock. Once a record is approved, posted or issued it becomes read-only and can only be changed through its defined reversal use case."
+    },
+    {
+      "name": "screen-states",
+      "area": "Screen states",
+      "rule": "Every list, dashboard tile and report defines four states: loading, empty, error and populated. The empty state names what is missing and links to the action that creates it."
+    },
+    {
+      "name": "bulk-actions",
+      "area": "Bulk actions",
+      "rule": "Any bulk operation reports a per-row result, commits valid rows and lists rejected rows with the reason. A bulk action never fails as a whole because of one bad row."
+    },
+    {
+      "name": "notifications",
+      "area": "Notifications",
+      "rule": "All outbound SMS, WhatsApp, email and push messages are sent through the Messaging module, recorded in the sent-message log with per-channel delivery status, and use a named template. Use cases reference the template; they do not embed message text."
+    },
+    {
+      "name": "default-performance-and-retention",
+      "area": "Default performance & retention",
+      "rule": "Unless a use case states otherwise: a screen loads within 2 seconds and a save completes within 2 seconds at 200 concurrent users; lists paginate above 100 rows; financial and student records are retained 7 years; audit and message logs 12 months; every screen is usable at a 360 px viewport. Fill the non-functional field only to depart from this."
+    },
+    {
+      "name": "default-trigger",
+      "area": "Default trigger",
+      "rule": "Unless a use case states otherwise, the trigger is: the user navigates to the screen and initiates the action. Fill the Triggers field only where a scheduled job, an event in another module, or an inbound external call also starts it."
+    }
+  ]
+}

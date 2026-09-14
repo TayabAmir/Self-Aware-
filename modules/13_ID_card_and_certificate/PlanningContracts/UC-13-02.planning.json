@@ -1,0 +1,1391 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-13-02",
+    "name": "Issue an official certificate to a student or an employee, filled from their record, and record the issue",
+    "module": "ID cards and certificates",
+    "file": "../UseCases/UC-13-02.json",
+    "featureRef": "13.2 Certificate generation"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-13-02-PC-1",
+      "intent": {
+        "name": "certificate.request",
+        "summary": "Raise a request for a certificate, for a student or an employee. One step, and nothing is issued by it.",
+        "routesHere": [
+          "request a bonafide certificate — she needs it for a passport",
+          {
+            "text": "bonafide certificate chahiye, passport ke liye",
+            "lang": "ur-Latn",
+            "gloss": "we need a bonafide certificate, for a passport"
+          },
+          {
+            "text": "character certificate ki darkhwast de do",
+            "lang": "ur-Latn",
+            "gloss": "request a character certificate"
+          },
+          {
+            "text": "mulazim ko experience letter chahiye",
+            "lang": "ur-Latn",
+            "gloss": "the employee needs an experience letter"
+          },
+          "request a school leaving certificate for this student"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "offer letter chahiye",
+              "lang": "ur-Latn",
+              "gloss": "we need the offer letter"
+            },
+            "goesTo": "appointment.letter.prepare — UC-13-03",
+            "note": "The offer letter is not one of these types. It is issued before an employee exists, filled from a candidate record, and has its own use case (BR-11, E7)."
+          },
+          {
+            "request": {
+              "text": "naam katwana hai",
+              "lang": "ur-Latn",
+              "gloss": "we want to withdraw the child"
+            },
+            "goesTo": "withdrawal.raise — UC-03-06",
+            "note": "A withdrawal raises the certificate requests itself rather than leaving them to somebody to remember (BR-1, UC-03-06 BR-9)."
+          },
+          {
+            "request": {
+              "text": "certificate abhi chhap do",
+              "lang": "ur-Latn",
+              "gloss": "print the certificate now"
+            },
+            "goesTo": "certificate.generate — UC-13-02-PC-2",
+            "note": "The template is filled from the record and previewed before anything is printed (BR-3, BR-4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "certificate.request",
+            "inputs": {
+              "person_id": "$request.person_phrase",
+              "certificate_type": "$request.certificate_type",
+              "purpose": "$request.purpose",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Two other features raise the request themselves — a withdrawal and a staff exit — rather than leaving it to somebody to remember (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report. A student type on an employee, an employee type on a student, and an appreciation certificate with no recognition behind it are all refused.",
+        "atomicity": "One write: the request and the audit entry together or not at all. Nothing is filled, printed or issued. Where a withdrawal makes release conditional on fee clearance and dues are outstanding, the request is held rather than refused (BR-8, E5)."
+      },
+      "operations": [
+        {
+          "name": "certificate.request",
+          "method": "POST",
+          "path": "/api/v1/certificate-requests",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "person_id + certificate_type + purpose, since the same ask twice is one request",
+          "purpose": "Raise a certificate request for a confirmed person.",
+          "parameters": [
+            {
+              "name": "person_id",
+              "source": "resolved",
+              "sourceRef": "$request.person_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "person",
+                "fromPhrase": "$request.person_phrase",
+                "onNoMatch": "Refuse. No record matches, or the person is outside the actor's scope. A guardian requesting for a child who is not theirs is refused (E10).",
+                "onAmbiguous": "Ask, showing each candidate with their photograph, name, father's name, class and section or role, and identifier (BR-2)."
+              },
+              "notes": "The student or employee, confirmed through the same person picker the card use case specifies (BR-2). A mistyped identifier resolves to a real record and produces a valid certificate for the wrong person."
+            },
+            {
+              "name": "certificate_type",
+              "source": "request",
+              "sourceRef": "$request.certificate_type",
+              "required": true,
+              "type": "enum: School leaving certificate | Character certificate | Bonafide or study certificate | Appreciation certificate | Experience or service letter | Dues clearance certificate",
+              "notes": "What is being issued. Each applies to a student, an employee, or either — a student type cannot be issued to an employee, nor an employee type to a student (BR-3, E1, E2)."
+            },
+            {
+              "name": "purpose",
+              "source": "request",
+              "sourceRef": "$request.purpose",
+              "required": false,
+              "type": "string",
+              "notes": "Why the certificate is needed. Often required on the certificate itself, so it is the requester's own words rather than a purpose inferred from the type."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The request.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "person",
+                "type": "object",
+                "description": "The confirmed person, as shown before confirmation (BR-2)."
+              },
+              {
+                "name": "certificate_type",
+                "type": "string",
+                "description": "As selected."
+              },
+              {
+                "name": "purpose",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "requested_by",
+                "type": "string",
+                "description": "Parent / Guardian, Student, Employee, Staff at the office, Withdrawal or Staff exit (BR-1)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Requested, or Held for clearance where a withdrawal makes release conditional and dues are outstanding (BR-8)."
+              },
+              {
+                "name": "held_for_clearance",
+                "type": "boolean",
+                "description": "Whether release is being held. The condition applying at all is configuration (BR-8)."
+              },
+              {
+                "name": "previous_issues",
+                "type": "integer",
+                "description": "How many times this type has been issued to this person. A reissue produces a new certificate with its own number and both stay on the record (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "STUDENT_TYPE_ON_EMPLOYEE",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "A student type was selected for an employee.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "The template is filled from the student record and there is none (BR-3)."
+            },
+            {
+              "code": "EMPLOYEE_TYPE_ON_STUDENT",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "An employee type was selected for a student.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            },
+            {
+              "code": "NO_RECOGNITION",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "An appreciation certificate was requested with no recognition behind it.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "It is the printed output of a recognition already recorded — a certificate praising something the school has no record of is one nobody can stand behind (BR-6)."
+            },
+            {
+              "code": "OFFER_LETTER",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "An offer letter was requested here.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "It is issued before an employee exists and has its own use case (BR-11)."
+            },
+            {
+              "code": "NOT_OWN_CHILD",
+              "mapsTo": "E10",
+              "httpStatus": 403,
+              "meaning": "A guardian requested a certificate for a child who is not theirs.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded."
+            },
+            {
+              "code": "HELD_FOR_CLEARANCE",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "Dues are outstanding and the withdrawal blocks the certificate.",
+              "written": "The request is recorded.",
+              "notWritten": "It is held rather than issued (BR-8).",
+              "treatedAsSuccess": true,
+              "note": "Not a refusal. Report which document is held and what clears it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never select the type. Six types exist and each says something different about a person — a bonafide certificate and a character certificate are not interchangeable, and the wrong one is a document the next institution will reject.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never confirm the person from a typed identifier alone. A mistyped one resolves to a real record and produces a valid certificate for the wrong person (BR-2), which is the same reasoning as the card use case.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never write the purpose. It often appears on the certificate itself, so a purpose a planner supplied is the school stating why somebody needs a document.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never request an appreciation certificate without the recognition. It is the printed output of one already recorded (BR-6, E6) — a certificate praising something the school has no record of is one nobody can stand behind.",
+          "derivedFrom": [
+            "BR-6",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report a held certificate plainly, and say what clears it. Where a withdrawal makes release conditional on fee clearance, the document is held rather than refused (BR-8, E5) — and a held leaving certificate is a child who cannot enrol elsewhere.",
+          "derivedFrom": [
+            "BR-8",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report previous issues of the same type. A reissue produces a new certificate with its own number and both stay on the record, so a school can see how many times a document was issued (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A certificate is never deleted (BR-9, E8). A request that will not be issued is refused, and a reissue produces a new certificate with its own number."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "bonafide certificate chahiye — passport banwana hai",
+            "lang": "ur-Latn",
+            "gloss": "we need a bonafide certificate — for a passport application"
+          },
+          "context": "Staff, Johar Town branch, the student confirmed.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.request",
+              "inputs": {
+                "person_id": "$request.person_phrase → confirmed against the shown record",
+                "certificate_type": "Bonafide or study certificate",
+                "purpose": "for a passport application, as the family said",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The type is the family's request and the purpose their own words (PR-1, PR-3)."
+            }
+          ],
+          "outcome": "Requested. Report that a bonafide certificate needs no withdrawal and no exit behind it — it is requested more often than every other type combined, and this is the ordinary route for it."
+        },
+        {
+          "request": {
+            "text": "is bache ko certificate chahiye",
+            "lang": "ur-Latn",
+            "gloss": "this child needs a certificate"
+          },
+          "context": "Staff, Johar Town branch, with no type named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.request",
+              "inputs": {
+                "person_id": "$request.person_phrase",
+                "certificate_type": "$request.certificate_type — absent",
+                "purpose": "$request.purpose",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The type is not inferred (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is requested. Ask which — a bonafide certificate for a bank or a passport, a character certificate, a leaving certificate, or the transcript. They say different things about a child, and the institution asking for one will not accept another."
+        },
+        {
+          "request": {
+            "text": "mulazim ke liye offer letter jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "issue the offer letter for the employee"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.request",
+              "inputs": {
+                "person_id": "$request.person_phrase",
+                "certificate_type": "$request.certificate_type",
+                "purpose": "$request.purpose",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted here. The offer letter is not one of these types (PR governs via the routing)."
+            }
+          ],
+          "outcome": "Nothing is requested. Report that the appointment letter is issued before an employee exists, filled from the candidate record rather than a staff record, and has its own use case — this feature issues certificates to people the school already holds a record for."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-02-PC-2",
+      "intent": {
+        "name": "certificate.generate",
+        "summary": "Fill the certificate template from the person's own record and produce it for preview. One step, and nothing is issued yet.",
+        "routesHere": [
+          "generate the certificate for this request",
+          {
+            "text": "is darkhwast ka certificate bana do",
+            "lang": "ur-Latn",
+            "gloss": "generate the certificate for this request"
+          },
+          {
+            "text": "record se certificate bhar do",
+            "lang": "ur-Latn",
+            "gloss": "fill the certificate from the record"
+          },
+          {
+            "text": "preview ke liye certificate tayyar karo",
+            "lang": "ur-Latn",
+            "gloss": "prepare the certificate for preview"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "certificate par dastakhat karo",
+              "lang": "ur-Latn",
+              "gloss": "sign the certificate"
+            },
+            "goesTo": "certificate.sign — UC-13-02-PC-3"
+          },
+          {
+            "request": {
+              "text": "khali khane khud bhar do",
+              "lang": "ur-Latn",
+              "gloss": "fill in the blank fields yourself"
+            },
+            "goesTo": "Not offered.",
+            "note": "The template is filled from that person's record (BR-3). Where a field the template needs is missing, the certificate is not generated rather than being produced with a blank in it (E4)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "certificate.generate",
+            "inputs": {
+              "request_id": "$request.certificate_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The template is filled from the student record for a student type and the staff record for an employee type (BR-3), and printing happens from the preview so the filled document is seen before it is produced (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report. A record missing a field the template needs produces nothing at all, rather than a certificate with a blank in it.",
+        "atomicity": "One write: the certificate, its number and the filled template together or not at all. It is not issued — signing and recording the issue are separate acts (BR-4, BR-5). Where a withdrawal makes release conditional on fee clearance and dues are outstanding, the request stays held and nothing is generated (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "certificate.generate",
+          "method": "POST",
+          "path": "/api/v1/certificate-requests/{request_id}/generate",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a request generates one certificate",
+          "purpose": "Fill the certificate template from the person's record.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.certificate_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "certificate_request",
+                "fromPhrase": "$request.certificate_phrase",
+                "onNoMatch": "Refuse. No certificate request matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the requests with the person, the type, who raised it and the status."
+              },
+              "notes": "The certificate request, resolved from the person and the type."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The certificate as generated.",
+            "fields": [
+              {
+                "name": "certificate_id",
+                "type": "string",
+                "description": "The certificate."
+              },
+              {
+                "name": "certificate_number",
+                "type": "string",
+                "description": "Unique, recorded against the person (BR-5)."
+              },
+              {
+                "name": "certificate_type",
+                "type": "string",
+                "description": "What was filled."
+              },
+              {
+                "name": "source_record",
+                "type": "string",
+                "description": "The student record for a student type, the staff record for an employee type (BR-3)."
+              },
+              {
+                "name": "fields_filled",
+                "type": "object",
+                "description": "Every field, from that person's own record. None typed by hand (BR-3)."
+              },
+              {
+                "name": "signer_role",
+                "type": "string",
+                "description": "The School Admin or the Principal, according to the type. Which types need which is an open question in this use case."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Generated. Not issued (BR-4, BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "MISSING_FIELD",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The record is missing a field the template needs.",
+              "written": "Nothing.",
+              "notWritten": "No certificate generated.",
+              "note": "Rather than being produced with a blank in it (E4). The message names the field."
+            },
+            {
+              "code": "HELD_FOR_CLEARANCE",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "Dues are outstanding and the withdrawal blocks the certificate.",
+              "written": "Nothing.",
+              "notWritten": "Nothing generated.",
+              "note": "It is held rather than issued (BR-8)."
+            },
+            {
+              "code": "NO_RECOGNITION",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "An appreciation certificate has no recognition behind it.",
+              "written": "Nothing.",
+              "notWritten": "Nothing generated.",
+              "note": "It is the printed output of one already recorded (BR-6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply a missing field. The template is filled from the person's own record (BR-3), and a value a planner produced is a statement the school is making about somebody in a document it signs.",
+          "derivedFrom": [
+            "BR-3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the missing field by name where generation fails. It is a gap in the person's record, and somebody has to fill it there rather than on the certificate (E4).",
+          "derivedFrom": [
+            "BR-3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe a generated certificate as issued. Signing and recording the issue are separate acts, and printing happens from the preview so the filled document is seen before it is produced (BR-4, BR-5).",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report who signs, and that which types need which signature is undecided. The School Admin or the Principal signs according to the type, and nothing in this use case says which is which.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A certificate is never deleted (BR-9, E8). One generated in error is not issued, and a corrected one is generated as a reissue with its own number."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is darkhwast ka certificate bana do",
+            "lang": "ur-Latn",
+            "gloss": "generate the certificate for this request"
+          },
+          "context": "Staff, Johar Town branch, on a bonafide request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.generate",
+              "inputs": {
+                "request_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Generated and waiting at the preview. Report the certificate number and that it is not issued — it is signed and the issue recorded separately (PR-3), and printing happens from the preview so the filled document is seen first."
+        },
+        {
+          "request": {
+            "text": "certificate bana do, walid ka naam record mein nahi hai to chhorh do",
+            "lang": "ur-Latn",
+            "gloss": "generate the certificate, and leave the father's name out since it is not on the record"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.generate",
+              "inputs": {
+                "request_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns MISSING_FIELD (E4)."
+            }
+          ],
+          "outcome": "Nothing is generated. Report the missing field by name (PR-2) — it is filled on the student's record, not left blank on a document the school signs. A certificate with a gap where a name should be is one the next institution will query."
+        },
+        {
+          "request": {
+            "text": "naam ki spelling theek kar ke certificate bana do",
+            "lang": "ur-Latn",
+            "gloss": "fix the spelling of the name and generate the certificate"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.generate",
+              "inputs": {
+                "request_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The generation only. Nothing on the record is changed (PR-1)."
+            }
+          ],
+          "outcome": "Report that the certificate is filled from the record as it stands — if the spelling is wrong there, it is corrected on the record first and the certificate then generates correctly. Correcting it on the document alone would leave the record and the certificate saying different things about the same child."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-02-PC-3",
+      "intent": {
+        "name": "certificate.sign",
+        "summary": "Sign a generated certificate. School Admin or Principal according to the type, one step.",
+        "routesHere": [
+          "sign this certificate",
+          {
+            "text": "is certificate par dastakhat kar do",
+            "lang": "ur-Latn",
+            "gloss": "sign this certificate"
+          },
+          {
+            "text": "Principal ke dastakhat karwa do",
+            "lang": "ur-Latn",
+            "gloss": "get the Principal's signature"
+          },
+          {
+            "text": "certificate par mohar aur dastakhat",
+            "lang": "ur-Latn",
+            "gloss": "stamp and sign the certificate"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "certificate jari kar do",
+              "lang": "ur-Latn",
+              "gloss": "issue the certificate"
+            },
+            "goesTo": "certificate.issue — UC-13-02-PC-4",
+            "note": "Signing and recording the issue are separate acts (BR-4, BR-5)."
+          },
+          {
+            "request": {
+              "text": "bina dastakhat ke de do",
+              "lang": "ur-Latn",
+              "gloss": "hand it over unsigned"
+            },
+            "goesTo": "Not offered.",
+            "note": "The certificate carries who signed it, according to the type (BR-5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "certificate.sign",
+            "inputs": {
+              "certificate_id": "$request.certificate_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Who signs follows the type — the School Admin or the Principal — and which types need which is not stated anywhere in this use case."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the signature and the audit entry together or not at all. The certificate is still not issued; recording the issue against the person is the separate act that answers what the school issued and when (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "certificate.sign",
+          "method": "POST",
+          "path": "/api/v1/certificates/{certificate_id}/sign",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "certificate_id, since a certificate is signed once",
+          "purpose": "Record the signature on a generated certificate.",
+          "parameters": [
+            {
+              "name": "certificate_id",
+              "source": "resolved",
+              "sourceRef": "$request.certificate_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "certificate",
+                "fromPhrase": "$request.certificate_phrase",
+                "onNoMatch": "Refuse. No generated certificate matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the certificates with the person, the type, the number and the status."
+              },
+              "notes": "The generated certificate, resolved from the person and the type."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The signature.",
+            "fields": [
+              {
+                "name": "certificate_id",
+                "type": "string",
+                "description": "The certificate."
+              },
+              {
+                "name": "certificate_number",
+                "type": "string",
+                "description": "Its number."
+              },
+              {
+                "name": "certificate_type",
+                "type": "string",
+                "description": "What was signed."
+              },
+              {
+                "name": "signed_by",
+                "type": "string",
+                "description": "The School Admin or the Principal, according to the type (BR-5)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Signed. Not yet issued (BR-5)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WRONG_SIGNER",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The acting role does not sign this type.",
+              "written": "Nothing.",
+              "notWritten": "Nothing signed.",
+              "note": "Which types require the Principal's signature and which the School Admin's is not stated anywhere in this use case."
+            },
+            {
+              "code": "NOT_GENERATED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The certificate has not been generated.",
+              "written": "Nothing.",
+              "notWritten": "Nothing signed.",
+              "note": "There is nothing filled to sign."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never sign on somebody's behalf. The signature is a person putting their name to a statement the school makes about a student or an employee.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report which role signs this type, and that the mapping is undecided. Nothing in this use case says which types need the Principal and which the School Admin — a refusal here is that gap surfacing.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe a signed certificate as issued. The issue is recorded separately, and that record is what answers what the school issued and when (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A signature is not withdrawn. A certificate signed in error is not issued, and a corrected one is a reissue with its own number (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is certificate par dastakhat kar do",
+            "lang": "ur-Latn",
+            "gloss": "sign this certificate"
+          },
+          "context": "Principal, Johar Town branch, on a generated leaving certificate.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.sign",
+              "inputs": {
+                "certificate_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Signed. Report that it is not yet issued (PR-3) — recording the issue against the person is what lets the school answer later what it issued and when."
+        },
+        {
+          "request": {
+            "text": "main dastakhat kar deta hoon, Principal masroof hain",
+            "lang": "ur-Latn",
+            "gloss": "I will sign it, the Principal is busy"
+          },
+          "context": "School Admin, Johar Town branch, on a type the Principal signs.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.sign",
+              "inputs": {
+                "certificate_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns WRONG_SIGNER (E4)."
+            }
+          ],
+          "outcome": "Nothing is signed. Report that this type carries the Principal's signature — and that which types need which signature is not written down anywhere in this use case, so the mapping the system enforces is one somebody configured rather than one the documents state (PR-2)."
+        },
+        {
+          "request": {
+            "text": "certificate bana kar dastakhat bhi kar do aur de do",
+            "lang": "ur-Latn",
+            "gloss": "generate it, sign it and hand it over"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.sign",
+              "inputs": {
+                "certificate_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns NOT_GENERATED (E9) where nothing has been filled yet."
+            }
+          ],
+          "outcome": "Report the three acts in order: the template is filled from the record and previewed, a person signs it, and the issue is recorded against the person. They are separate because the preview is where a wrong certificate is caught, and the signature is somebody putting their name to it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-02-PC-4",
+      "intent": {
+        "name": "certificate.issue",
+        "summary": "Record that a certificate was issued to the person. One step, and it is what the school answers with later.",
+        "routesHere": [
+          "record that the certificate has been handed over",
+          {
+            "text": "certificate de diya hai, darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "the certificate has been given, record it"
+          },
+          {
+            "text": "jari hone ka record daal do",
+            "lang": "ur-Latn",
+            "gloss": "record the issue"
+          },
+          {
+            "text": "family ko certificate mil gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "the family has received the certificate"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "dobara copy chahiye",
+              "lang": "ur-Latn",
+              "gloss": "they want a second copy"
+            },
+            "goesTo": "certificate.request — UC-13-02-PC-1",
+            "note": "A reissue produces a new certificate with its own number, and both stay on the record (BR-9, A6)."
+          },
+          {
+            "request": {
+              "text": "certificate mita do",
+              "lang": "ur-Latn",
+              "gloss": "delete the certificate"
+            },
+            "goesTo": "Not offered.",
+            "note": "A certificate is never deleted (BR-9, E8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "certificate.issue",
+            "inputs": {
+              "certificate_id": "$request.certificate_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The issue is recorded against the person, with the type, the date and who issued it — a school asked what it issued and when must be able to answer (BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. An unsigned certificate is not issued.",
+        "atomicity": "One write: the issue recorded against the person together with the audit entry, or not at all. A certificate is never deleted, and a reissue produces a new certificate with its own number so a school can see how many times a document was issued (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "certificate.issue",
+          "method": "POST",
+          "path": "/api/v1/certificates/{certificate_id}/issue",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "certificate_id, since a certificate is issued once",
+          "purpose": "Record the issue of a signed certificate.",
+          "parameters": [
+            {
+              "name": "certificate_id",
+              "source": "resolved",
+              "sourceRef": "$request.certificate_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "certificate",
+                "fromPhrase": "$request.certificate_phrase",
+                "onNoMatch": "Refuse. No certificate matches at a state that allows this.",
+                "onAmbiguous": "Ask, naming the certificates with the person, the type, the number and the status."
+              },
+              "notes": "The certificate, resolved from the person and the type."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The issue.",
+            "fields": [
+              {
+                "name": "certificate_id",
+                "type": "string",
+                "description": "The certificate."
+              },
+              {
+                "name": "certificate_number",
+                "type": "string",
+                "description": "Recorded against the person (BR-5)."
+              },
+              {
+                "name": "certificate_type",
+                "type": "string",
+                "description": "What was issued."
+              },
+              {
+                "name": "person",
+                "type": "string",
+                "description": "Who received it."
+              },
+              {
+                "name": "issued_on",
+                "type": "date",
+                "description": "When."
+              },
+              {
+                "name": "issued_by",
+                "type": "string",
+                "description": "Who issued it."
+              },
+              {
+                "name": "signed_by",
+                "type": "string",
+                "description": "Who signed it (BR-5)."
+              },
+              {
+                "name": "previous_issues",
+                "type": "integer",
+                "description": "Earlier issues of this type to this person. Both stay on the record (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_SIGNED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "The certificate has not been signed.",
+              "written": "Nothing.",
+              "notWritten": "Nothing issued.",
+              "note": "The certificate carries who signed it (BR-5)."
+            },
+            {
+              "code": "HELD_FOR_CLEARANCE",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The certificate is held pending fee clearance.",
+              "written": "Nothing.",
+              "notWritten": "Nothing issued.",
+              "note": "It is held rather than issued until the dues are cleared (BR-8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never record an issue that did not happen. This row is what a school answers with when asked what it issued and when (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report earlier issues of the same type. Both stay on the record and a reissue carries its own number, so the school can see how many times a document was issued (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never issue a held certificate. It waits until the dues are cleared, and the hold is lifted deliberately (BR-8, E5).",
+          "derivedFrom": [
+            "BR-8",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report where the certificate is one the person needs elsewhere. A leaving certificate, an experience letter and a bonafide certificate are each required by another institution, and the date of issue is what they ask about.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An issue is not withdrawn — the document has been handed over. A corrected version is a reissue with its own number, and both stay on the record (BR-9)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "certificate de diya hai, darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "the certificate has been handed over, record it"
+          },
+          "context": "Staff, Johar Town branch, on a signed certificate.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.issue",
+              "inputs": {
+                "certificate_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Recorded. Report the number, the date and who signed it — and any earlier issue of the same type to this person (PR-2)."
+        },
+        {
+          "request": {
+            "text": "family ko dobara copy chahiye, wahi certificate phir se de do",
+            "lang": "ur-Latn",
+            "gloss": "the family wants another copy, give them the same certificate again"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.issue",
+              "inputs": {
+                "certificate_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The same certificate is not issued twice. A reissue is a fresh request (PR-2)."
+            }
+          ],
+          "outcome": "Report that a second copy is a reissue — a new request, a new certificate and a new number, with both staying on the record. That is how the school can later see a document was issued twice, which matters when two copies are in circulation."
+        },
+        {
+          "request": {
+            "text": "baqaya abhi hai lekin certificate de do, family ja rahi hai",
+            "lang": "ur-Latn",
+            "gloss": "dues are still outstanding but give the certificate, the family is leaving"
+          },
+          "context": "Staff, Johar Town branch, on a held certificate.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.issue",
+              "inputs": {
+                "certificate_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns HELD_FOR_CLEARANCE (E5)."
+            }
+          ],
+          "outcome": "Nothing is issued. Report what is outstanding and that the hold lifts when the dues are cleared — and if the document is the school leaving certificate, that holding it is what stops the child enrolling anywhere else, which is a decision the school should be taking knowingly rather than as a side effect."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-13-02-PC-5",
+      "intent": {
+        "name": "certificate.hold.release",
+        "summary": "Lift a clearance hold once the dues are cleared. Accounts, one step.",
+        "routesHere": [
+          "the dues are cleared — release the held certificate",
+          {
+            "text": "baqaya ada ho gaya hai, certificate release kar do",
+            "lang": "ur-Latn",
+            "gloss": "the dues are paid, release the certificate"
+          },
+          {
+            "text": "clearance ho gayi, rok hata do",
+            "lang": "ur-Latn",
+            "gloss": "clearance is done, lift the hold"
+          },
+          {
+            "text": "leaving certificate ab de sakte hain",
+            "lang": "ur-Latn",
+            "gloss": "the leaving certificate can be given now"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "baqaya maaf kar ke certificate de do",
+              "lang": "ur-Latn",
+              "gloss": "waive the balance and give the certificate"
+            },
+            "goesTo": "fee write-off — module 4",
+            "note": "A balance written off rather than collected goes through the write-off use case by the approver named there (UC-03-06 BR-6)."
+          },
+          {
+            "request": {
+              "text": "rok ke bawajood de do",
+              "lang": "ur-Latn",
+              "gloss": "give it despite the hold"
+            },
+            "goesTo": "Not offered.",
+            "note": "The certificate is held rather than issued until the dues are cleared (BR-8, E5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "certificate.hold.release",
+            "inputs": {
+              "request_id": "$request.certificate_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The dues are cleared and the hold lifts; the certificate is then generated, signed and issued as normal (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. A hold on a request where dues are still outstanding does not lift.",
+        "atomicity": "One write: the hold lifted and the audit entry together or not at all. Nothing is generated or issued by it — the request returns to the ordinary path. Whether the clearance condition applies at all is configuration, and which way this school has it set is not stated anywhere in this use case (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "certificate.hold.release",
+          "method": "POST",
+          "path": "/api/v1/certificate-requests/{request_id}/release-hold",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "request_id, since a hold lifts once",
+          "purpose": "Lift the clearance hold on a certificate request.",
+          "parameters": [
+            {
+              "name": "request_id",
+              "source": "resolved",
+              "sourceRef": "$request.certificate_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "certificate_request",
+                "fromPhrase": "$request.certificate_phrase",
+                "onNoMatch": "Refuse. No held certificate request matches.",
+                "onAmbiguous": "Ask, naming the held requests with the person, the type and what is outstanding."
+              },
+              "notes": "The held certificate request, resolved from the person and the type."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The hold lifted.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The request."
+              },
+              {
+                "name": "certificate_type",
+                "type": "string",
+                "description": "What was held."
+              },
+              {
+                "name": "person",
+                "type": "string",
+                "description": "Who is waiting for it."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Requested. It returns to the ordinary path (BR-8)."
+              },
+              {
+                "name": "dues_outstanding",
+                "type": "money",
+                "description": "Zero, or what remains where the hold could not lift."
+              },
+              {
+                "name": "released_by",
+                "type": "string",
+                "description": "Accounts."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DUES_OUTSTANDING",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "Dues are still outstanding.",
+              "written": "Nothing.",
+              "notWritten": "The hold does not lift.",
+              "note": "The message names the balance (BR-8)."
+            },
+            {
+              "code": "NOT_HELD",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The request is not held for clearance.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never lift a hold with dues outstanding. E5 is BR-8 working, and lifting it is not how a balance is cleared.",
+          "derivedFrom": [
+            "BR-8",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never write off a balance to lift a hold. That goes through the write-off use case by the approver named there — a certificate is not a route around it (UC-03-06 BR-6).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report who has been waiting and for what. A held leaving certificate is a child who cannot enrol elsewhere, and the date the hold lifts is the date that stops being true.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report that the certificate is not issued by this. The request returns to the ordinary path and is generated, signed and issued (BR-4, BR-5).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A lifted hold is not reimposed. Where dues arise again, that is a separate matter from a certificate already released."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "baqaya ada ho gaya hai, rok hata do",
+            "lang": "ur-Latn",
+            "gloss": "the dues are paid, lift the hold"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.hold.release",
+              "inputs": {
+                "request_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The hold lifts. Report who has been waiting and for which document (PR-3), and that it is now generated, signed and issued in the ordinary way (PR-4)."
+        },
+        {
+          "request": {
+            "text": "thora sa baqaya hai, phir bhi certificate release kar do",
+            "lang": "ur-Latn",
+            "gloss": "a small balance is left, release the certificate anyway"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.hold.release",
+              "inputs": {
+                "request_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns DUES_OUTSTANDING (E5)."
+            }
+          ],
+          "outcome": "The hold does not lift. Report the balance. Worth adding that whether the school holds certificates on an outstanding balance at all is configuration, and whether it should hold the leaving certificate specifically is a question the withdrawal use case raises and does not answer — the document is what the child needs to enrol anywhere else."
+        },
+        {
+          "request": {
+            "text": "baqaya maaf kar ke rok hata do",
+            "lang": "ur-Latn",
+            "gloss": "waive the balance and lift the hold"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "certificate.hold.release",
+              "inputs": {
+                "request_id": "$request.certificate_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No write-off is planned (PR-2). The hold lifts only once the balance is actually cleared."
+            }
+          ],
+          "outcome": "Nothing lifts. Report that the write-off is raised and approved under the write-off use case by the approver named there — clearing a balance to release a certificate would use a document the family needs as the reason to skip a financial control."
+        }
+      ]
+    }
+  ]
+}

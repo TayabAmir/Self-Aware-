@@ -1,0 +1,2642 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-12-01",
+    "name": "Complete the one record per employee on joining, from an accepted appointment letter, with the documents collected",
+    "module": "HR and payroll",
+    "file": "../UseCases/UC-12-01.json",
+    "featureRef": "12.1 Staff records and HR management"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-12-01-PC-1",
+      "intent": {
+        "name": "staff.record.create",
+        "summary": "Open an employee's record from their accepted appointment letter on the day they join, and fill in the personal details. Two steps, and the agreed terms are carried rather than typed.",
+        "routesHere": [
+          "create the staff record for the teacher who joined today",
+          {
+            "text": "jo ustad aaj join hue hain un ka record banao",
+            "lang": "ur-Latn",
+            "gloss": "create the record for the teacher who joined today"
+          },
+          {
+            "text": "appointment letter se staff record khol do",
+            "lang": "ur-Latn",
+            "gloss": "open the staff record from the appointment letter"
+          },
+          {
+            "text": "naye mulazim ka record mukammal karo",
+            "lang": "ur-Latn",
+            "gloss": "complete the new employee's record"
+          },
+          "open the record from her accepted letter and add her details"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "seedha naya mulazim daal do",
+              "lang": "ur-Latn",
+              "gloss": "just add a new employee directly"
+            },
+            "goesTo": "Not offered.",
+            "note": "A staff record is created only from an accepted appointment letter, or by migration at go-live. There is no route that types a person straight into employment (BR-1, E1)."
+          },
+          {
+            "request": {
+              "text": "tankhwah bhi likh do",
+              "lang": "ur-Latn",
+              "gloss": "record the salary too"
+            },
+            "goesTo": "Not offered here.",
+            "note": "The agreed salary carries from the letter and is not an ordinary field on this record. It is set separately and seen only by the roles the visibility rule names (BR-2, BR-12)."
+          },
+          {
+            "request": {
+              "text": "classification aur chhutti ka kota set karo",
+              "lang": "ur-Latn",
+              "gloss": "set the classification and leave allowance"
+            },
+            "goesTo": "staff.classification.set and staff.leaveallowance.set — UC-12-01-PC-2 and PC-3",
+            "note": "Both block submission (E6, E7) and each is a decision payroll and leave management read."
+          },
+          {
+            "request": {
+              "text": "purana record system mein daalna hai",
+              "lang": "ur-Latn",
+              "gloss": "we need to load an old record into the system"
+            },
+            "goesTo": "Not offered.",
+            "note": "Migration at go-live is a bulk load by the School Admin (A1), not a plan."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.record.open",
+            "inputs": {
+              "letter_id": "$request.letter_phrase",
+              "joining_date": "$request.joining_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "The record opens from the accepted letter. The role, agreed salary and pay basis, start date, notice period and any probation carry across rather than being typed again (BR-2) — retyping is where a figure quietly changes between what was agreed and what is paid."
+          },
+          {
+            "step": 2,
+            "operation": "staff.record.details.set",
+            "inputs": {
+              "staff_id": "$step1.staff_id",
+              "details": "$request.details",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "The personal details the employee gives on the day. The photograph is taken at joining and attached on the screen — a file does not travel in a plan."
+          }
+        ],
+        "onFailure": "Stop and report. Where step 2 fails the record exists in Draft carrying the letter's terms, and the details are set again rather than the record opened twice.",
+        "atomicity": "Not atomic across the two steps. Step 1 creates the record from the letter and step 2 fills in the person's own details. Nothing reaches the staff roster and payroll pays nobody until the record is approved (BR-8, BR-10)."
+      },
+      "operations": [
+        {
+          "name": "staff.record.open",
+          "method": "POST",
+          "path": "/api/v1/staff",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "letter_id, since one accepted letter produces one record",
+          "purpose": "Open a staff record from an accepted appointment letter on the joining date.",
+          "parameters": [
+            {
+              "name": "letter_id",
+              "source": "resolved",
+              "sourceRef": "$request.letter_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "appointment_letter",
+                "fromPhrase": "$request.letter_phrase",
+                "onNoMatch": "Refuse. No accepted appointment letter matches. A record cannot be created without one (BR-1).",
+                "onAmbiguous": "Ask, naming the accepted letters with their candidate, role and start date."
+              },
+              "notes": "The accepted appointment letter the record is created from (BR-1, E1). Only an approved candidate has one (UC-12-11 BR-12)."
+            },
+            {
+              "name": "joining_date",
+              "source": "request",
+              "sourceRef": "$request.joining_date",
+              "required": true,
+              "type": "date",
+              "notes": "The date the person actually attended (BR-1, E2). Not the start date on the letter — somebody who never arrived must not reach the payroll."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The record as opened, with the letter's terms carried.",
+            "fields": [
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "role",
+                "type": "string",
+                "description": "Carried from the letter, not typed (BR-2)."
+              },
+              {
+                "name": "start_date",
+                "type": "date",
+                "description": "Carried from the letter."
+              },
+              {
+                "name": "notice_period",
+                "type": "string",
+                "description": "Carried from the letter. Read at resignation and at termination."
+              },
+              {
+                "name": "probation_period",
+                "type": "string",
+                "description": "Carried where one applies."
+              },
+              {
+                "name": "contract_end_date",
+                "type": "date",
+                "description": "Where the contract is fixed-term. Required for one, and the record is flagged as the date approaches (BR-11)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft."
+              },
+              {
+                "name": "salary_visible",
+                "type": "boolean",
+                "description": "False to most actors. The agreed salary carries from the letter but is not an ordinary field here (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_ACCEPTED_LETTER",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "No accepted appointment letter exists for the person.",
+              "written": "Nothing.",
+              "notWritten": "No record created.",
+              "note": "There is no route that types a person straight into employment (BR-1)."
+            },
+            {
+              "code": "NOT_ATTENDED",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The candidate has not attended on the joining date.",
+              "written": "Nothing.",
+              "notWritten": "No record completed.",
+              "note": "So nobody who never arrived reaches the payroll (BR-1)."
+            },
+            {
+              "code": "FIXED_TERM_NO_END_DATE",
+              "mapsTo": "E9",
+              "httpStatus": 400,
+              "meaning": "A fixed-term contract carries no end date.",
+              "written": "Nothing.",
+              "notWritten": "No record created.",
+              "note": "A contract that lapsed unnoticed leaves somebody working without one (BR-11)."
+            }
+          ]
+        },
+        {
+          "name": "staff.record.details.set",
+          "method": "PATCH",
+          "path": "/api/v1/staff/{staff_id}/details",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "staff_id, since a record carries one set of details",
+          "purpose": "Record the employee's own personal details on the draft record.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "step",
+              "sourceRef": "$step1.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The record opened in step 1."
+            },
+            {
+              "name": "details",
+              "source": "request",
+              "sourceRef": "$request.details",
+              "required": true,
+              "type": "object",
+              "notes": "Name, guardian name, gender, date of birth, identity number, contact number, emergency phone number, email, designation, working hours, salary account and statutory identifiers. Every one is what the employee gave — a planner that filled in a designation from the letter's role has written their post for them. The photograph is attached on the screen."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The details as recorded.",
+            "fields": [
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "fields_recorded",
+                "type": "string[]",
+                "description": "What was set."
+              },
+              {
+                "name": "fields_missing",
+                "type": "string[]",
+                "description": "Required fields still empty. The record cannot be submitted while any remains."
+              },
+              {
+                "name": "photograph_held",
+                "type": "boolean",
+                "description": "False until it is attached on the screen. It is used for the ID card."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "IDENTITY_OR_EMAIL_EXISTS",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The identity number or the email already exists on another record.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved.",
+              "note": "Two records sharing either is the commonest way a duplicate is created (BR-14). The message names the existing record."
+            },
+            {
+              "code": "EMERGENCY_IS_OWN_NUMBER",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The emergency number is the employee's own.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved.",
+              "note": "A number that reaches only the person who has collapsed is not an emergency contact (BR-5)."
+            },
+            {
+              "code": "CARRIED_TERM_EDITED",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A term carried from the letter was supplied here.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved.",
+              "note": "There is no such field. The terms are carried, not entered (BR-2)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply a term that carries from the letter. The role, salary, pay basis, start date, notice period and probation come across untouched (BR-2) — retyping any of them is exactly where the figure paid stops being the figure agreed.",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never open a record without an accepted letter. E1 is BR-1 working: employment starts from a letter somebody accepted, not from a name typed into a form.",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never use the letter's start date as the joining date. The joining date is the day the person actually attended (BR-1, E2), and using the planned one puts somebody who never arrived onto the payroll.",
+          "derivedFrom": [
+            "BR-1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never invent a personal detail. An emergency number, an identity number or a salary account guessed from anywhere is a fact about a person that nobody gave.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-14"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the fields still missing. The record cannot be submitted incomplete, and the employee is standing there on their first day.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never state or repeat the salary. It is not an ordinary field on this record and is visible only to the roles the visibility rule names (BR-12).",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A staff record is deactivated and never deleted, because payroll history, ledger entries and audit trails reference it (BR-10, E12). A record opened in error is returned unapproved and left inactive."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "jo ustad aaj join hui hain un ka record khol do",
+            "lang": "ur-Latn",
+            "gloss": "open the record for the teacher who joined today"
+          },
+          "context": "School Admin, Johar Town branch. The accepted letter and the personal details were given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.open",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "joining_date": "2026-09-09",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The joining date is today, because that is when she attended (PR-3)."
+            },
+            {
+              "step": 2,
+              "operation": "staff.record.details.set",
+              "inputs": {
+                "staff_id": "$step1.staff_id",
+                "details": "as she gave them",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No carried term appears in the details (PR-1)."
+            }
+          ],
+          "outcome": "The record stands in Draft with the letter's terms carried. Report the fields still missing (PR-5) and that the photograph is attached on the screen. The salary is not repeated back (PR-6)."
+        },
+        {
+          "request": {
+            "text": "naye chowkidar ka record bana do, kal se aa raha hai",
+            "lang": "ur-Latn",
+            "gloss": "create the record for the new watchman, he starts tomorrow"
+          },
+          "context": "School Admin, Johar Town branch, with no appointment letter in the system.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.open",
+              "inputs": {
+                "letter_id": "$request.letter_phrase — absent",
+                "joining_date": "$request.joining_date",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. There is no accepted letter to open from (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is created. Report that employment starts from an accepted appointment letter — the recruitment path produces one, and a record typed straight in would put somebody on the payroll on nobody's authority."
+        },
+        {
+          "request": {
+            "text": "record khol do aur tankhwah 60,000 likh do",
+            "lang": "ur-Latn",
+            "gloss": "open the record and put the salary at 60,000"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.open",
+              "inputs": {
+                "letter_id": "$request.letter_phrase",
+                "joining_date": "$request.joining_date",
+                "branch_id": "$session.branch_id"
+              }
+            },
+            {
+              "step": 2,
+              "operation": "staff.record.details.set",
+              "inputs": {
+                "staff_id": "$step1.staff_id",
+                "details": "the personal details, with no salary",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The salary is left out entirely. It carries from the letter and there is no field for it here (PR-1, PR-6)."
+            }
+          ],
+          "outcome": "The record opens with the agreed figure carried from the letter. Report that the salary is not typed here — if 60,000 differs from what was agreed, that is a change to the salary with its own approval, not a field on this form."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-01-PC-2",
+      "intent": {
+        "name": "staff.classification.set",
+        "summary": "Set the employment category the record carries. One step, and leave entitlement and pay both read it.",
+        "routesHere": [
+          "set her classification to teaching, permanent",
+          {
+            "text": "in ki classification teaching permanent kar do",
+            "lang": "ur-Latn",
+            "gloss": "set their classification to teaching, permanent"
+          },
+          {
+            "text": "ye non-teaching contract par hain",
+            "lang": "ur-Latn",
+            "gloss": "they are non-teaching, on contract"
+          },
+          {
+            "text": "probation par rakha hai, wahi laga do",
+            "lang": "ur-Latn",
+            "gloss": "they are on probation, set that"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti ka mahana kota set karo",
+              "lang": "ur-Latn",
+              "gloss": "set the monthly leave allowance"
+            },
+            "goesTo": "staff.leaveallowance.set — UC-12-01-PC-3",
+            "note": "The classification is the category; the allowance is a number on the record. Both block submission and both are read by payroll (BR-3, BR-4)."
+          },
+          {
+            "request": {
+              "text": "designation badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the designation"
+            },
+            "goesTo": "staff.record.change.submit — UC-12-01-PC-8",
+            "note": "The designation is an ordinary detail. The classification is a term the whole system reads."
+          },
+          {
+            "request": {
+              "text": "contract permanent kar do",
+              "lang": "ur-Latn",
+              "gloss": "make the contract permanent"
+            },
+            "goesTo": "staff.record.change.submit — UC-12-01-PC-8",
+            "note": "On an approved record, changing the classification is a change that goes through approval with a reason."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.classification.set",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "classification": "$request.classification",
+              "contract_end_date": "$request.contract_end_date",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It is not decoration: leave management reads it for leave entitlement and payroll reads it for pay (BR-3)."
+          }
+        ],
+        "onFailure": "Stop and report. A fixed-term classification with no end date arrives as an error.",
+        "atomicity": "One write: the classification and the audit entry together or not at all. Nothing is submitted or approved by it, and the record still cannot go for approval until a leave allowance is set too (E6, E7)."
+      },
+      "operations": [
+        {
+          "name": "staff.classification.set",
+          "method": "PUT",
+          "path": "/api/v1/staff/{staff_id}/classification",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "staff_id, since a record carries one classification",
+          "purpose": "Set the employment category on the staff record.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation and joining date."
+              },
+              "notes": "The employee whose record this is."
+            },
+            {
+              "name": "classification",
+              "source": "request",
+              "sourceRef": "$request.classification",
+              "required": true,
+              "type": "enum: Teaching, permanent | Teaching, contract | Teaching, probation | Teaching, part-time | Non-teaching, permanent | Non-teaching, contract | Non-teaching, probation | Non-teaching, part-time",
+              "notes": "The employment category (BR-3). Leave entitlement and pay both read it, so every value means something to another module — it is never inferred from a designation or a role."
+            },
+            {
+              "name": "contract_end_date",
+              "source": "request",
+              "sourceRef": "$request.contract_end_date",
+              "required": false,
+              "type": "date",
+              "notes": "Required where the contract is fixed-term (BR-11, E9). The record is flagged as the date approaches, because a contract that lapsed unnoticed leaves somebody working without one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The classification as set.",
+            "fields": [
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "classification",
+                "type": "string",
+                "description": "As set."
+              },
+              {
+                "name": "contract_end_date",
+                "type": "date",
+                "description": "Where the contract is fixed-term."
+              },
+              {
+                "name": "leave_allowance_set",
+                "type": "boolean",
+                "description": "Whether a monthly paid leave allowance is on the record yet. The record cannot be submitted without one (E7)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "The record's state."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "FIXED_TERM_NO_END_DATE",
+              "mapsTo": "E9",
+              "httpStatus": 400,
+              "meaning": "A fixed-term classification was set with no end date.",
+              "written": "Nothing.",
+              "notWritten": "Nothing saved.",
+              "note": "A contract that lapsed unnoticed leaves somebody working without one (BR-11)."
+            },
+            {
+              "code": "RECORD_APPROVED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The record is approved.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "A change to an approved record goes through approval with a reason (BR-8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never infer the classification from the designation or the role. A teacher may be permanent, on contract, on probation or part-time, and the four are paid and given leave differently (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never leave a fixed-term contract without an end date, and never invent one. E9 is BR-11 working, and a date a planner chose is when somebody's employment will appear to end.",
+          "derivedFrom": [
+            "BR-11",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report whether the leave allowance is set. Both figures block submission, and a record held up on the employee's first day for the second of them is avoidable (E6, E7).",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "On a draft the classification is set again. On an approved record it changes only through a submitted change carrying a reason (BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "in ki classification teaching permanent kar do",
+            "lang": "ur-Latn",
+            "gloss": "set their classification to teaching, permanent"
+          },
+          "context": "School Admin, Johar Town branch, on a draft record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.classification.set",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "classification": "Teaching, permanent",
+                "contract_end_date": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No end date, because a permanent post has none (PR-2)."
+            }
+          ],
+          "outcome": "Set. Report whether the leave allowance is on the record yet (PR-3) — the record cannot go for approval without it."
+        },
+        {
+          "request": {
+            "text": "ye ustad hain, classification laga do",
+            "lang": "ur-Latn",
+            "gloss": "they are a teacher, set the classification"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.classification.set",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "classification": "$request.classification — \"teacher\" alone does not name one of the eight",
+                "contract_end_date": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is set. Ask which of the four teaching categories — permanent, contract, probation or part-time. Leave entitlement and pay both read it, so the difference is money and days off rather than a label."
+        },
+        {
+          "request": {
+            "text": "do saal ke contract par rakha hai",
+            "lang": "ur-Latn",
+            "gloss": "they are on a two-year contract"
+          },
+          "context": "School Admin, Johar Town branch, with no end date given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.classification.set",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "classification": "Teaching, contract",
+                "contract_end_date": "$request.contract_end_date — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The end date is not calculated from \"two years\" (PR-2). The API would return FIXED_TERM_NO_END_DATE (E9)."
+            }
+          ],
+          "outcome": "Ask for the contract's end date. Two years from the joining date is a guess about a document somebody signed, and the record is flagged as that date approaches — a wrong date means the flag comes at the wrong time."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-01-PC-3",
+      "intent": {
+        "name": "staff.leaveallowance.set",
+        "summary": "Record how many paid leaves the employee gets each month. One step, and both payroll and leave management work from this one figure.",
+        "routesHere": [
+          "set her monthly paid leave allowance to two",
+          {
+            "text": "mahana do paid chhuttiyan set kar do",
+            "lang": "ur-Latn",
+            "gloss": "set two paid leaves a month"
+          },
+          {
+            "text": "in ka chhutti ka kota kya rakhein",
+            "lang": "ur-Latn",
+            "gloss": "what should their leave allowance be"
+          },
+          {
+            "text": "paid leave allowance record par daal do",
+            "lang": "ur-Latn",
+            "gloss": "put the paid leave allowance on the record"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "chhutti ki darkhwast do",
+              "lang": "ur-Latn",
+              "gloss": "request leave"
+            },
+            "goesTo": "staff.leave.request — UC-12-07",
+            "note": "The allowance is the figure a request is checked against (UC-12-07 BR-2)."
+          },
+          {
+            "request": {
+              "text": "is mahine ka kota barha do",
+              "lang": "ur-Latn",
+              "gloss": "increase this month's allowance"
+            },
+            "goesTo": "staff.record.change.submit — UC-12-01-PC-8",
+            "note": "The allowance sits on the record. Changing it on an approved record goes through approval with a reason."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.leaveallowance.set",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "monthly_paid_leaves": "$request.monthly_paid_leaves",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Leave beyond it is unpaid, and both payroll and leave management work from this one figure (BR-4)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the allowance and the audit entry together or not at all. From here a leave request is checked against it before the employee submits (UC-12-07 BR-2), and payroll deducts every day beyond it at the daily rate (UC-12-03 BR-4)."
+      },
+      "operations": [
+        {
+          "name": "staff.leaveallowance.set",
+          "method": "PUT",
+          "path": "/api/v1/staff/{staff_id}/leave-allowance",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "staff_id, since a record carries one allowance",
+          "purpose": "Set the monthly paid leave allowance on the staff record.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation and joining date."
+              },
+              "notes": "The employee whose record this is."
+            },
+            {
+              "name": "monthly_paid_leaves",
+              "source": "request",
+              "sourceRef": "$request.monthly_paid_leaves",
+              "required": true,
+              "type": "number",
+              "notes": "How many paid leaves the employee gets each month (BR-4). The figure the school agreed — an employee allowed two who takes three loses a day's salary, so a number a planner supplied is money out of somebody's pay."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The allowance as set.",
+            "fields": [
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "monthly_paid_leaves",
+                "type": "number",
+                "description": "As set."
+              },
+              {
+                "name": "classification",
+                "type": "string",
+                "description": "The employment category, which is what an allowance is usually decided against (BR-3)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "The record's state."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RECORD_APPROVED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The record is approved.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "A change to an approved record goes through approval with a reason (BR-8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the allowance. Payroll deducts every day beyond it at the daily rate (UC-12-03 BR-4), so a figure a planner chose comes out of somebody's salary the first month they are ill.",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never copy the allowance from another employee or from the classification. It is per record, and nothing in these documents says a category implies a number.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the classification alongside. It is what an allowance is usually decided against, and seeing them together is how a wrong pairing is caught.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "On a draft the allowance is set again. On an approved record it changes only through a submitted change carrying a reason (BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "in ka mahana kota do paid chhuttiyan rakh do",
+            "lang": "ur-Latn",
+            "gloss": "set their monthly allowance to two paid leaves"
+          },
+          "context": "School Admin, Johar Town branch, on a draft record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leaveallowance.set",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "monthly_paid_leaves": "2",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The figure is the School Admin's (PR-1)."
+            }
+          ],
+          "outcome": "Set. Report the classification beside it (PR-3), and that leave beyond two days in a month is deducted at the daily rate."
+        },
+        {
+          "request": {
+            "text": "baqi ustadon jitna kota laga do",
+            "lang": "ur-Latn",
+            "gloss": "give them the same allowance as the other teachers"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leaveallowance.set",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "monthly_paid_leaves": "$request.monthly_paid_leaves — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The allowance is per record and is not copied from anybody (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is set. Ask for the figure — nothing in the documents says a classification implies an allowance, so \"the same as the others\" is a number somebody has to state."
+        },
+        {
+          "request": {
+            "text": "chhutti ka kota abhi chhorh do, baad mein daal denge",
+            "lang": "ur-Latn",
+            "gloss": "leave the allowance for now, we will put it in later"
+          },
+          "context": "School Admin, Johar Town branch, on a draft record.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.leaveallowance.set",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "monthly_paid_leaves": "$request.monthly_paid_leaves — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted."
+            }
+          ],
+          "outcome": "Nothing is set. Report that the record cannot go for approval without it (E7), and that until it is there a leave request cannot be assessed at all — the employee would be unable to take leave on their own record."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-01-PC-4",
+      "intent": {
+        "name": "staff.document.record",
+        "summary": "Record a document the employee handed over on joining, with the date and who verified it. One step.",
+        "routesHere": [
+          "record that we received her degree, verified by the Principal",
+          {
+            "text": "degree wasool hui, record kar do",
+            "lang": "ur-Latn",
+            "gloss": "the degree has been received, record it"
+          },
+          {
+            "text": "shanakhti dastavez mil gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "the identity document has been received"
+          },
+          {
+            "text": "tajurbe ka certificate darj kar do, tasdeeq kis ne ki",
+            "lang": "ur-Latn",
+            "gloss": "record the experience certificate — who verified it"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "dastavez scan karke rakh lo",
+              "lang": "ur-Latn",
+              "gloss": "keep a scan of the document"
+            },
+            "goesTo": "staff.document.record, then attach the scan on the screen",
+            "note": "Whether a scan is held is a decision the school takes per document type (BR-7), and a file does not travel in a plan."
+          },
+          {
+            "request": {
+              "text": "dastavez ka record hata do",
+              "lang": "ur-Latn",
+              "gloss": "remove the document record"
+            },
+            "goesTo": "Not offered.",
+            "note": "The documents recorded against a record are evidence of what was seen on the day."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.document.record",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "document_type": "$request.document_type",
+              "received_on": "$request.received_on",
+              "verified_by": "$request.verified_by",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Each document is recorded as received with the date and the name of the person who verified it — a document received with no verifier is not evidence (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. A document recorded with no verifier arrives as an error.",
+        "atomicity": "One write: the document row and the audit entry together or not at all. A scan is attached separately where the school holds scans of that type, and an identity document held as a scan carries the access restriction and retention rule that goes with it (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "staff.document.record",
+          "method": "POST",
+          "path": "/api/v1/staff/{staff_id}/documents",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "staff_id + document_type, since a document type is recorded once per employee",
+          "purpose": "Record one document received from the employee, with its date and verifier.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation and joining date."
+              },
+              "notes": "The employee whose record this is."
+            },
+            {
+              "name": "document_type",
+              "source": "request",
+              "sourceRef": "$request.document_type",
+              "required": true,
+              "type": "enum: Identity document | Degree | Experience certificate | Reference",
+              "notes": "Which document was handed over (BR-6)."
+            },
+            {
+              "name": "received_on",
+              "source": "request",
+              "sourceRef": "$request.received_on",
+              "required": true,
+              "type": "date",
+              "notes": "The day it was handed over."
+            },
+            {
+              "name": "verified_by",
+              "source": "request",
+              "sourceRef": "$request.verified_by",
+              "required": true,
+              "type": "string",
+              "notes": "Who saw the original (BR-6, E8). A name, and never the acting user by default — the person who checked the document is a fact about what happened at the desk."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The document as recorded.",
+            "fields": [
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "document_type",
+                "type": "string",
+                "description": "As recorded."
+              },
+              {
+                "name": "received_on",
+                "type": "date",
+                "description": "As recorded."
+              },
+              {
+                "name": "verified_by",
+                "type": "string",
+                "description": "Who saw the original (BR-6)."
+              },
+              {
+                "name": "scan_held",
+                "type": "boolean",
+                "description": "False until a scan is attached. Whether one is held is a decision per document type (BR-7)."
+              },
+              {
+                "name": "documents_outstanding",
+                "type": "string[]",
+                "description": "Document types not yet recorded against this employee."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_VERIFIER",
+              "mapsTo": "E8",
+              "httpStatus": 400,
+              "meaning": "A document was recorded with no verifier.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "A document received with no verifier is not evidence (BR-6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never supply the verifier. It is the name of whoever saw the original (BR-6), and defaulting it to the acting user records that they checked a document they may never have seen.",
+          "derivedFrom": [
+            "BR-6",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never record a document as received on the employee's word. This row says the school has it.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the documents still outstanding. The list is what the desk works from on a joining day, and it is invisible from a single confirmation.",
+          "derivedFrom": [
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never promise a scan. Whether one is held is a decision per document type rather than a blanket rule (BR-7), and the scan itself is attached on the screen.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A document row is not withdrawn. It records what was received and verified on a given day."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "degree wasool ho gayi hai, Principal sahib ne tasdeeq ki hai",
+            "lang": "ur-Latn",
+            "gloss": "the degree has been received, the Principal verified it"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.document.record",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "document_type": "Degree",
+                "received_on": "2026-09-09",
+                "verified_by": "the Principal, as named",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The verifier is the name given, not the acting user (PR-1)."
+            }
+          ],
+          "outcome": "Recorded. Report which document types are still outstanding for this employee (PR-3)."
+        },
+        {
+          "request": {
+            "text": "sare dastavez mil gaye hain, darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "all the documents have been received, record them"
+          },
+          "context": "School Admin, Johar Town branch, with no verifier named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.document.record",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "document_type": "$request.document_type",
+                "received_on": "$request.received_on",
+                "verified_by": "$request.verified_by — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Each document is its own row and each needs its verifier (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is recorded. List the four document types and ask which were received, on what date, and who saw each original — a document with no verifier is not evidence, and \"all of them\" names nobody."
+        },
+        {
+          "request": {
+            "text": "kal le aayenge, abhi darj kar do",
+            "lang": "ur-Latn",
+            "gloss": "they will bring it tomorrow, record it now"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.document.record",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "document_type": "$request.document_type",
+                "received_on": "$request.received_on",
+                "verified_by": "$request.verified_by",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The row says the school holds the document and somebody verified it (PR-2)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that it is recorded when it arrives and somebody has seen the original — a row entered in advance says the school has a document it does not have."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-01-PC-5",
+      "intent": {
+        "name": "staff.record.approval.submit",
+        "summary": "Send a completed staff record for approval. One step, and it joins no roster until it is approved.",
+        "routesHere": [
+          "send this staff record for approval",
+          {
+            "text": "staff record manzoori ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the staff record for approval"
+          },
+          {
+            "text": "record mukammal hai, aage bhejo",
+            "lang": "ur-Latn",
+            "gloss": "the record is complete, send it on"
+          },
+          {
+            "text": "Principal ko manzoori ke liye bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send it to the Principal for approval"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "khud manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve it yourself"
+            },
+            "goesTo": "staff.record.approve — UC-12-01-PC-6",
+            "note": "Who approves is a configuration; by default it is the Principal, and a submitter approving their own is refused unless they are the configured approver (BR-8, E10)."
+          },
+          {
+            "request": {
+              "text": "payroll mein daal do",
+              "lang": "ur-Latn",
+              "gloss": "put them on the payroll"
+            },
+            "goesTo": "staff.record.approve — UC-12-01-PC-6",
+            "note": "The record joins the staff roster on approval, and payroll pays active records only (BR-10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.record.approval.submit",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The record is approved before it is saved to the staff roster (BR-8), so nothing is on the payroll yet."
+          }
+        ],
+        "onFailure": "Stop and report. A missing classification, a missing leave allowance and a document with no verifier all arrive as errors naming what is absent.",
+        "atomicity": "One write: the record moves to Awaiting approval, with the audit entry. Payroll pays active records only, so the employee is not paid until this is approved (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "staff.record.approval.submit",
+          "method": "POST",
+          "path": "/api/v1/staff/{staff_id}/submit",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "staff_id, since a record sits in one place at a time",
+          "purpose": "Send the staff record for approval.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation and joining date."
+              },
+              "notes": "The employee whose record this is."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The submission.",
+            "fields": [
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval."
+              },
+              {
+                "name": "approver_role",
+                "type": "string",
+                "description": "Who approves, from the approval configuration. By default the Principal (BR-8)."
+              },
+              {
+                "name": "documents_recorded",
+                "type": "string[]",
+                "description": "Document types recorded against the employee."
+              },
+              {
+                "name": "documents_outstanding",
+                "type": "string[]",
+                "description": "Types not yet recorded."
+              },
+              {
+                "name": "classification",
+                "type": "string",
+                "description": "The employment category (BR-3)."
+              },
+              {
+                "name": "monthly_paid_leaves",
+                "type": "number",
+                "description": "The allowance both payroll and leave management read (BR-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_CLASSIFICATION",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "No classification is set.",
+              "written": "Nothing.",
+              "notWritten": "Not submitted.",
+              "note": "Leave entitlement and pay both read it (BR-3)."
+            },
+            {
+              "code": "NO_LEAVE_ALLOWANCE",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "No leave allowance is entered.",
+              "written": "Nothing.",
+              "notWritten": "Not submitted.",
+              "note": "Paid and unpaid leave cannot be told apart without it (BR-4)."
+            },
+            {
+              "code": "REQUIRED_FIELD_MISSING",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "A required personal detail is missing.",
+              "written": "Nothing.",
+              "notWritten": "Not submitted.",
+              "note": "The message names the fields."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve as part of submitting. Who approves is a configuration and by default the Principal (BR-8) — and Accounts, who calculate pay from this record, cannot change it at all (BR-9).",
+          "derivedFrom": [
+            "BR-8",
+            "BR-9",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report what blocked the submission by name. An employee is standing at the desk on their first day, and \"the record is incomplete\" sends somebody through eight fields.",
+          "derivedFrom": [
+            "BR-8",
+            "E6",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the documents still outstanding rather than treating them as blocking. Only a document recorded with no verifier is refused (E8); a document not yet received is simply not there.",
+          "derivedFrom": [
+            "BR-6",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never describe submission as putting somebody on the payroll. The record joins the roster on approval, and payroll pays active records only (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A submission is not withdrawn. The approver returns it with a reason (A2), which sends it back as a draft."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is staff record ko manzoori ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send this staff record for approval"
+          },
+          "context": "School Admin, Johar Town branch, record complete.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.approval.submit",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "It sits with the configured approver. Report the classification, the allowance and any outstanding documents (PR-3), and that the employee is not on the payroll until it is approved (PR-4)."
+        },
+        {
+          "request": {
+            "text": "record bhej do, classification baad mein laga denge",
+            "lang": "ur-Latn",
+            "gloss": "send the record, we will set the classification later"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.approval.submit",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns NO_CLASSIFICATION (E6)."
+            }
+          ],
+          "outcome": "Not submitted. Report that the classification decides both leave entitlement and pay (PR-2) — a record approved without it would reach payroll with no basis for either."
+        },
+        {
+          "request": {
+            "text": "record bhej kar manzoor bhi kar do taake tankhwah lag jaye",
+            "lang": "ur-Latn",
+            "gloss": "send the record and approve it too so the salary starts"
+          },
+          "context": "School Admin, Johar Town branch, who is not the configured approver.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.approval.submit",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The submission only. The approval is not chained (PR-1)."
+            }
+          ],
+          "outcome": "Submitted. Report who the configured approver is — by default the Principal — and that the record joins the roster and becomes payable on their approval, not on the submission."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-01-PC-6",
+      "intent": {
+        "name": "staff.record.approve",
+        "summary": "Approve a staff record so it joins the roster and becomes payable. The configured approver only, one step.",
+        "routesHere": [
+          "approve this staff record",
+          {
+            "text": "staff record manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the staff record"
+          },
+          {
+            "text": "record theek hai, roster mein daal do",
+            "lang": "ur-Latn",
+            "gloss": "the record is right, put it on the roster"
+          },
+          {
+            "text": "manzoori de do taake tankhwah lag sake",
+            "lang": "ur-Latn",
+            "gloss": "approve it so the salary can start"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "manzoor nahi, wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "not approved, send it back"
+            },
+            "goesTo": "staff.record.return — UC-12-01-PC-7"
+          },
+          {
+            "request": {
+              "text": "tankhwah ka figure badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the salary figure"
+            },
+            "goesTo": "Not offered here.",
+            "note": "The salary is set separately and carries from the letter (BR-2, BR-12). Approving the record does not set it."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.record.approve",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The record joins the staff roster and payroll pays it from here (BR-8, BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. An approval by the submitter who is not the configured approver is refused by the API.",
+        "atomicity": "One write: the approval and the audit entry together or not at all. The record becomes Active, joins the staff roster, and payroll pays active records only — so this is the act that makes somebody payable (BR-8, BR-10). Accounts read it from here and cannot change it: the role that calculates pay must not be the role that sets what it is calculated from (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "staff.record.approve",
+          "method": "POST",
+          "path": "/api/v1/staff/{staff_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "staff_id, since a record is approved once",
+          "purpose": "Approve the staff record onto the roster.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation and joining date."
+              },
+              "notes": "The employee whose record this is."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval.",
+            "fields": [
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Active. On the roster and payable (BR-10)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The configured approver."
+              },
+              {
+                "name": "classification",
+                "type": "string",
+                "description": "The category leave and pay both read (BR-3)."
+              },
+              {
+                "name": "monthly_paid_leaves",
+                "type": "number",
+                "description": "The allowance both payroll and leave management work from (BR-4)."
+              },
+              {
+                "name": "contract_end_date",
+                "type": "date",
+                "description": "Where fixed-term. The record is flagged as it approaches (BR-11)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_CONFIGURED_APPROVER",
+              "mapsTo": "E10",
+              "httpStatus": 403,
+              "meaning": "The actor submitted the record and is not the configured approver.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Who approves is a configuration; by default the Principal (BR-8)."
+            },
+            {
+              "code": "ACCOUNTS_CANNOT_CHANGE",
+              "mapsTo": "E11",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to act on the record.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "The role that calculates pay must not be the role that sets what it is calculated from (BR-9)."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The record is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a record the actor submitted unless they are the configured approver. E10 is BR-8 working, and this approval is what makes somebody payable.",
+          "derivedFrom": [
+            "BR-8",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never plan an approval on behalf of Accounts. They read the record for payroll and cannot change it (BR-9) — the separation exists so the figure paid is not set by whoever pays it.",
+          "derivedFrom": [
+            "BR-9",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say plainly what approval turns on. The record joins the roster and payroll pays active records only (BR-10), so this is the moment a salary starts.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the contract end date where the post is fixed-term. The record is flagged as it approaches (BR-11), and an approver should see when the contract they are approving runs out.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. A record found wrong afterwards is changed through a submitted change carrying a reason (BR-8), and a record is deactivated rather than deleted (BR-10)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye staff record manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this staff record"
+          },
+          "context": "Principal, Johar Town branch, the configured approver.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.approve",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved and Active. Report that the employee is now on the roster and payable (PR-3), and the contract end date where the post is fixed-term (PR-4)."
+        },
+        {
+          "request": {
+            "text": "maine record bheja tha, ab khud hi manzoor kar deta hoon",
+            "lang": "ur-Latn",
+            "gloss": "I submitted the record, I will approve it myself"
+          },
+          "context": "School Admin, Johar Town branch, who is not the configured approver.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.approve",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns NOT_CONFIGURED_APPROVER (E10)."
+            }
+          ],
+          "outcome": "Not approved. Report who the configured approver is — approving puts somebody on the payroll, and the submitter doing it themselves removes the only check on that."
+        },
+        {
+          "request": {
+            "text": "record manzoor kar ke tankhwah bhi set kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the record and set the salary too"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.approve",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only. The salary is not touched here (PR-1)."
+            }
+          ],
+          "outcome": "Approved. Report that the agreed figure carries from the appointment letter and is not an ordinary field on this record — changing what somebody is paid is a separate act with its own approval, and it is visible only to the roles the visibility rule names."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-01-PC-7",
+      "intent": {
+        "name": "staff.record.return",
+        "summary": "Return a staff record with the reason it was not approved. One step, and nobody joins the roster.",
+        "routesHere": [
+          "return this record — the emergency contact is the employee's own number",
+          {
+            "text": "record wapas bhej do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "return the record with the reason"
+          },
+          {
+            "text": "manzoor nahi kar sakta, theek karwa lo",
+            "lang": "ur-Latn",
+            "gloss": "I cannot approve it, have it corrected"
+          },
+          {
+            "text": "maloomat adhoori hain, wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "the details are incomplete, send it back"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "record manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the record"
+            },
+            "goesTo": "staff.record.approve — UC-12-01-PC-6"
+          },
+          {
+            "request": {
+              "text": "khud theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix it yourself"
+            },
+            "goesTo": "staff.record.details.set — UC-12-01-PC-1",
+            "note": "Returning asks whoever completed the record to correct it. The details are the employee's own."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.record.return",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing joins the roster and payroll pays nobody (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. The record goes back as a draft. The employee has already joined and is working — a returned record is somebody unpaid until it is corrected, which is worth saying rather than leaving to be discovered at the month's end."
+      },
+      "operations": [
+        {
+          "name": "staff.record.return",
+          "method": "POST",
+          "path": "/api/v1/staff/{staff_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "staff_id, since a record sits in one place at a time",
+          "purpose": "Return the staff record with the reason.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation and joining date."
+              },
+              "notes": "The employee whose record this is."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. What has to be corrected. Whoever completed the record works from it."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It sits as a draft again."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The configured approver."
+              },
+              {
+                "name": "joining_date",
+                "type": "date",
+                "description": "The employee has already joined and is working."
+              },
+              {
+                "name": "payable",
+                "type": "boolean",
+                "description": "False. Payroll pays active records only (BR-10)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E10",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The record is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. Whoever completed the record corrects it from this, and a reason a planner wrote sends them through a form on a guess.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report that the employee is unpaid meanwhile. They joined and are working, and payroll pays active records only (BR-10) — a record returned and forgotten is somebody who does not get paid.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never plan the correction alongside the return. The details are the employee's own, and a planner filling them in is inventing facts about a person.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-15"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. The record is corrected and resubmitted, which is the route back."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "record wapas bhej do — emergency number wahi hai jo mulazim ka apna hai",
+            "lang": "ur-Latn",
+            "gloss": "return the record — the emergency number is the employee's own"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.return",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "reason": "The emergency contact is the employee's own number. Take a different one.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the approver's own words (PR-1)."
+            }
+          ],
+          "outcome": "Returned as a draft. Report that the employee has joined and is working but is not yet payable (PR-2) — the record needs correcting before the month's payroll runs."
+        },
+        {
+          "request": {
+            "text": "record wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return the record"
+          },
+          "context": "Principal, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.return",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "reason": "$request.reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what has to be corrected — the record is holding up somebody's pay, and a return with no reason leaves the School Admin guessing which field."
+        },
+        {
+          "request": {
+            "text": "wapas bhej do aur maloomat bhi theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "return it and correct the details as well"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.return",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The return only. The corrections are not chained (PR-3)."
+            }
+          ],
+          "outcome": "Returned with the reason. Report that the details are the employee's own to give — an identity number or an emergency contact corrected by anybody else is a fact about a person that nobody checked."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-01-PC-8",
+      "intent": {
+        "name": "staff.record.change.submit",
+        "summary": "Submit a change to an approved staff record, with the reason. One step, and it goes through approval unless the approver is making it.",
+        "routesHere": [
+          "change her designation — she has moved to senior teacher",
+          {
+            "text": "in ki designation badal do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "change their designation, with the reason"
+          },
+          {
+            "text": "record mein rabta number theek karna hai",
+            "lang": "ur-Latn",
+            "gloss": "the contact number on the record needs correcting"
+          },
+          {
+            "text": "classification permanent kar do",
+            "lang": "ur-Latn",
+            "gloss": "change the classification to permanent"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "mulazim khud theek kar le",
+              "lang": "ur-Latn",
+              "gloss": "let the employee correct it themselves"
+            },
+            "goesTo": "staff.record.correction.request — UC-12-01-PC-9",
+            "note": "An employee sees their own record and may request a correction, but cannot change it themselves (BR-15)."
+          },
+          {
+            "request": {
+              "text": "tankhwah badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the salary"
+            },
+            "goesTo": "Not offered here.",
+            "note": "The salary is not an ordinary field on this record. It is set separately and governed by its own visibility rule (BR-12)."
+          },
+          {
+            "request": {
+              "text": "record hata do",
+              "lang": "ur-Latn",
+              "gloss": "remove the record"
+            },
+            "goesTo": "Not offered.",
+            "note": "A staff record is deactivated and never deleted, because payroll history, ledger entries and audit trails reference it (BR-10, E12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.record.change.submit",
+            "inputs": {
+              "staff_id": "$request.staff_phrase",
+              "changes": "$request.changes",
+              "reason": "$request.reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. A change made by the approving role itself needs no second approval; any other goes to the configured approver (BR-8, A3)."
+          }
+        ],
+        "onFailure": "Stop and report. A duplicate identity number or email, an emergency number matching the employee's own, and an edit to a carried term all arrive as errors.",
+        "atomicity": "One write: the change, its previous value, the reason and who made it together or not at all. Every change is one row with the previous value kept (BR-8). Where the approving role made it, it takes effect at once; otherwise it waits for approval, and the record reads as it did until then."
+      },
+      "operations": [
+        {
+          "name": "staff.record.change.submit",
+          "method": "POST",
+          "path": "/api/v1/staff/{staff_id}/changes",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff_id + changes, since a repeat submits the same change",
+          "purpose": "Submit a change to an approved staff record, with the reason.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "resolved",
+              "sourceRef": "$request.staff_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.staff_phrase",
+                "onNoMatch": "Refuse. No staff record matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with their designation and joining date."
+              },
+              "notes": "The employee whose record this is."
+            },
+            {
+              "name": "changes",
+              "source": "request",
+              "sourceRef": "$request.changes",
+              "required": true,
+              "type": "object",
+              "notes": "The fields to change and their new values. Only what the actor named — a record is read by payroll, leave and the timetable, and a field tidied along the way changes what another module does."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required for a change to an approved record. It sits beside the previous value on the change row."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The change as submitted.",
+            "fields": [
+              {
+                "name": "staff_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "change_id",
+                "type": "string",
+                "description": "The change row, with the previous value kept (BR-8)."
+              },
+              {
+                "name": "changes",
+                "type": "object",
+                "description": "Each field, from what to what."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Change pending, or applied where the approving role made it (A3)."
+              },
+              {
+                "name": "approver_role",
+                "type": "string",
+                "description": "Who approves, from the approval configuration (BR-8)."
+              },
+              {
+                "name": "second_approval_needed",
+                "type": "boolean",
+                "description": "False where the change was made by the approving role itself (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E10",
+              "httpStatus": 400,
+              "meaning": "A change to an approved record was made with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            },
+            {
+              "code": "IDENTITY_OR_EMAIL_EXISTS",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The new identity number or email is already on another record.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Two records sharing either is the commonest way a duplicate is created (BR-14)."
+            },
+            {
+              "code": "EMERGENCY_IS_OWN_NUMBER",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The new emergency number is the employee's own.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            },
+            {
+              "code": "CARRIED_TERM_EDITED",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A term carried from the appointment letter was changed.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "There is no such field. The terms are carried, not entered (BR-2)."
+            },
+            {
+              "code": "ACCOUNTS_CANNOT_CHANGE",
+              "mapsTo": "E11",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to change the record.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "The role that calculates pay must not be the role that sets what it is calculated from (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. It sits beside the previous value for as long as the record exists, and it is what explains a changed record to whoever reads it later.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Change only the fields the actor named. Payroll, leave management and the timetable all read this record, and a field tidied in passing changes what another module does about a person.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4",
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never change a term carried from the appointment letter. E3 is BR-2 working — those figures came from a document somebody signed.",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never plan a salary change here. It is not an ordinary field on this record and is governed by its own visibility rule (BR-12).",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report whether it takes effect now or waits. A change by the approving role needs no second approval; any other does, and the record reads as it did until then (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A change is not undone. A further change is another row, each with its own previous value and reason (BR-8)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "in ki designation senior teacher kar do — promotion ho gaya hai",
+            "lang": "ur-Latn",
+            "gloss": "change their designation to senior teacher — they have been promoted"
+          },
+          "context": "Principal, Johar Town branch, the configured approver.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.change.submit",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "changes": "designation → Senior Teacher",
+                "reason": "Promoted to senior teacher with effect from this month.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the designation is in the change (PR-2). The reason is the Principal's own (PR-1)."
+            }
+          ],
+          "outcome": "Applied at once, since the approving role made it (PR-5). The previous designation stays on the change row. If the promotion carries a new salary, that is a separate act with its own approval (PR-4)."
+        },
+        {
+          "request": {
+            "text": "in ka rabta number theek kar do aur classification bhi permanent kar do",
+            "lang": "ur-Latn",
+            "gloss": "correct their contact number and make the classification permanent"
+          },
+          "context": "School Admin, Johar Town branch, not the approver.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.change.submit",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "changes": "contact_number → as given; classification → Teaching, permanent",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Both fields were named by the actor, so both are in the change (PR-2)."
+            }
+          ],
+          "outcome": "Submitted and pending. Report that it waits for the configured approver and the record reads as it did until then (PR-5) — the classification change affects leave entitlement and pay, so nothing moves for payroll yet."
+        },
+        {
+          "request": {
+            "text": "letter wali tankhwah 55,000 se 60,000 kar do",
+            "lang": "ur-Latn",
+            "gloss": "change the letter's salary from 55,000 to 60,000"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.change.submit",
+              "inputs": {
+                "staff_id": "$request.staff_phrase",
+                "changes": "$request.changes",
+                "reason": "$request.reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The salary is a carried term and not a field here (PR-3, PR-4)."
+            }
+          ],
+          "outcome": "Nothing is written. Report that what somebody is paid is set separately, approved before it takes effect, and every previous figure is kept — changing it on this form would put a new number beside terms nobody re-agreed."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-12-01-PC-9",
+      "intent": {
+        "name": "staff.record.correction.request",
+        "summary": "Ask for a correction to your own record. One step, and it changes nothing by itself.",
+        "routesHere": [
+          "my date of birth is wrong on my record",
+          {
+            "text": "mere record mein tareekh paidaish ghalat hai",
+            "lang": "ur-Latn",
+            "gloss": "my date of birth is wrong on my record"
+          },
+          {
+            "text": "apne record mein tasheeh ki darkhwast deni hai",
+            "lang": "ur-Latn",
+            "gloss": "I want to request a correction to my record"
+          },
+          {
+            "text": "mera rabta number badal gaya hai, theek karwa dein",
+            "lang": "ur-Latn",
+            "gloss": "my contact number has changed, please have it corrected"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "khud theek kar lo",
+              "lang": "ur-Latn",
+              "gloss": "just correct it yourself"
+            },
+            "goesTo": "Not offered.",
+            "note": "An employee sees their own record and may request a correction, but cannot change it themselves (BR-15)."
+          },
+          {
+            "request": {
+              "text": "kisi aur ke record mein tasheeh karwani hai",
+              "lang": "ur-Latn",
+              "gloss": "request a correction to somebody else's record"
+            },
+            "goesTo": "staff.record.change.submit — UC-12-01-PC-8",
+            "note": "This is for an employee's own record."
+          },
+          {
+            "request": {
+              "text": "apni tankhwah dekhni hai",
+              "lang": "ur-Latn",
+              "gloss": "I want to see my salary"
+            },
+            "goesTo": "Not offered here.",
+            "note": "The salary section is held separately and governed by its own visibility rule (BR-12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "staff.record.correction.request",
+            "inputs": {
+              "staff_id": "$session.staff_id",
+              "field": "$request.field",
+              "requested_value": "$request.requested_value",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It records what the employee says is wrong; the change itself is made and approved by somebody else (BR-15, A6)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the correction request and the audit entry together or not at all. **The record is unchanged.** Whoever maintains it decides whether to submit the change, and that change carries its own reason and its own approval (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "staff.record.correction.request",
+          "method": "POST",
+          "path": "/api/v1/staff/me/correction-requests",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "staff_id + field, since one field carries one open request",
+          "purpose": "Record an employee's request to correct a field on their own record.",
+          "parameters": [
+            {
+              "name": "staff_id",
+              "source": "session",
+              "sourceRef": "$session.staff_id",
+              "required": true,
+              "type": "string",
+              "notes": "The acting employee's own record. Never another person's — this capability exists because an employee may ask about their own and not change it (BR-15)."
+            },
+            {
+              "name": "field",
+              "source": "request",
+              "sourceRef": "$request.field",
+              "required": true,
+              "type": "string",
+              "notes": "field name, one of: name, guardian name, date of birth, identity number, contact number, emergency phone number, email, designation, working hours, salary account, statutory identifiers."
+            },
+            {
+              "name": "requested_value",
+              "source": "request",
+              "sourceRef": "$request.requested_value",
+              "required": true,
+              "type": "string",
+              "notes": "What the employee says it should be. Their own statement about themselves, recorded as given."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The request as recorded.",
+            "fields": [
+              {
+                "name": "request_id",
+                "type": "string",
+                "description": "The correction request."
+              },
+              {
+                "name": "field",
+                "type": "string",
+                "description": "What the employee says is wrong."
+              },
+              {
+                "name": "current_value",
+                "type": "string",
+                "description": "What the record holds now."
+              },
+              {
+                "name": "requested_value",
+                "type": "string",
+                "description": "What they say it should be."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Requested. The record is unchanged (BR-15)."
+              },
+              {
+                "name": "goes_to",
+                "type": "string",
+                "description": "Who maintains the record and will decide whether to submit the change."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_OWN_RECORD",
+              "mapsTo": "E11",
+              "httpStatus": 403,
+              "meaning": "The request names another employee's record.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "An employee may request a correction to their own record (BR-15)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never change the record. This records what the employee says; whoever maintains it submits the change, which carries its own reason and approval (BR-8, BR-15).",
+          "derivedFrom": [
+            "BR-8",
+            "BR-15"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never request a correction on somebody else's record. staff_id comes from the session, and a phrase naming another person is refused rather than resolved.",
+          "derivedFrom": [
+            "BR-15",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that the record is unchanged and who it now sits with. An employee who thinks their bank account has been corrected will find out at the month's end.",
+          "derivedFrom": [
+            "BR-15"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never propose a correction the employee did not ask for. It is their statement about themselves.",
+          "derivedFrom": [
+            "BR-15"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A correction request is not withdrawn here. Whoever maintains the record either submits the change or does not, and the employee is told which."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mere record mein tareekh paidaish ghalat hai — 1990 ki jagah 1991 honi chahiye",
+            "lang": "ur-Latn",
+            "gloss": "my date of birth is wrong on my record — it should be 1991, not 1990"
+          },
+          "context": "Teacher, Johar Town branch, signed in.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.correction.request",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "field": "date of birth",
+                "requested_value": "1991, as the employee stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "staff_id comes from the session, never from a phrase (PR-2)."
+            }
+          ],
+          "outcome": "Recorded. Report the current value beside the requested one, that the record is unchanged, and who it now sits with (PR-3)."
+        },
+        {
+          "request": {
+            "text": "mera bank account number theek kar do, tankhwah wahin aani hai",
+            "lang": "ur-Latn",
+            "gloss": "correct my bank account number, that is where the salary goes"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.correction.request",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "field": "salary account",
+                "requested_value": "as the employee stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A request only. The record is not changed (PR-1)."
+            }
+          ],
+          "outcome": "Recorded as a request. Say plainly that the salary account has **not** changed yet and that whoever maintains the record has to submit and approve it (PR-3) — otherwise this month's salary goes to the old account."
+        },
+        {
+          "request": {
+            "text": "mere sathi ke record mein bhi yehi ghalti hai, wo bhi theek karwa dein",
+            "lang": "ur-Latn",
+            "gloss": "my colleague's record has the same mistake, please have theirs corrected too"
+          },
+          "context": "Teacher, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "staff.record.correction.request",
+              "inputs": {
+                "staff_id": "$session.staff_id",
+                "field": "$request.field",
+                "requested_value": "$request.requested_value",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the acting employee's own request is planned (PR-2)."
+            }
+          ],
+          "outcome": "Their own request is recorded. Report that a colleague raises their own — a correction request is a statement somebody makes about themselves, and one filed on their behalf is a claim nobody checked with them."
+        }
+      ]
+    }
+  ]
+}

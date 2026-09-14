@@ -1,0 +1,1405 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-20",
+    "name": "Plan expected income and expenditure and track actual performance against it",
+    "module": "Finance",
+    "file": "../UseCases/UC-04-20.json",
+    "featureRef": "4.20 Budgeting"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-20-PC-1",
+      "intent": {
+        "name": "finance.budget.prepare",
+        "summary": "Prepare a budget for a financial period, line by line, with last period's actuals offered as a starting point. One step, and it controls nothing yet.",
+        "routesHere": [
+          "prepare the budget for FY 2026-27 by department",
+          {
+            "text": "agle saal ka budget bana do",
+            "lang": "ur-Latn",
+            "gloss": "prepare next year's budget"
+          },
+          {
+            "text": "har department ka budget alag rakho",
+            "lang": "ur-Latn",
+            "gloss": "budget each department separately"
+          },
+          {
+            "text": "utilities ka budget 400,000 rakho",
+            "lang": "ur-Latn",
+            "gloss": "set the utilities budget at 400,000"
+          },
+          "draft the budget by account for the coming period"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "budget approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the budget"
+            },
+            "goesTo": "finance.budget.approve — UC-04-20-PC-2"
+          },
+          {
+            "request": {
+              "text": "budget ka figure badal do",
+              "lang": "ur-Latn",
+              "gloss": "change a budget figure"
+            },
+            "goesTo": "finance.budget.revise — UC-04-20-PC-3",
+            "note": "Figures cannot be changed after approval except through a recorded revision (BR-3)."
+          },
+          {
+            "request": {
+              "text": "kitna kharch hua hai?",
+              "lang": "ur-Latn",
+              "gloss": "how much has been spent?"
+            },
+            "goesTo": "finance.budget.variance.read — UC-04-20-PC-4",
+            "note": "Actuals are read from the ledger, never entered against the budget by hand (BR-4)."
+          },
+          {
+            "request": {
+              "text": "is voucher ko rok do, budget se zyada hai",
+              "lang": "ur-Latn",
+              "gloss": "block this voucher, it is over budget"
+            },
+            "goesTo": "Not offered.",
+            "note": "The budget is a reference with a warning, not a hard control. A voucher exceeding its line is flagged and pushed up a level, never blocked (BR-1, BR-2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.budget.prepare",
+            "inputs": {
+              "period": "$request.period",
+              "scope": "$request.scope",
+              "lines": "$request.lines",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, producing a Draft. Nothing is written to the ledger — a budget is a plan set alongside the books, not part of them (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing chart of accounts, an undefined financial year, departments chosen where none exist, a negative figure and a budget that already exists for the period are all enforced by the API and arrive as errors.",
+        "atomicity": "One write: the budget and all its lines together with the audit entry, or not at all. Nothing in the ledger is touched (BR-9). It is a Draft, so no voucher consumes it and no variance is reported against it yet."
+      },
+      "operations": [
+        {
+          "name": "finance.budget.prepare",
+          "method": "POST",
+          "path": "/api/v1/budgets",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "period + scope + branch_id, since one budget exists per period",
+          "purpose": "Create a draft budget for a period, with a figure against each account or department.",
+          "parameters": [
+            {
+              "name": "period",
+              "source": "request",
+              "sourceRef": "$request.period",
+              "required": true,
+              "type": "string",
+              "notes": "The financial period the budget covers. Not the academic session — the financial year is a different thing and is defined nowhere in the specification (BR-12, E2)."
+            },
+            {
+              "name": "scope",
+              "source": "request",
+              "sourceRef": "$request.scope",
+              "required": true,
+              "type": "enum: By account | By department",
+              "notes": "Whether the budget is prepared by account or by department. Departments must exist where that scope is chosen (E3)."
+            },
+            {
+              "name": "lines",
+              "source": "request",
+              "sourceRef": "$request.lines",
+              "required": true,
+              "type": "object[]",
+              "notes": "One entry per account or department, each with a budgeted amount of zero or more (E4) and optionally a note on what the figure assumes. Every figure comes from the request — last period's actual is offered as a starting point, not applied as one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The draft as prepared.",
+            "fields": [
+              {
+                "name": "budget_id",
+                "type": "string",
+                "description": "The budget."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Draft. No voucher consumes it and no variance is reported yet."
+              },
+              {
+                "name": "period",
+                "type": "string",
+                "description": "The financial period."
+              },
+              {
+                "name": "scope",
+                "type": "string",
+                "description": "By account or by department."
+              },
+              {
+                "name": "lines",
+                "type": "object[]",
+                "description": "account_or_department, budgeted_amount, last_period_actual, note."
+              },
+              {
+                "name": "total_budgeted",
+                "type": "string",
+                "description": "What the plan comes to."
+              },
+              {
+                "name": "financial_year",
+                "type": "string",
+                "description": "The year it runs against, which is not the academic session (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_CHART_OF_ACCOUNTS",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "No chart of accounts exists.",
+              "written": "Nothing.",
+              "notWritten": "No budget created.",
+              "note": "No feature in the specification creates one (BR-12)."
+            },
+            {
+              "code": "NO_FINANCIAL_YEAR",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "No financial year is defined.",
+              "written": "Nothing.",
+              "notWritten": "No budget created.",
+              "note": "Also defined nowhere in the specification (BR-12)."
+            },
+            {
+              "code": "NO_DEPARTMENTS",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "Departments were chosen as the scope but none exist.",
+              "written": "Nothing.",
+              "notWritten": "No budget created.",
+              "note": "Prepare it by account instead, which is the actor's decision (A5)."
+            },
+            {
+              "code": "NEGATIVE_FIGURE",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "A negative figure was entered.",
+              "written": "Nothing.",
+              "notWritten": "No budget created."
+            },
+            {
+              "code": "BUDGET_EXISTS",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "A budget already exists for the period.",
+              "written": "Nothing.",
+              "notWritten": "No budget created.",
+              "note": "The message names it. Changing it is a revision, not a second budget (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never carry last period's actual into a figure. It is offered as a starting point, not applied as one — a budget that repeats what happened is a forecast nobody made.",
+          "derivedFrom": [
+            "BR-3",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply a figure the request did not state. A budget is what somebody is measured against (BR-8), and a number a planner filled in measures them against nothing they agreed.",
+          "derivedFrom": [
+            "BR-8",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe the budget as controlling spend. It is a reference with a warning, not a hard control — a voucher exceeding its line is flagged and pushed up a level, never blocked (BR-1, BR-2).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never confuse the financial period with the academic session. They are different, and the financial year is defined nowhere in the specification (BR-12).",
+          "derivedFrom": [
+            "BR-12",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never create a second budget for a period. E8 means one exists; changing it is a recorded revision, because a budget anybody can quietly replace measures nothing (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A draft is not deleted — the lifecycle runs Draft, Awaiting approval, Approved, Revised, Returned, Closed. An unwanted draft is simply not approved. After approval, figures change only through a recorded revision (BR-3)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "FY 2026-27 ka budget bana do, department ke hisab se",
+            "lang": "ur-Latn",
+            "gloss": "prepare the FY 2026-27 budget, by department"
+          },
+          "context": "School Admin, Johar Town branch, with departments defined.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.prepare",
+              "inputs": {
+                "period": "FY 2026-27",
+                "scope": "By department",
+                "lines": "$request.lines → a figure per department, as the actor states them",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Each figure comes from the request. Last period's actual is returned alongside for comparison, not used as the figure (PR-1)."
+            }
+          ],
+          "outcome": "A Draft with a line per department and last period's actual shown against each. Nothing is written to the ledger (BR-9) and no voucher consumes it until it is approved."
+        },
+        {
+          "request": {
+            "text": "department ke hisab se budget banao",
+            "lang": "ur-Latn",
+            "gloss": "prepare the budget by department"
+          },
+          "context": "School Admin, Johar Town branch, where no departments exist.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.prepare",
+              "inputs": {
+                "period": "$request.period",
+                "scope": "By department",
+                "lines": "$request.lines",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns NO_DEPARTMENTS (E3)."
+            }
+          ],
+          "outcome": "Nothing is created. Report that no departments are set up and that the budget can be prepared by account instead — which is the actor's decision, not a fallback to take (A5)."
+        },
+        {
+          "request": {
+            "text": "is saal ka budget bana do",
+            "lang": "ur-Latn",
+            "gloss": "prepare this year's budget"
+          },
+          "context": "School Admin, Johar Town branch, where a budget already exists for FY 2026-27.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.prepare",
+              "inputs": {
+                "period": "FY 2026-27",
+                "scope": "$request.scope",
+                "lines": "$request.lines",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns BUDGET_EXISTS (E8)."
+            }
+          ],
+          "outcome": "Nothing is created. Report the existing budget and its status — changing it is a recorded revision with a reason, because a budget anybody can quietly replace measures nothing (PR-5)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-20-PC-2",
+      "intent": {
+        "name": "finance.budget.approve",
+        "summary": "Approve a budget so vouchers begin consuming its lines and variance is reported against it. One step.",
+        "routesHere": [
+          "approve the FY 2026-27 budget",
+          {
+            "text": "budget approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the budget"
+          },
+          {
+            "text": "ye budget manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this budget"
+          },
+          "sign off the departmental budget"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "budget wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the budget back"
+            },
+            "goesTo": "finance.budget.return — UC-04-20-PC-5"
+          },
+          {
+            "request": {
+              "text": "figure badal do",
+              "lang": "ur-Latn",
+              "gloss": "change a figure"
+            },
+            "goesTo": "finance.budget.revise — UC-04-20-PC-3",
+            "note": "An approved budget is not edited directly (BR-3, E6)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.budget.approve",
+            "inputs": {
+              "budget_id": "$request.budget_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. From here approved but unpaid vouchers consume their lines, so a commitment is visible before the money leaves (BR-5), and variance is reported against both the original and any revised figure (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. Nothing in the ledger is written by this (BR-9).",
+        "atomicity": "One write: the approval and the audit entry together or not at all. Nothing in the ledger changes — a budget is a plan set alongside the books, not part of them (BR-9). From here the figures cannot be changed except through a recorded revision (BR-3), actuals accumulate from the ledger as the period progresses (BR-4), and approved but unpaid vouchers consume their lines so a commitment is visible before the money leaves (BR-5)."
+      },
+      "operations": [
+        {
+          "name": "finance.budget.approve",
+          "method": "POST",
+          "path": "/api/v1/budgets/{budget_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "budget_id + version, since a budget version carries one approval",
+          "purpose": "Approve a budget so vouchers consume it and variance is reported against it.",
+          "parameters": [
+            {
+              "name": "budget_id",
+              "source": "resolved",
+              "sourceRef": "$request.budget_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "budget",
+                "fromPhrase": "$request.budget_phrase",
+                "onNoMatch": "Refuse. No budget matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with period, scope, status and version."
+              },
+              "notes": "The budget, resolved from how the actor named it — the period, or simply the current one."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The budget as approved.",
+            "fields": [
+              {
+                "name": "budget_id",
+                "type": "string",
+                "description": "The budget."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved."
+              },
+              {
+                "name": "version",
+                "type": "integer",
+                "description": "1 on first approval; incremented on each approved revision (BR-6)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The School Admin or Principal."
+              },
+              {
+                "name": "total_budgeted",
+                "type": "string",
+                "description": "The plan."
+              },
+              {
+                "name": "ledger_entries_written",
+                "type": "integer",
+                "description": "Always zero. Nothing in the ledger is written by this use case (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "EDIT_AFTER_APPROVAL",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "An approved budget was edited directly.",
+              "written": "Nothing.",
+              "notWritten": "Not changed.",
+              "note": "Changes are made as a recorded revision (BR-3)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never describe approval as writing to the books. Nothing in the ledger is written by this use case — a budget is a plan set alongside the books, not part of them (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report that figures are now fixed except by revision. A budget anybody can quietly edit measures nothing (BR-3), and the revision leaves a reason and a version behind (BR-6).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that approved but unpaid vouchers will consume the lines. A budget counting only paid invoices reports last month rather than this one (BR-5), and a commitment is visible before the money leaves.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never chain a revision onto an approval. Approving the figures somebody prepared and then changing them is not two acts, it is one act pretending to be two.",
+          "derivedFrom": [
+            "BR-3",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approved budget is not unapproved. Figures change only through a recorded revision with its author, date and reason, and previous versions stay readable (BR-3, BR-6). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "FY 2026-27 ka budget approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the FY 2026-27 budget"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.approve",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved at version 1. Actuals now accumulate from the ledger, and approved but unpaid vouchers consume their lines so a commitment shows before the money leaves (PR-3). Nothing was written to the ledger (PR-1)."
+        },
+        {
+          "request": {
+            "text": "budget approve kar do aur utilities ka figure bhi barha do",
+            "lang": "ur-Latn",
+            "gloss": "approve the budget and raise the utilities figure too"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.approve",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the approval is planned. Changing a figure after approval is a recorded revision (PR-4)."
+            }
+          ],
+          "outcome": "Approved as prepared. Report that raising utilities is a separate revision with its own reason — approving figures and then changing them in the same breath is one act pretending to be two."
+        },
+        {
+          "request": {
+            "text": "budget mein utilities 500,000 kar do",
+            "lang": "ur-Latn",
+            "gloss": "change utilities to 500,000 in the budget"
+          },
+          "context": "School Admin, Johar Town branch, on an already approved budget.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.approve",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as an approval; the API returns EDIT_AFTER_APPROVAL (E6) for a direct edit."
+            }
+          ],
+          "outcome": "Nothing changes. Report that an approved budget is revised, not edited — and that a revision carries a reason, because a figure moved without explanation makes variance meaningless (PR-2)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-20-PC-3",
+      "intent": {
+        "name": "finance.budget.revise",
+        "summary": "Revise an approved budget figure, with the reason it moved, keeping the original readable. One step.",
+        "routesHere": [
+          "revise the utilities line up to 500,000 — tariffs rose",
+          {
+            "text": "utilities ka budget barha do, bijli mehngi ho gayi",
+            "lang": "ur-Latn",
+            "gloss": "raise the utilities budget, electricity has become expensive"
+          },
+          {
+            "text": "budget mein tarmeem karo",
+            "lang": "ur-Latn",
+            "gloss": "revise the budget"
+          },
+          {
+            "text": "transport ka figure kam kar do",
+            "lang": "ur-Latn",
+            "gloss": "reduce the transport figure"
+          },
+          "revise the salaries line, we've hired two more teachers"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "naya budget bana do",
+              "lang": "ur-Latn",
+              "gloss": "prepare a new budget"
+            },
+            "goesTo": "finance.budget.prepare — UC-04-20-PC-1",
+            "note": "One budget exists per period (E8); changing it is a revision."
+          },
+          {
+            "request": {
+              "text": "kharch dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show the spend"
+            },
+            "goesTo": "finance.budget.variance.read — UC-04-20-PC-4"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.budget.revise",
+            "inputs": {
+              "budget_id": "$request.budget_phrase",
+              "revisions": "$request.revisions",
+              "revision_reason": "$request.revision_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The revision is recorded with its author, date and reason, and previous versions stay readable — a figure moved without explanation makes variance meaningless (BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. A missing reason and a negative figure are enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the new figures, the reason, the incremented version and the audit entry together or not at all. Nothing in the ledger changes (BR-9). Earlier versions stay readable, and variance is afterwards reported against **both** the original and the revised figure — because variance against a figure revised upward mid-year looks healthy while the original tells the real story (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "finance.budget.revise",
+          "method": "POST",
+          "path": "/api/v1/budgets/{budget_id}/revise",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "budget_id + version + the revision set, so a repeat does not increment the version twice",
+          "purpose": "Revise one or more approved budget lines, recording the reason and incrementing the version.",
+          "parameters": [
+            {
+              "name": "budget_id",
+              "source": "resolved",
+              "sourceRef": "$request.budget_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "budget",
+                "fromPhrase": "$request.budget_phrase",
+                "onNoMatch": "Refuse. No budget matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with period, scope, status and version."
+              },
+              "notes": "The budget, resolved from how the actor named it — the period, or simply the current one."
+            },
+            {
+              "name": "revisions",
+              "source": "request",
+              "sourceRef": "$request.revisions",
+              "required": true,
+              "type": "object[]",
+              "notes": "The lines to change and their new figures, each zero or more (E4). Only the lines the request changes — a line not named keeps its figure."
+            },
+            {
+              "name": "revision_reason",
+              "source": "request",
+              "sourceRef": "$request.revision_reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters. Required for every revision (BR-6, E5), since a figure moved without explanation makes variance meaningless. The actor's own words."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The revision, and what it replaced.",
+            "fields": [
+              {
+                "name": "budget_id",
+                "type": "string",
+                "description": "The budget."
+              },
+              {
+                "name": "version",
+                "type": "integer",
+                "description": "Incremented. Earlier versions stay readable (BR-6)."
+              },
+              {
+                "name": "revisions",
+                "type": "object[]",
+                "description": "line, previous_amount, new_amount."
+              },
+              {
+                "name": "revision_reason",
+                "type": "string",
+                "description": "As given, kept with the version."
+              },
+              {
+                "name": "revised_by",
+                "type": "string",
+                "description": "The acting user."
+              },
+              {
+                "name": "original_total",
+                "type": "string",
+                "description": "The figure first approved, which is what tells the real story (BR-7)."
+              },
+              {
+                "name": "revised_total",
+                "type": "string",
+                "description": "The current figure."
+              },
+              {
+                "name": "ledger_entries_written",
+                "type": "integer",
+                "description": "Always zero (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REVISION_REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "A revision was made with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not revised.",
+              "note": "Message: \"Give a reason. A figure moved without explanation makes variance meaningless.\" Ask; never compose one."
+            },
+            {
+              "code": "NEGATIVE_FIGURE",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "A negative figure was entered.",
+              "written": "Nothing.",
+              "notWritten": "Not revised."
+            },
+            {
+              "code": "BUDGET_HOLDER_CANNOT_CHANGE",
+              "mapsTo": "E7",
+              "httpStatus": 403,
+              "meaning": "A budget holder attempted to change their own line.",
+              "written": "Nothing.",
+              "notWritten": "Not revised.",
+              "note": "Somebody who can move the figure they are measured against is not being measured (BR-8)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the revision reason. A figure moved without explanation makes variance meaningless (BR-6), and the reason is what somebody reads when the variance looks healthy and the original figure does not.",
+          "derivedFrom": [
+            "BR-6",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Revise only the lines the request names. A line not mentioned keeps its figure, and restating the whole budget records revisions nobody made.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never revise a line to accommodate an overspend. The budget is a reference with a warning; a voucher over its line is escalated, not blocked (BR-1, BR-2), and moving the figure afterwards makes the escalation look like it never happened.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report both totals. Variance is shown against the original and the revised figure, because variance against a figure revised upward mid-year looks healthy while the original tells the real story (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never revise on a budget holder's behalf. Somebody who can move the figure they are measured against is not being measured (BR-8, E7).",
+          "derivedFrom": [
+            "BR-8",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A revision is not undone. Revising back is another revision with its own reason, and every version stays readable (BR-6). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "utilities ka budget 500,000 kar do — bijli ke rate barh gaye hain",
+            "lang": "ur-Latn",
+            "gloss": "raise the utilities budget to 500,000 — electricity tariffs have gone up"
+          },
+          "context": "School Admin, Johar Town branch, on an approved budget with utilities at 400,000.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.revise",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "revisions": "$request.revisions → [{Utilities, 500000}]",
+                "revision_reason": "Electricity tariffs increased in September, taking the line beyond its original figure.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the utilities line is revised; every other line keeps its figure (PR-2)."
+            }
+          ],
+          "outcome": "Version 2, with the original 400,000 kept readable. Variance is now shown against both — 500,000 will look comfortable while 400,000 tells the real story (PR-4)."
+        },
+        {
+          "request": {
+            "text": "voucher budget se zyada tha, budget hi barha do",
+            "lang": "ur-Latn",
+            "gloss": "the voucher was over budget, just raise the budget"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.revise",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "revisions": "$request.revisions",
+                "revision_reason": "$request.revision_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan would be valid, but PR-3 says not to emit it for this reason."
+            }
+          ],
+          "outcome": "Report that the voucher was escalated rather than blocked, and that raising the line afterwards makes the escalation look like it never happened. Whether the budget was wrong is a separate judgement with its own reason."
+        },
+        {
+          "request": {
+            "text": "mere department ka budget barha do",
+            "lang": "ur-Latn",
+            "gloss": "raise my department's budget"
+          },
+          "context": "A budget holder, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.revise",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "revisions": "$request.revisions",
+                "revision_reason": "$request.revision_reason",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "In practice revise is absent from a budget holder's allow-list. The API returns BUDGET_HOLDER_CANNOT_CHANGE (E7)."
+            }
+          ],
+          "outcome": "Nothing is revised. Report that a budget holder reads their own variance but cannot change the budget — somebody who can move the figure they are measured against is not being measured (PR-5)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-20-PC-4",
+      "intent": {
+        "name": "finance.budget.variance.read",
+        "summary": "Read what has actually been spent or received against a budget line, what is committed, and the variance against both the original and revised figures. One step.",
+        "routesHere": [
+          "show me the variance on the utilities line",
+          {
+            "text": "kitna kharch hua hai budget ke muqable mein?",
+            "lang": "ur-Latn",
+            "gloss": "how much has been spent against the budget?"
+          },
+          {
+            "text": "mere department ka variance dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show my department's variance"
+          },
+          {
+            "text": "utilities line mein kya bacha hai?",
+            "lang": "ur-Latn",
+            "gloss": "what is left on the utilities line?"
+          },
+          "which lines are over budget this quarter"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "budget badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the budget"
+            },
+            "goesTo": "finance.budget.revise — UC-04-20-PC-3"
+          },
+          {
+            "request": {
+              "text": "actual figure daal do",
+              "lang": "ur-Latn",
+              "gloss": "enter the actual figure"
+            },
+            "goesTo": "Not offered.",
+            "note": "Actual figures are read from the ledger as the period progresses. They are never entered against the budget by hand (BR-4, E9)."
+          },
+          {
+            "request": {
+              "text": "ledger dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show the ledger"
+            },
+            "goesTo": "finance.ledger.read — UC-04-18-PC-1",
+            "note": "Variance reads the budget against the books; the ledger is the books themselves."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.budget.variance.read",
+            "inputs": {
+              "budget_id": "$request.budget_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Actuals are read from the ledger and committed amounts from approved but unpaid vouchers — nothing is entered here (BR-4, BR-5)."
+          }
+        ],
+        "onFailure": "Stop and report. A budget holder sees their own lines; the scope is enforced by the API.",
+        "atomicity": "A read. Nothing is created, changed or posted, and nothing in the ledger is written (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "finance.budget.variance.read",
+          "method": "GET",
+          "path": "/api/v1/budgets/{budget_id}/variance",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return each budget line with its budgeted, committed and actual figures, and the variance against both the original and any revised figure.",
+          "parameters": [
+            {
+              "name": "budget_id",
+              "source": "resolved",
+              "sourceRef": "$request.budget_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "budget",
+                "fromPhrase": "$request.budget_phrase",
+                "onNoMatch": "Refuse. No budget matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with period, scope, status and version."
+              },
+              "notes": "The budget, resolved from how the actor named it — the period, or simply the current one."
+            },
+            {
+              "name": "line_id",
+              "source": "resolved",
+              "sourceRef": "$request.line_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "budget_line",
+                "fromPhrase": "$request.line_phrase",
+                "onNoMatch": "Refuse. No such budget line.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "One line, where the request names one. Omitted for the whole budget."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Where the plan and the books stand against each other.",
+            "fields": [
+              {
+                "name": "lines",
+                "type": "object[]",
+                "description": "account_or_department, budgeted_original, budgeted_revised, committed, actual, variance_to_original, variance_to_revised."
+              },
+              {
+                "name": "committed",
+                "type": "string",
+                "description": "Approved but unpaid vouchers, so a commitment is visible before the money leaves (BR-5)."
+              },
+              {
+                "name": "actual",
+                "type": "string",
+                "description": "Read from the ledger. Never entered by hand (BR-4)."
+              },
+              {
+                "name": "variance_to_original",
+                "type": "string",
+                "description": "Against the figure first approved, which is what tells the real story (BR-7)."
+              },
+              {
+                "name": "variance_to_revised",
+                "type": "string",
+                "description": "Against the current revised figure, where one exists (BR-7)."
+              },
+              {
+                "name": "over_budget_lines",
+                "type": "object[]",
+                "description": "Lines where actual plus committed exceeds the figure. Flagged, never blocking (BR-1)."
+              },
+              {
+                "name": "produced_at",
+                "type": "datetime",
+                "description": "When the figures were produced."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "HAND_ENTERED_ACTUAL",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "An actual figure was entered by hand against the budget.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Actuals are read from the ledger (BR-4). There is no parameter for one here."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compute an actual or a variance. Actuals are read from the ledger and never entered by hand (BR-4), and a figure worked out in a reply is a number nobody can trace to the books.",
+          "derivedFrom": [
+            "BR-4",
+            "money"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report variance against both figures, always. Variance against a line revised upward mid-year looks healthy while the original tells the real story (BR-7) — reporting only the revised one flatters the position.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report committed separately from actual. An approved but unpaid voucher consumes the line, and a budget counting only what has been paid reports last month rather than this one (BR-5).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never describe an over-budget line as blocked. The budget is a reference with a warning — a voucher exceeding its line is flagged and pushed up a level, never refused (BR-1, BR-2).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "A budget holder reads their own variance and cannot change it (BR-8). Never offer them a revision.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "utilities line mein kya bacha hai?",
+            "lang": "ur-Latn",
+            "gloss": "what is left on the utilities line?"
+          },
+          "context": "School Admin, Johar Town branch, on an approved budget revised once.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.variance.read",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "line_id": "$request.line_phrase → Utilities",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Budgeted 400,000 originally and 500,000 as revised; actual 380,000 and committed 45,000. Report both variances (PR-2) — comfortable against 500,000, and only 25,000 clear of the original."
+        },
+        {
+          "request": {
+            "text": "mere department ka variance dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show my department's variance"
+          },
+          "context": "A budget holder, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.variance.read",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "line_id": "$request.line_phrase → their own department",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Their own line with budgeted, committed, actual and both variances. They read it and cannot change it (BR-8) — do not offer a revision (PR-5)."
+        },
+        {
+          "request": {
+            "text": "kaunsi lines budget se zyada chali gayi hain?",
+            "lang": "ur-Latn",
+            "gloss": "which lines have gone over budget?"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.variance.read",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Three lines where actual plus committed exceeds the figure. Report them as flagged, not blocked (PR-4) — vouchers against them are escalated to the next approval level, which is the deliberate middle ground between stalling the office and reporting too late."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-20-PC-5",
+      "intent": {
+        "name": "finance.budget.return",
+        "summary": "Send a prepared budget back with what to change. One step.",
+        "routesHere": [
+          "return this budget, the salaries line doesn't cover the new hires",
+          {
+            "text": "budget wapas bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the budget back"
+          },
+          {
+            "text": "ye figures theek nahi, dobara dekho",
+            "lang": "ur-Latn",
+            "gloss": "these figures are not right, look at them again"
+          },
+          "send it back — transport is budgeted below last year's actual"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "budget approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the budget"
+            },
+            "goesTo": "finance.budget.approve — UC-04-20-PC-2"
+          },
+          {
+            "request": {
+              "text": "figure theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix the figure"
+            },
+            "goesTo": "Returning says so.",
+            "note": "Changing a figure before approval is the preparer's work in their own session."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "finance.budget.return",
+            "inputs": {
+              "budget_id": "$request.budget_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing is approved, no voucher consumes anything and no variance is reported."
+          }
+        ],
+        "onFailure": "Stop and report. The reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the status change, the reason and the audit entry together or not at all. Nothing in the ledger changes (BR-9) and the period has no approved budget."
+      },
+      "operations": [
+        {
+          "name": "finance.budget.return",
+          "method": "POST",
+          "path": "/api/v1/budgets/{budget_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "budget_id + return_reason",
+          "purpose": "Send a prepared budget back with the reason it was not approved.",
+          "parameters": [
+            {
+              "name": "budget_id",
+              "source": "resolved",
+              "sourceRef": "$request.budget_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "budget",
+                "fromPhrase": "$request.budget_phrase",
+                "onNoMatch": "Refuse. No budget matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with period, scope, status and version."
+              },
+              "notes": "The budget, resolved from how the actor named it — the period, or simply the current one."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required. The approver's own words — which lines are wrong and why."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The budget as returned.",
+            "fields": [
+              {
+                "name": "budget_id",
+                "type": "string",
+                "description": "The budget."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. The period has no approved budget."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The approver."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the return reason. Which lines are wrong and why is exactly what the preparer needs, and a general objection sends them back to guess.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report that the period has no approved budget. Until one is approved, no line is consumed and no variance is reported — the office is spending against nothing (BR-1, BR-5).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never adjust a figure on the approver's behalf.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not undone. The budget is corrected and submitted again, which is a fresh decision."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "budget wapas bhej do — tankhwah wali line mein naye teachers shamil nahi",
+            "lang": "ur-Latn",
+            "gloss": "send the budget back — the salaries line does not include the new teachers"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.return",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "return_reason": "The salaries line does not account for the two teachers hired in August.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned with the line named. Report that the period still has no approved budget (PR-2) — nothing is being measured meanwhile."
+        },
+        {
+          "request": "send it back — transport is budgeted below last year's actual",
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.return",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "return_reason": "Transport is budgeted below last year's actual spend with no stated reason for the reduction.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned. Correcting the figure is the preparer's work in their own session."
+        },
+        {
+          "request": {
+            "text": "budget wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "send the budget back"
+          },
+          "context": "Principal, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "finance.budget.return",
+              "inputs": {
+                "budget_id": "$request.budget_phrase",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask which lines are wrong."
+        }
+      ]
+    }
+  ]
+}

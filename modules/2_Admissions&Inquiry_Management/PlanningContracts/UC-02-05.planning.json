@@ -1,0 +1,784 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-02-05",
+    "name": "Schedule the admission test and assign the teacher who will conduct it",
+    "module": "Admissions & Inquiry Management",
+    "file": "../UseCases/UC-02-05.json",
+    "featureRef": "2.5 Admission test scheduling"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-02-05-PC-1",
+      "intent": {
+        "name": "admission.test.schedule",
+        "summary": "Set the admission test date and time for an applicant and assign the teacher who will conduct it, in one act that tells both the family and the teacher.",
+        "routesHere": [
+          "schedule Bilal's admission test for Monday at 10",
+          {
+            "text": "Bilal ka test somwar subah 10 baje rakh do",
+            "lang": "ur-Latn",
+            "gloss": "schedule Bilal's test for Monday at 10 in the morning"
+          },
+          {
+            "text": "is applicant ka test 12 tareekh ko rakho, Miss Nadia lein gi",
+            "lang": "ur-Latn",
+            "gloss": "schedule this applicant's test on the 12th, Miss Nadia will take it"
+          },
+          "book the admission test for APP-2026-0417 on Thursday afternoon",
+          {
+            "text": "test ki date rakh do aur teacher bhi assign kar do",
+            "lang": "ur-Latn",
+            "gloss": "set the test date and assign a teacher too"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "test ki date change kar do",
+              "lang": "ur-Latn",
+              "gloss": "change the test date"
+            },
+            "goesTo": "admission.test.reschedule — UC-02-05-PC-2",
+            "note": "Changing a saved schedule needs a reason and tells the teacher who was removed (BR-7, BR-8)."
+          },
+          {
+            "request": {
+              "text": "Bilal ne 78 number liye",
+              "lang": "ur-Latn",
+              "gloss": "Bilal got 78 marks"
+            },
+            "goesTo": "admission.test.mark — UC-02-06-PC-1",
+            "note": "Scheduling records no score and takes no decision (BR-11)."
+          },
+          {
+            "request": {
+              "text": "is bache ko admit kar do",
+              "lang": "ur-Latn",
+              "gloss": "admit this child"
+            },
+            "goesTo": "applicant.admit — UC-02-07-PC-2"
+          },
+          {
+            "request": {
+              "text": "sab approved applicants ko test ki date bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the test date to all the approved applicants"
+            },
+            "goesTo": "The bulk send in BR-9. Not written as a capability here.",
+            "note": "BR-9 allows sending the schedule to all approved applicants at once, but each still needs a date, a time and a teacher. See the open question."
+          },
+          {
+            "request": "which teachers are free on Monday?",
+            "goesTo": "A read of the free-teacher list.",
+            "note": "The free list comes back with the schedule call; asking it alone is a read nobody has specified."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "admission.test.schedule",
+            "inputs": {
+              "applicant_id": "$request.applicant_phrase",
+              "test_date": "$request.test_date",
+              "test_time": "$request.test_time",
+              "teacher_id": "$request.teacher_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The messages to the family and to the teacher go inside it (BR-6) — there is no send to plan separately."
+          }
+        ],
+        "onFailure": "Stop and report. Working hours, slot clashes, teacher availability and whether the test has already been taken are all enforced by the API and arrive as errors; the plan does not test for them beforehand.",
+        "atomicity": "One write, atomic in itself: the schedule, the teacher assignment, the applicant's status change and the audit entry together or not at all. The two messages are separate and do not block (E6), so the ordinary partial outcome is a saved schedule the family has not been told about — report both halves. No score is recorded and no decision is taken (BR-11)."
+      },
+      "operations": [
+        {
+          "name": "admission.test.schedule",
+          "method": "POST",
+          "path": "/api/v1/applicants/{applicant_id}/test",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "applicant_id + test_date + test_time, so a repeat does not create a second schedule or send the family a second message",
+          "purpose": "Set the test date, time and venue, assign the conducting teacher, and send the details to the family and the teacher.",
+          "parameters": [
+            {
+              "name": "applicant_id",
+              "source": "resolved",
+              "sourceRef": "$request.applicant_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "applicant",
+                "fromPhrase": "$request.applicant_phrase",
+                "onNoMatch": "Refuse. No applicant matches in this branch at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with temporary ID, child name and target class. Two applicants of the same name is the case BR-1 exists to guard against."
+              },
+              "notes": "The applicant, resolved from how the actor named them — the temporary ID, or the child's name. Everything from the form to the decision hangs off this identifier (BR-1)."
+            },
+            {
+              "name": "test_date",
+              "source": "request",
+              "sourceRef": "$request.test_date",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the past, and within the school's working days (E1). Read from what the actor said — \"somwar\", \"Monday\", \"12 tareekh\" — and never supplied where the request names none."
+            },
+            {
+              "name": "test_time",
+              "source": "request",
+              "sourceRef": "$request.test_time",
+              "required": true,
+              "type": "datetime",
+              "notes": "Within working hours, 24-hour form (E2). \"Subah 10 baje\" is 10:00; an unstated time is asked for, never assumed."
+            },
+            {
+              "name": "teacher_id",
+              "source": "resolved",
+              "sourceRef": "$request.teacher_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.teacher_phrase",
+                "onNoMatch": "Refuse. No teacher of that name in this branch.",
+                "onAmbiguous": "Ask, naming the candidates with their department."
+              },
+              "notes": "The teacher who will conduct it, resolved from how the actor named them. Only teachers free at that slot are offered; where the actor names someone outside that list the API records it as a direct entry needing a reason (BR-4)."
+            },
+            {
+              "name": "venue",
+              "source": "request",
+              "sourceRef": "$request.venue",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 100 characters. Only where the request names one."
+            },
+            {
+              "name": "override_reason",
+              "source": "request",
+              "sourceRef": "$request.override_reason",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 250 characters. Required when the named teacher is not among those free at the slot (BR-4, E5), because the assignment may put them in two places at once."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The schedule as saved, and what it told whom.",
+            "fields": [
+              {
+                "name": "test_schedule_id",
+                "type": "string",
+                "description": "The schedule."
+              },
+              {
+                "name": "test_date",
+                "type": "date",
+                "description": "DD-MM-YYYY."
+              },
+              {
+                "name": "test_time",
+                "type": "string",
+                "description": "HH:mm, 24-hour, school-local."
+              },
+              {
+                "name": "teacher_name",
+                "type": "string",
+                "description": "Who will conduct it."
+              },
+              {
+                "name": "teacher_entered_directly",
+                "type": "boolean",
+                "description": "True where the teacher was not among those free at the slot (BR-4)."
+              },
+              {
+                "name": "timetable_clash",
+                "type": "object",
+                "description": "Where a directly entered teacher has a clash, it is shown rather than blocked (BR-5). Report it — it is the reason the override was recorded."
+              },
+              {
+                "name": "family_delivery_status",
+                "type": "string",
+                "description": "Queued until the provider says otherwise."
+              },
+              {
+                "name": "teacher_delivery_status",
+                "type": "string",
+                "description": "Queued until delivered."
+              },
+              {
+                "name": "free_teachers",
+                "type": "object[]",
+                "description": "Those free at the chosen slot, returned so an unsuitable assignment can be changed without guessing (BR-3)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DATE_IN_PAST",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The test date is before today.",
+              "written": "Nothing.",
+              "notWritten": "Not scheduled.",
+              "note": "Never substitute a later date. The date came from the actor."
+            },
+            {
+              "code": "OUTSIDE_WORKING_HOURS",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The time falls outside the school's working hours.",
+              "written": "Nothing.",
+              "notWritten": "Not scheduled."
+            },
+            {
+              "code": "SLOT_TAKEN",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The slot is already booked for another applicant.",
+              "written": "Nothing.",
+              "notWritten": "Not scheduled.",
+              "note": "Message: \"That slot is already taken. Choose another.\" Never pick the next free slot; the time was the actor's choice and the family will be told it."
+            },
+            {
+              "code": "NO_TEACHER_FREE",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "No teacher is free at the selected slot.",
+              "written": "Nothing.",
+              "notWritten": "Not scheduled.",
+              "note": "Change the slot or name a teacher directly with a reason. Both are the actor's decision."
+            },
+            {
+              "code": "OVERRIDE_REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "A teacher outside the free list was named with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not scheduled.",
+              "note": "Message: \"Give a reason for assigning a teacher outside the free list.\" Ask for it; never compose one."
+            },
+            {
+              "code": "FAMILY_MESSAGE_FAILED",
+              "mapsTo": "E6",
+              "httpStatus": 200,
+              "meaning": "The message to the family failed.",
+              "written": "The schedule, the assignment and the teacher's notification are all written.",
+              "notWritten": "The family has not been told the date.",
+              "treatedAsSuccess": true,
+              "note": "Not a failure of the scheduling. Report both halves — a family who does not know the date will not bring the child."
+            },
+            {
+              "code": "ALREADY_TAKEN",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The applicant has already taken the test.",
+              "written": "Nothing.",
+              "notWritten": "Not scheduled.",
+              "note": "The message names the date. Marking is the next act, not scheduling."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never invent a date or a time. \"Somwar\" is resolvable against today; \"jaldi\" and \"soon\" are not. A test the family is told about is a commitment on a specific morning, and E1 refusing a past date is not a licence to choose a future one.",
+          "derivedFrom": [
+            "BR-1",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never pick another slot after SLOT_TAKEN. The time was the actor's choice and the family will be told it; the free alternatives come back on the response for a person to choose from.",
+          "derivedFrom": [
+            "E3",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never assign a teacher the actor did not name. Where none is free, E4 says so and the alternatives are on the response — choosing one puts a named person in a room on a named morning on a planner's judgement.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never compose the override reason. It exists because the assignment may put a teacher in two places at once (BR-4), and the person who decided that has to be the one who explains it.",
+          "derivedFrom": [
+            "BR-4",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the timetable clash when one comes back. It is shown rather than blocked (BR-5) precisely so the chooser sees it, and a clash reported nowhere is a teacher double-booked.",
+          "derivedFrom": [
+            "BR-4",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report the schedule and the two sends separately. The schedule stands even where the family's message failed (E6), and a family who does not know the date will not bring the child.",
+          "derivedFrom": [
+            "BR-6",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never chain marking onto scheduling. Scheduling records no score and takes no decision (BR-11); the test has not happened yet.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no unschedule. A saved schedule is changed through admission.test.reschedule, which requires a reason and tells the family and both teachers (BR-7, BR-8). The previous assignment stays in the history. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Bilal Khan ka admission test somwar subah 10 baje rakh do, Miss Nadia lein gi",
+            "lang": "ur-Latn",
+            "gloss": "schedule Bilal Khan's admission test for Monday at 10 in the morning, Miss Nadia will take it"
+          },
+          "context": "School Admin, Johar Town branch. Today is 07-09-2026, a Monday, so the next Monday is the 14th.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.schedule",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase → \"Bilal Khan\"",
+                "test_date": "2026-09-14",
+                "test_time": "10:00",
+                "teacher_id": "$request.teacher_phrase → \"Miss Nadia\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "\"Somwar\" resolves against today's date; \"subah 10 baje\" is 10:00. Miss Nadia is a phrase for the resolver, not a name to match by hand."
+            }
+          ],
+          "outcome": "The test is booked, Miss Nadia is assigned, and both the family and the teacher are sent the details. The slot is now unavailable to another applicant (BR-10)."
+        },
+        {
+          "request": "book APP-2026-0417's test for the 12th at 9, and put Mr Asif on it even though he's teaching — we'll cover his class",
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.schedule",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase → \"APP-2026-0417\"",
+                "test_date": "2026-09-12",
+                "test_time": "09:00",
+                "teacher_id": "$request.teacher_phrase → \"Mr Asif\"",
+                "override_reason": "Teaching at that time; his class will be covered.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Mr Asif is not among those free at 09:00, so the override reason is required (BR-4). It is the actor's own explanation, carried across (PR-4)."
+            }
+          ],
+          "outcome": "Scheduled with teacher_entered_directly true and the timetable clash returned. The clash is reported, not hidden — it is exactly why the override was recorded (BR-5)."
+        },
+        {
+          "request": {
+            "text": "is applicant ka test kal subah 9 baje rakh do",
+            "lang": "ur-Latn",
+            "gloss": "schedule this applicant's test tomorrow at 9 in the morning"
+          },
+          "context": "School Admin, Johar Town branch, where 09:00 tomorrow is already booked for another applicant.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.schedule",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase",
+                "test_date": "2026-09-08",
+                "test_time": "09:00",
+                "teacher_id": "$request.teacher_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged; it does not check the slot beforehand. The API returns SLOT_TAKEN (E3)."
+            }
+          ],
+          "outcome": "Nothing is booked. Report that the slot is taken and give the free alternatives from the response — but do not book one (PR-2). The time is the actor's to choose."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-02-05-PC-2",
+      "intent": {
+        "name": "admission.test.reschedule",
+        "summary": "Change a saved test date, time or teacher, with the reason it changed, telling the family and both the new and the removed teacher. One step.",
+        "routesHere": [
+          "reschedule Bilal's test to Wednesday — the teacher is on leave",
+          {
+            "text": "test ki date change kar do, teacher chutti pe hai",
+            "lang": "ur-Latn",
+            "gloss": "change the test date, the teacher is on leave"
+          },
+          {
+            "text": "Miss Nadia ki jagah Mr Asif ko laga do",
+            "lang": "ur-Latn",
+            "gloss": "put Mr Asif in place of Miss Nadia"
+          },
+          "move this test to the afternoon, the family can't come in the morning",
+          {
+            "text": "test aage badha do agle hafte tak",
+            "lang": "ur-Latn",
+            "gloss": "push the test forward to next week"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "naya test rakh do",
+              "lang": "ur-Latn",
+              "gloss": "schedule a new test"
+            },
+            "goesTo": "admission.test.schedule — UC-02-05-PC-1",
+            "note": "Where no schedule exists yet."
+          },
+          {
+            "request": {
+              "text": "bacha test mein nahi aaya",
+              "lang": "ur-Latn",
+              "gloss": "the child did not come to the test"
+            },
+            "goesTo": "admission.test.mark — UC-02-06-PC-1",
+            "note": "An absence is recorded as attendance, not as a reschedule. Missing a test is not a result (UC-02-06 BR-10), and rescheduling afterwards is a fresh decision."
+          },
+          {
+            "request": {
+              "text": "test cancel kar do",
+              "lang": "ur-Latn",
+              "gloss": "cancel the test"
+            },
+            "goesTo": "Not offered.",
+            "note": "The Test schedule lifecycle holds Cancelled, but no capability for cancelling is written. See the open question."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "admission.test.reschedule",
+            "inputs": {
+              "applicant_id": "$request.applicant_phrase",
+              "reschedule_reason": "$request.reschedule_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The new date, time or teacher are supplied only where the request changes them — a reschedule that changes just the teacher leaves the slot alone. The reason is always required (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. Working hours, slot clashes and teacher availability are enforced by the API exactly as for the first schedule, and arrive as errors.",
+        "atomicity": "One write, atomic in itself. The previous assignment stays in the history (BR-7) — nothing is overwritten. Three messages go out and none blocks: the family, the new teacher, and the teacher removed (BR-8). The last matters most, because a teacher not told is a teacher who turns up for a test that is no longer theirs."
+      },
+      "operations": [
+        {
+          "name": "admission.test.reschedule",
+          "method": "POST",
+          "path": "/api/v1/applicants/{applicant_id}/test/reschedule",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "applicant_id + test_date + test_time + teacher_id, so a repeat does not send the family and both teachers a second set of messages",
+          "purpose": "Change the date, time or teacher on a saved schedule, recording why, and tell the family, the new teacher and the teacher removed.",
+          "parameters": [
+            {
+              "name": "applicant_id",
+              "source": "resolved",
+              "sourceRef": "$request.applicant_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "applicant",
+                "fromPhrase": "$request.applicant_phrase",
+                "onNoMatch": "Refuse. No applicant matches in this branch at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with temporary ID, child name and target class. Two applicants of the same name is the case BR-1 exists to guard against."
+              },
+              "notes": "The applicant, resolved from how the actor named them — the temporary ID, or the child's name. Everything from the form to the decision hangs off this identifier (BR-1)."
+            },
+            {
+              "name": "reschedule_reason",
+              "source": "request",
+              "sourceRef": "$request.reschedule_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters. Always required (BR-7, E7). The actor's own words — the previous assignment stays in the history alongside them."
+            },
+            {
+              "name": "test_date",
+              "source": "request",
+              "sourceRef": "$request.test_date",
+              "required": false,
+              "type": "date",
+              "notes": "Only where the request moves the date. Omit to keep it."
+            },
+            {
+              "name": "test_time",
+              "source": "request",
+              "sourceRef": "$request.test_time",
+              "required": false,
+              "type": "datetime",
+              "notes": "Only where the request moves the time. Omit to keep it."
+            },
+            {
+              "name": "teacher_id",
+              "source": "resolved",
+              "sourceRef": "$request.teacher_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.teacher_phrase",
+                "onNoMatch": "Refuse. No teacher of that name in this branch.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Only where the request changes the teacher. Omit to keep the one assigned."
+            },
+            {
+              "name": "override_reason",
+              "source": "request",
+              "sourceRef": "$request.override_reason",
+              "required": false,
+              "type": "string",
+              "notes": "Required where the new teacher is not among those free at the slot (BR-4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The schedule as changed, and who was told.",
+            "fields": [
+              {
+                "name": "test_schedule_id",
+                "type": "string",
+                "description": "The schedule, unchanged in identity."
+              },
+              {
+                "name": "test_date",
+                "type": "date",
+                "description": "The date now set."
+              },
+              {
+                "name": "test_time",
+                "type": "string",
+                "description": "HH:mm, 24-hour."
+              },
+              {
+                "name": "teacher_name",
+                "type": "string",
+                "description": "Who will conduct it now."
+              },
+              {
+                "name": "previous_teacher_name",
+                "type": "string",
+                "description": "Who was removed, and told (BR-8)."
+              },
+              {
+                "name": "removed_teacher_delivery_status",
+                "type": "string",
+                "description": "Whether the removed teacher has been told. Queued until delivered."
+              },
+              {
+                "name": "family_delivery_status",
+                "type": "string",
+                "description": "Queued until the provider says otherwise."
+              },
+              {
+                "name": "reschedule_count",
+                "type": "integer",
+                "description": "How many times this test has moved."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RESCHEDULE_REASON_REQUIRED",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "No reason was given for the change.",
+              "written": "Nothing.",
+              "notWritten": "Not changed.",
+              "note": "Message: \"Give a reason for changing the schedule.\" Ask for it; never compose one."
+            },
+            {
+              "code": "DATE_IN_PAST",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The new date is before today.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            },
+            {
+              "code": "OUTSIDE_WORKING_HOURS",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The new time is outside working hours.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            },
+            {
+              "code": "SLOT_TAKEN",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The new slot is booked for another applicant.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            },
+            {
+              "code": "OVERRIDE_REASON_REQUIRED",
+              "mapsTo": "E5",
+              "httpStatus": 400,
+              "meaning": "The new teacher is outside the free list with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not changed."
+            },
+            {
+              "code": "ALREADY_TAKEN",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The applicant has already taken the test.",
+              "written": "Nothing.",
+              "notWritten": "Not changed.",
+              "note": "There is nothing to reschedule. Marking is the next act."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. It is why a family and two teachers are being told something changed, and it stays in the history beside the assignment it replaced (BR-7).",
+          "derivedFrom": [
+            "BR-7",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never pick a new slot or a new teacher the actor did not name. A reschedule moves a commitment that people have already been told about; choosing the replacement is the actor's decision twice over.",
+          "derivedFrom": [
+            "BR-3",
+            "E3",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Send only the fields the request actually changes. Resupplying the existing date on a teacher change re-sends the family a message about a date that did not move, and inflates reschedule_count.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report that the removed teacher was told. BR-8 exists so nobody turns up for a test that is no longer theirs, and a delivery status nobody reports is the failure it guards against.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never reschedule to deal with an absence. An applicant who missed the test is marked absent (UC-02-06 BR-10); whether they get another chance is a decision someone takes afterwards, not a correction to the schedule.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A reschedule cannot be undone; moving it back is another reschedule, with its own reason, and both stay in the history. Three sets of messages have gone out either way. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Bilal ka test budh ko kar do, Miss Nadia chutti pe hain",
+            "lang": "ur-Latn",
+            "gloss": "move Bilal's test to Wednesday, Miss Nadia is on leave"
+          },
+          "context": "School Admin, Johar Town branch. Today is 07-09-2026.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.reschedule",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase → \"Bilal\"",
+                "reschedule_reason": "Miss Nadia is on leave.",
+                "test_date": "2026-09-09",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the date moves. teacher_id is omitted because the request names no replacement — the reason explains the move, it does not choose the teacher (PR-2, PR-3)."
+            }
+          ],
+          "outcome": "The date moves to Wednesday and the family is told. The teacher is unchanged, so no removal message goes out. Report that the teacher on leave is still assigned — which is probably the next thing to fix."
+        },
+        {
+          "request": {
+            "text": "Miss Nadia ki jagah Mr Asif ko laga do, wo chutti pe hain",
+            "lang": "ur-Latn",
+            "gloss": "put Mr Asif in place of Miss Nadia, she is on leave"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.reschedule",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase",
+                "reschedule_reason": "Miss Nadia is on leave.",
+                "teacher_id": "$request.teacher_phrase → \"Mr Asif\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only the teacher changes. The date and time are omitted, so the slot does not move and the family is not told a new time (PR-3)."
+            }
+          ],
+          "outcome": "Mr Asif is assigned, Miss Nadia is told she is no longer taking it, and the family is told the change. All three delivery statuses come back and all three are reported (PR-4)."
+        },
+        {
+          "request": "move this test to the afternoon — the family can't get here in the morning",
+          "context": "School Admin, Johar Town branch, where the requested afternoon slot is already booked.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.reschedule",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase",
+                "reschedule_reason": "The family cannot travel in the morning.",
+                "test_time": "14:00",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged. The API returns SLOT_TAKEN (E3)."
+            }
+          ],
+          "outcome": "Nothing moves. Report that the slot is taken and offer the free alternatives, without booking one — and note that the original schedule still stands, so the family has not been told anything."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3060 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-07-01",
+    "name": "Build a section's weekly timetable, clash-checked as it is assigned, and publish it once approved",
+    "module": "Timetable",
+    "file": "../UseCases/UC-07-01.json",
+    "featureRef": "7.1 Timetable creation"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-07-01-PC-1",
+      "intent": {
+        "name": "timetable.slot.assign",
+        "summary": "Put a subject, a teacher and a room into one slot of a section's week. One step, and the clash check runs before it is saved rather than after.",
+        "routesHere": [
+          "assign maths with Sir Imran to Monday period 3 for 5-A",
+          {
+            "text": "5-A ke somwar ke teesre period mein maths, Imran sahib ke sath laga do",
+            "lang": "ur-Latn",
+            "gloss": "assign maths with Sir Imran to 5-A's Monday period 3"
+          },
+          {
+            "text": "is slot mein urdu ka period rakh do",
+            "lang": "ur-Latn",
+            "gloss": "put an Urdu period in this slot"
+          },
+          {
+            "text": "mangal ke doosre period mein science, madam Ayesha ko de do",
+            "lang": "ur-Latn",
+            "gloss": "give Tuesday period 2 to science with Madam Ayesha"
+          },
+          "put physics in Wednesday period 1, lab 2"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "is slot mein kaun se ustad khali hain",
+              "lang": "ur-Latn",
+              "gloss": "which teachers are free in this slot"
+            },
+            "goesTo": "timetable.freeteachers.list — UC-07-01-PC-3",
+            "note": "The free teachers come back with every refusal too (BR-8), but they can be asked for on their own."
+          },
+          {
+            "request": {
+              "text": "slot khali kar do",
+              "lang": "ur-Latn",
+              "gloss": "clear the slot"
+            },
+            "goesTo": "timetable.slot.clear — UC-07-01-PC-2",
+            "note": "A slot already holding a subject refuses a second one (BR-4, E5). Clearing it first is how a draft slot is changed."
+          },
+          {
+            "request": {
+              "text": "shaya-shuda timetable ka slot badal do",
+              "lang": "ur-Latn",
+              "gloss": "change a slot in the published timetable"
+            },
+            "goesTo": "timetable.change.propose — UC-07-01-PC-7",
+            "note": "A slot moved after families and staff have planned around it is a different act from an edit to a draft (BR-11)."
+          },
+          {
+            "request": {
+              "text": "kisi aur ustad ko cover par laga do",
+              "lang": "ur-Latn",
+              "gloss": "put another teacher on cover"
+            },
+            "goesTo": "Not offered here.",
+            "note": "Substitute cover is read by the clash check (BR-6) but arranged elsewhere."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "timetable.slot.assign",
+            "inputs": {
+              "section_id": "$request.section_phrase",
+              "day": "$request.day",
+              "period_id": "$request.period_phrase",
+              "subject_id": "$request.subject_phrase",
+              "teacher_id": "$request.teacher_phrase",
+              "room_id": "$request.room_phrase",
+              "session_id": "$session.academic_session_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and the check is part of it. Every assignment is checked for clashes as it is made, and one that conflicts is refused rather than saved and reported later (BR-3) — a clash saved is a clash somebody discovers on the day."
+          }
+        ],
+        "onFailure": "Stop and report, naming what the assignment clashed against and listing the teachers actually free in that slot. Both come back with the refusal (BR-7, BR-8), so the reply carries them rather than asking again.",
+        "atomicity": "One write: the slot and the audit entry together or not at all. Nothing in a draft is visible to a teacher, a student or a guardian (BR-9) — a slot assigned here commits nobody's week until the timetable is approved and published."
+      },
+      "operations": [
+        {
+          "name": "timetable.slot.assign",
+          "method": "POST",
+          "path": "/api/v1/timetables/{section_id}/slots",
+          "kind": "create",
+          "idempotent": true,
+          "idempotencyKey": "section_id + day + period_id, since a section holds one subject per slot",
+          "purpose": "Assign a subject, teacher and optional room to one day-and-period slot, clash-checked before saving.",
+          "parameters": [
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No section matches within the actor's scope. A class name alone is not a section.",
+                "onAmbiguous": "Ask, naming the sections the class carries — a timetable cannot be built for a class as a whole (BR-1)."
+              },
+              "notes": "The section the timetable belongs to. A timetable is held against a section, not a class — 5-A and 5-B have different teachers in different slots (BR-1)."
+            },
+            {
+              "name": "day",
+              "source": "request",
+              "sourceRef": "$request.day",
+              "required": true,
+              "type": "enum: Monday | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday",
+              "notes": "A working day of the week, per the off-day calendar."
+            },
+            {
+              "name": "period_id",
+              "source": "resolved",
+              "sourceRef": "$request.period_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "period",
+                "fromPhrase": "$request.period_phrase",
+                "onNoMatch": "Refuse. No period matches in the section's period structure — or the section has none at all, in which case no timetable can be built (E1).",
+                "onAmbiguous": "Ask, naming the periods with their start and end times."
+              },
+              "notes": "A period from the section's period structure, with its start and end time. No feature in the document creates that structure and it must already exist (BR-14, E1)."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. That subject is not attached to the class and cannot be timetabled for it (BR-2).",
+                "onAmbiguous": "Ask, naming the subjects the class carries."
+              },
+              "notes": "A subject the class carries (BR-2, E2)."
+            },
+            {
+              "name": "teacher_id",
+              "source": "resolved",
+              "sourceRef": "$request.teacher_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "staff",
+                "fromPhrase": "$request.teacher_phrase",
+                "onNoMatch": "Refuse. No staff member matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the candidates with the subjects they teach."
+              },
+              "notes": "A teacher who teaches that subject (BR-2, E3), checked against all five clash conditions before the slot is accepted (BR-4, BR-5, BR-6)."
+            },
+            {
+              "name": "room_id",
+              "source": "resolved",
+              "sourceRef": "$request.room_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "room",
+                "fromPhrase": "$request.room_phrase",
+                "onNoMatch": "Refuse. No room matches.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Where the period is held. Optional. Checked for a double booking where one is set (BR-5) — no feature in the document creates rooms, which is an open question in this use case."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The slot as assigned, or the refusal with what it clashed against.",
+            "fields": [
+              {
+                "name": "section_id",
+                "type": "string",
+                "description": "The section."
+              },
+              {
+                "name": "day",
+                "type": "string",
+                "description": "The day."
+              },
+              {
+                "name": "period_id",
+                "type": "string",
+                "description": "The period, with its start and end time."
+              },
+              {
+                "name": "subject_id",
+                "type": "string",
+                "description": "The subject."
+              },
+              {
+                "name": "teacher_id",
+                "type": "string",
+                "description": "The teacher."
+              },
+              {
+                "name": "room_id",
+                "type": "string",
+                "description": "The room, where one was set."
+              },
+              {
+                "name": "slots_unassigned",
+                "type": "integer",
+                "description": "Used slots in the week still carrying nothing. The timetable cannot be submitted while any remains (E9)."
+              },
+              {
+                "name": "teacher_periods_this_week",
+                "type": "integer",
+                "description": "How many periods this teacher now carries in the week. Nothing enforces a maximum — whether there is one is an open question in this use case."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SUBJECT_NOT_IN_CLASS",
+              "mapsTo": "E2",
+              "httpStatus": 409,
+              "meaning": "The subject is not attached to the class.",
+              "written": "Nothing.",
+              "notWritten": "No slot assigned.",
+              "note": "A subject not attached to the class cannot be timetabled for it (BR-2)."
+            },
+            {
+              "code": "TEACHER_DOES_NOT_TEACH_SUBJECT",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "The teacher does not teach that subject.",
+              "written": "Nothing.",
+              "notWritten": "No slot assigned."
+            },
+            {
+              "code": "TEACHER_TEACHING_ELSEWHERE",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The teacher is already teaching another section in that slot.",
+              "written": "Nothing.",
+              "notWritten": "No slot assigned.",
+              "note": "The message names the section they are teaching, and lists the teachers free in that slot (BR-4, BR-7, BR-8)."
+            },
+            {
+              "code": "SECTION_SLOT_TAKEN",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The section already holds a subject in that slot.",
+              "written": "Nothing.",
+              "notWritten": "No slot assigned.",
+              "note": "The message names what is there. Clearing it first is how a draft slot is changed (BR-4)."
+            },
+            {
+              "code": "ROOM_DOUBLE_BOOKED",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The room is already booked in that slot.",
+              "written": "Nothing.",
+              "notWritten": "No slot assigned.",
+              "note": "The message names what has the room (BR-5, BR-7)."
+            },
+            {
+              "code": "TEACHER_ON_LEAVE",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The teacher is on approved leave, or otherwise marked unavailable, in that slot.",
+              "written": "Nothing.",
+              "notWritten": "No slot assigned.",
+              "note": "The message names the unavailability and lists the free teachers (BR-6, BR-8)."
+            },
+            {
+              "code": "TEACHER_COVERING",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The teacher is already assigned as a substitute in that slot.",
+              "written": "Nothing.",
+              "notWritten": "No slot assigned.",
+              "note": "A teacher covering another class is not free, however empty their own timetable looks (BR-6)."
+            },
+            {
+              "code": "NO_PERIOD_STRUCTURE",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The section has no period structure.",
+              "written": "Nothing.",
+              "notWritten": "No slot assigned.",
+              "note": "No grid can be built. The structure must exist first, and no feature in the document creates one (BR-14)."
+            },
+            {
+              "code": "SLOT_TAKEN_CONCURRENTLY",
+              "mapsTo": "E12",
+              "httpStatus": 409,
+              "meaning": "Another coordinator assigned the same slot first.",
+              "written": "Nothing.",
+              "notWritten": "No slot assigned.",
+              "note": "The second is refused against the first, per concurrency-and-locking (E12)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never choose the teacher. Which teacher takes a class is the Coordinator's decision, and this call commits somebody's working week for a session.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never work around a clash. All five conditions are refusals, not warnings (BR-3, BR-4, BR-5, BR-6) — a plan that moved to the next free period, or dropped the room to get past a double booking, has rewritten the timetable to suit itself.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4",
+            "BR-5",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report what the assignment clashed against, by name. Told only that there is a conflict, a coordinator has to find it themselves (BR-7) — the section, the leave or the room that has it comes back with the refusal.",
+          "derivedFrom": [
+            "BR-7",
+            "E4",
+            "E6",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the free teachers that come back with a refusal. They are those who teach the subject and have no class, no substitute cover and no unavailability at that time (BR-8), so a replacement is chosen from a list rather than by checking teachers one by one.",
+          "derivedFrom": [
+            "BR-8",
+            "E13"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report an empty free-teacher list honestly. Where nobody is free the refusal stands, and suggesting somebody unsuitable is worse than saying so (E13).",
+          "derivedFrom": [
+            "BR-8",
+            "E13"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never assign into a slot that already holds a subject. E5 is BR-4 working; clearing the slot first is a deliberate act on a draft (BR-9).",
+          "derivedFrom": [
+            "BR-4",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never treat the section as a class. A timetable is held against a section, and a request naming only a class has not said which of 5-A or 5-B is meant (BR-1).",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "Never describe a draft slot as scheduled for anybody. Nothing in a draft is visible to a teacher, a student or a guardian (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-9",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "timetable.slot.clear",
+        "statement": "Clearing the slot, which is an ordinary edit while the timetable is a draft (BR-9). Once published, a slot moves only through a proposed change that carries a reason and goes back through approval (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "5-A ke somwar ke teesre period mein maths, Imran sahib ke sath laga do",
+            "lang": "ur-Latn",
+            "gloss": "assign maths with Sir Imran to 5-A's Monday period 3"
+          },
+          "context": "Coordinator, Johar Town branch, on a draft timetable. No room named.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.slot.assign",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"5-A\"",
+                "day": "Monday",
+                "period_id": "$request.period_phrase → \"period 3\"",
+                "subject_id": "$request.subject_phrase → \"maths\"",
+                "teacher_id": "$request.teacher_phrase → \"Imran\"",
+                "room_id": "omitted",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The room is left out rather than guessed — it is optional and checked only where set (BR-5)."
+            }
+          ],
+          "outcome": "Assigned. Report how many used slots are still empty, and how many periods Sir Imran now carries this week — nothing enforces a maximum, so the figure is the only signal there is."
+        },
+        {
+          "request": {
+            "text": "mangal ke doosre period mein Imran sahib ko science de do",
+            "lang": "ur-Latn",
+            "gloss": "give Tuesday period 2 to science with Sir Imran"
+          },
+          "context": "Coordinator, Johar Town branch, where Sir Imran is teaching 6-B in that slot.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.slot.assign",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "day": "Tuesday",
+                "period_id": "$request.period_phrase",
+                "subject_id": "$request.subject_phrase",
+                "teacher_id": "$request.teacher_phrase → \"Imran\"",
+                "room_id": "omitted",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. No alternative period or teacher is substituted (PR-2). The API returns TEACHER_TEACHING_ELSEWHERE (E4)."
+            }
+          ],
+          "outcome": "Nothing is assigned. Report that Sir Imran is teaching 6-B in that slot (PR-3), and list the teachers who teach science and are genuinely free then (PR-4) — the choice of replacement is the Coordinator's, from that list."
+        },
+        {
+          "request": {
+            "text": "baqi khali slots khud bhar do",
+            "lang": "ur-Latn",
+            "gloss": "fill in the remaining empty slots yourself"
+          },
+          "context": "Coordinator, Johar Town branch, on a half-built draft.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.slot.assign",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "day": "$request.day — absent",
+                "period_id": "$request.period_phrase — absent",
+                "subject_id": "$request.subject_phrase — absent",
+                "teacher_id": "$request.teacher_phrase — absent",
+                "room_id": "omitted",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. Which subject and which teacher go in each slot has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is assigned. List the empty slots and offer, for any one of them, the teachers who teach a given subject and are free then — a week filled in on the Coordinator's behalf commits every one of those teachers to it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-07-01-PC-2",
+      "intent": {
+        "name": "timetable.slot.clear",
+        "summary": "Empty one slot of a draft timetable. One step, and it is an ordinary edit while nothing is published.",
+        "routesHere": [
+          "clear Monday period 3 for 5-A",
+          {
+            "text": "5-A ke somwar ka teesra period khali kar do",
+            "lang": "ur-Latn",
+            "gloss": "clear 5-A's Monday period 3"
+          },
+          {
+            "text": "is slot se subject hata do",
+            "lang": "ur-Latn",
+            "gloss": "take the subject out of this slot"
+          },
+          {
+            "text": "ye period khali karna hai taake doosra laga sakein",
+            "lang": "ur-Latn",
+            "gloss": "we need this period empty so we can put another in"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "shaya-shuda timetable ka period hata do",
+              "lang": "ur-Latn",
+              "gloss": "remove a period from the published timetable"
+            },
+            "goesTo": "timetable.change.propose — UC-07-01-PC-7",
+            "note": "A published slot moves only through a proposed change carrying a reason, back through the same approval (BR-11)."
+          },
+          {
+            "request": {
+              "text": "slot ko doosre period par le jao",
+              "lang": "ur-Latn",
+              "gloss": "move the slot to another period"
+            },
+            "goesTo": "timetable.slot.clear then timetable.slot.assign",
+            "note": "Moving a slot on a draft is clearing one and assigning another, and the clash check runs on the new one."
+          },
+          {
+            "request": {
+              "text": "poora timetable mita do",
+              "lang": "ur-Latn",
+              "gloss": "delete the whole timetable"
+            },
+            "goesTo": "Not offered.",
+            "note": "A timetable is never deleted. One that is replaced carries the previous as superseded, so a past week stays readable (BR-15)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "timetable.slot.clear",
+            "inputs": {
+              "section_id": "$request.section_phrase",
+              "day": "$request.day",
+              "period_id": "$request.period_phrase",
+              "session_id": "$session.academic_session_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. While the timetable is a draft the coordinator builds and edits it freely, and nothing in it is visible to a teacher, a student or a guardian (BR-9)."
+          }
+        ],
+        "onFailure": "Stop and report. Clearing a slot in a published timetable is refused, because a published slot moves only through a proposed change (BR-11).",
+        "atomicity": "One write: the slot emptied and the audit entry together or not at all. Nobody is told anything — a draft commits nobody's week (BR-9). The slot counts as unassigned again, and the timetable cannot be submitted while a used slot carries nothing (E9)."
+      },
+      "operations": [
+        {
+          "name": "timetable.slot.clear",
+          "method": "DELETE",
+          "path": "/api/v1/timetables/{section_id}/slots/{day}/{period_id}",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "section_id + day + period_id, since a slot is cleared once",
+          "purpose": "Empty one slot of a draft timetable.",
+          "parameters": [
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No section matches within the actor's scope. A class name alone is not a section.",
+                "onAmbiguous": "Ask, naming the sections the class carries (BR-1)."
+              },
+              "notes": "The section the timetable belongs to. A timetable is held against a section, not a class (BR-1)."
+            },
+            {
+              "name": "day",
+              "source": "request",
+              "sourceRef": "$request.day",
+              "required": true,
+              "type": "enum: Monday | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday",
+              "notes": "A working day of the week, per the off-day calendar."
+            },
+            {
+              "name": "period_id",
+              "source": "resolved",
+              "sourceRef": "$request.period_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "period",
+                "fromPhrase": "$request.period_phrase",
+                "onNoMatch": "Refuse. No period matches in the section's period structure.",
+                "onAmbiguous": "Ask, naming the periods with their start and end times."
+              },
+              "notes": "A period from the section's period structure (BR-14)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The slot as cleared.",
+            "fields": [
+              {
+                "name": "section_id",
+                "type": "string",
+                "description": "The section."
+              },
+              {
+                "name": "day",
+                "type": "string",
+                "description": "The day."
+              },
+              {
+                "name": "period_id",
+                "type": "string",
+                "description": "The period."
+              },
+              {
+                "name": "previous_subject",
+                "type": "string",
+                "description": "What was there."
+              },
+              {
+                "name": "previous_teacher",
+                "type": "string",
+                "description": "Who was assigned. Their week is one period lighter."
+              },
+              {
+                "name": "slots_unassigned",
+                "type": "integer",
+                "description": "Used slots now carrying nothing. The timetable cannot be submitted while any remains (E9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "TIMETABLE_PUBLISHED",
+              "mapsTo": "E11",
+              "httpStatus": 409,
+              "meaning": "The timetable is published.",
+              "written": "Nothing.",
+              "notWritten": "Nothing cleared.",
+              "note": "A published slot moves only through a proposed change carrying a reason (BR-11)."
+            },
+            {
+              "code": "SLOT_EMPTY",
+              "mapsTo": "E5",
+              "httpStatus": 409,
+              "meaning": "The slot already carries nothing.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never clear a slot to make room for an assignment the actor did not ask for. Clearing is a decision about what comes out, and the two acts are separate for that reason.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never clear a published slot. E11 is BR-11 working: staff and families have planned around it, and taking it out silently is exactly what the approval on a change exists to prevent.",
+          "derivedFrom": [
+            "BR-11",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report what was in the slot. A cleared period is a teacher's week one period lighter, and the Coordinator should see what they have just taken out.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the count of unassigned slots. The timetable cannot be submitted while a used slot carries nothing (E9), and clearing moves that count the wrong way.",
+          "derivedFrom": [
+            "BR-10",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "timetable.slot.assign",
+        "statement": "Assigning the slot again, which runs the clash check afresh — the teacher who was there may no longer be free."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "5-A ke somwar ka teesra period khali kar do",
+            "lang": "ur-Latn",
+            "gloss": "clear 5-A's Monday period 3"
+          },
+          "context": "Coordinator, Johar Town branch, on a draft.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.slot.clear",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"5-A\"",
+                "day": "Monday",
+                "period_id": "$request.period_phrase → \"period 3\"",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Cleared. Report what came out and the new count of empty slots (PR-3, PR-4) — the timetable cannot go for approval while any used slot is empty."
+        },
+        {
+          "request": {
+            "text": "somwar ke teesre period ko chauthe par le jao",
+            "lang": "ur-Latn",
+            "gloss": "move Monday period 3 to period 4"
+          },
+          "context": "Coordinator, Johar Town branch, on a draft.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.slot.clear",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "day": "Monday",
+                "period_id": "$request.period_phrase → \"period 3\"",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The clearing only. The assignment into period 4 is a separate act, and its clash check has to run (PR-1)."
+            }
+          ],
+          "outcome": "Period 3 is cleared. Report what came out, and that assigning it into period 4 is checked afresh — the same teacher may be teaching another section then, in which case the move cannot happen as asked."
+        },
+        {
+          "request": {
+            "text": "shaya-shuda timetable se ye period nikal do",
+            "lang": "ur-Latn",
+            "gloss": "take this period out of the published timetable"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.slot.clear",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "day": "$request.day",
+                "period_id": "$request.period_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. The API returns TIMETABLE_PUBLISHED (E11)."
+            }
+          ],
+          "outcome": "Nothing is cleared. Report that a published slot moves through a proposed change with a written reason, approved by the School Admin, after which every affected teacher, student and guardian is told exactly what changed."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-07-01-PC-3",
+      "intent": {
+        "name": "timetable.freeteachers.list",
+        "summary": "List the teachers genuinely free in one slot for a subject. One step, reads nothing but availability, and changes nothing.",
+        "routesHere": [
+          "who is free to teach maths on Tuesday period 2?",
+          {
+            "text": "mangal ke doosre period mein maths ke liye kaun khali hai",
+            "lang": "ur-Latn",
+            "gloss": "who is free for maths on Tuesday period 2"
+          },
+          {
+            "text": "is slot mein kaun se ustad free hain",
+            "lang": "ur-Latn",
+            "gloss": "which teachers are free in this slot"
+          },
+          {
+            "text": "science parhane wale kaun se ustad us waqt khali hain",
+            "lang": "ur-Latn",
+            "gloss": "which science teachers are free at that time"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "khali ustad ko slot par laga do",
+              "lang": "ur-Latn",
+              "gloss": "assign the free teacher to the slot"
+            },
+            "goesTo": "timetable.slot.assign — UC-07-01-PC-1",
+            "note": "The list is for choosing from. Assigning is the Coordinator's next act, and it runs the clash check again."
+          },
+          {
+            "request": {
+              "text": "kisi ustad ka poora hafta dikhao",
+              "lang": "ur-Latn",
+              "gloss": "show a teacher's whole week"
+            },
+            "goesTo": "Not offered here.",
+            "note": "This answers one slot for one subject."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "timetable.freeteachers.list",
+            "inputs": {
+              "day": "$request.day",
+              "period_id": "$request.period_phrase",
+              "subject_id": "$request.subject_phrase",
+              "session_id": "$session.academic_session_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reads only. Free means teaching no class, covering no substitution and carrying no unavailability at that time (BR-8)."
+          }
+        ],
+        "onFailure": "Stop and report. There is nothing to undo — nothing was written.",
+        "atomicity": "No write. The same list comes back with every refused assignment (BR-8); this asks for it on its own, before an assignment is attempted rather than after one is refused."
+      },
+      "operations": [
+        {
+          "name": "timetable.freeteachers.list",
+          "method": "GET",
+          "path": "/api/v1/timetables/free-teachers",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List the teachers who teach the subject and are genuinely free in the slot.",
+          "parameters": [
+            {
+              "name": "day",
+              "source": "request",
+              "sourceRef": "$request.day",
+              "required": true,
+              "type": "enum: Monday | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday",
+              "notes": "A working day of the week, per the off-day calendar."
+            },
+            {
+              "name": "period_id",
+              "source": "resolved",
+              "sourceRef": "$request.period_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "period",
+                "fromPhrase": "$request.period_phrase",
+                "onNoMatch": "Refuse. No period matches in the section's period structure.",
+                "onAmbiguous": "Ask, naming the periods with their start and end times."
+              },
+              "notes": "A period from the section's period structure (BR-14)."
+            },
+            {
+              "name": "subject_id",
+              "source": "resolved",
+              "sourceRef": "$request.subject_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "subject",
+                "fromPhrase": "$request.subject_phrase",
+                "onNoMatch": "Refuse. No subject matches.",
+                "onAmbiguous": "Ask, naming the subjects the class carries."
+              },
+              "notes": "The subject to be taught. Only teachers who teach it are listed (BR-8)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The teachers free in that slot.",
+            "fields": [
+              {
+                "name": "free_teachers",
+                "type": "object[]",
+                "description": "Each with their name, the subjects they teach and how many periods they carry this week. Free means no class, no substitute cover and no unavailability at that time (BR-8)."
+              },
+              {
+                "name": "count",
+                "type": "integer",
+                "description": "How many. Zero is a real answer (E13)."
+              },
+              {
+                "name": "excluded",
+                "type": "object[]",
+                "description": "Teachers of the subject who are not free, each with what has them — a class, a cover, or an unavailability. Named rather than silently dropped (BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERIOD_STRUCTURE",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The section has no period structure.",
+              "written": "Nothing.",
+              "notWritten": "Nothing read.",
+              "note": "There is no slot to ask about (BR-14)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report an empty list as an empty list. Where nobody is free the honest answer is nobody, and offering a teacher who is covering elsewhere or on leave would put a name in front of a coordinator who is about to use it (E13).",
+          "derivedFrom": [
+            "BR-8",
+            "E13"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never recommend one teacher from the list. It is ordered by how few periods they already carry, and choosing between them is the Coordinator's judgement about workload and about the class.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never chain an assignment onto the list. The list is a read; the assignment commits somebody's week and runs its own clash check (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report who was excluded and why. A coordinator wondering where a particular teacher is finds them in that list rather than assuming they were overlooked (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Nothing was written, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "mangal ke doosre period mein maths ke liye kaun khali hai",
+            "lang": "ur-Latn",
+            "gloss": "who is free for maths on Tuesday period 2"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.freeteachers.list",
+              "inputs": {
+                "day": "Tuesday",
+                "period_id": "$request.period_phrase → \"period 2\"",
+                "subject_id": "$request.subject_phrase → \"maths\"",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Three teachers come back, fewest periods first. Report them without recommending one (PR-2), and report the maths teachers who are not free with what has each of them (PR-4)."
+        },
+        {
+          "request": {
+            "text": "is slot ke liye koi bhi ustad dhoond do",
+            "lang": "ur-Latn",
+            "gloss": "find me any teacher for this slot"
+          },
+          "context": "Coordinator, Johar Town branch, where nobody who teaches the subject is free.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.freeteachers.list",
+              "inputs": {
+                "day": "$request.day",
+                "period_id": "$request.period_phrase",
+                "subject_id": "$request.subject_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "The list comes back empty. Say so plainly (PR-1) and report what has each of the subject's teachers — a class, a cover or leave. Naming somebody who teaches a different subject, or who is covering elsewhere, would be worse than the empty answer."
+        },
+        {
+          "request": {
+            "text": "kaun khali hai, usi ko laga bhi do",
+            "lang": "ur-Latn",
+            "gloss": "who is free — and assign them"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.freeteachers.list",
+              "inputs": {
+                "day": "$request.day",
+                "period_id": "$request.period_phrase",
+                "subject_id": "$request.subject_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The list only. The assignment is not chained (PR-3)."
+            }
+          ],
+          "outcome": "The free teachers come back. Report them and ask which — assigning commits that teacher's week for the session, and the list is ordered by load rather than by suitability for this class."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-07-01-PC-4",
+      "intent": {
+        "name": "timetable.approval.submit",
+        "summary": "Send a completed draft timetable to the School Admin. One step, and it publishes nothing.",
+        "routesHere": [
+          "send 5-A's timetable for approval",
+          {
+            "text": "5-A ka timetable manzoori ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send 5-A's timetable for approval"
+          },
+          {
+            "text": "timetable mukammal hai, aage bhej do",
+            "lang": "ur-Latn",
+            "gloss": "the timetable is complete, send it on"
+          },
+          {
+            "text": "School Admin ko manzoori ke liye bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send it to the School Admin for approval"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "khud manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve it yourself"
+            },
+            "goesTo": "timetable.approve — UC-07-01-PC-5",
+            "note": "The Coordinator builds and the School Admin approves (BR-10)."
+          },
+          {
+            "request": {
+              "text": "timetable shaya kar do",
+              "lang": "ur-Latn",
+              "gloss": "publish the timetable"
+            },
+            "goesTo": "timetable.publish — UC-07-01-PC-8",
+            "note": "A timetable cannot be published unapproved, because it commits every teacher's working week (BR-10, E10)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "timetable.approval.submit",
+            "inputs": {
+              "section_id": "$request.section_phrase",
+              "session_id": "$session.academic_session_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Every used slot must carry an assignment before it goes (E9), and nothing is published by sending it."
+          }
+        ],
+        "onFailure": "Stop and report. An unassigned used slot is enforced by the API and arrives as an error naming the slots.",
+        "atomicity": "One write: the timetable moves to Awaiting approval, with the audit entry. Nothing is visible to a teacher, a student or a guardian (BR-9). Nothing checks that a subject has its required periods for the week — whether it should is an open question in this use case, so a timetable can go for approval short of a subject's periods."
+      },
+      "operations": [
+        {
+          "name": "timetable.approval.submit",
+          "method": "POST",
+          "path": "/api/v1/timetables/{section_id}/submit",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "section_id + session_id, since a timetable sits in one place at a time",
+          "purpose": "Send the timetable to the School Admin for approval.",
+          "parameters": [
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No section matches within the actor's scope. A class name alone is not a section.",
+                "onAmbiguous": "Ask, naming the sections the class carries (BR-1)."
+              },
+              "notes": "The section whose timetable this is. A timetable is held against a section, not a class (BR-1)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The submission.",
+            "fields": [
+              {
+                "name": "section_id",
+                "type": "string",
+                "description": "The section."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval."
+              },
+              {
+                "name": "slots_assigned",
+                "type": "integer",
+                "description": "Slots carrying a subject and a teacher."
+              },
+              {
+                "name": "teacher_loads",
+                "type": "object[]",
+                "description": "Each teacher in the timetable with their periods this week. Nothing enforces a maximum — whether there is one is an open question."
+              },
+              {
+                "name": "subject_period_counts",
+                "type": "object[]",
+                "description": "Periods assigned per subject. Nothing checks these against a required number."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SLOT_UNASSIGNED",
+              "mapsTo": "E9",
+              "httpStatus": 409,
+              "meaning": "A used slot carries no assignment.",
+              "written": "Nothing.",
+              "notWritten": "Not submitted.",
+              "note": "The message names the day and period of each (E9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve as part of submitting. The Coordinator builds and the School Admin approves (BR-10), and a timetable commits every teacher's working week — one person doing both removes the only check on it.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report the blocking slots by day and period. \"Some slots are empty\" sends a coordinator across a whole grid (E9).",
+          "derivedFrom": [
+            "BR-10",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report each teacher's load. Nothing enforces a maximum anywhere in this use case, so the figures at submission are the only moment anybody sees a teacher carrying thirty periods.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the periods assigned per subject without judging them. Nothing checks a subject's required periods per week, and a section can be published short — worth showing rather than deciding.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never describe submission as publication. Nothing reaches a teacher, a student or a guardian until it is approved and published (BR-9, BR-10).",
+          "derivedFrom": [
+            "BR-9",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A submission is not withdrawn here. The School Admin returns it with a reason (A6), which sends it back to the Coordinator with nothing published."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "5-A ka timetable manzoori ke liye bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send 5-A's timetable for approval"
+          },
+          "context": "Coordinator, Johar Town branch, every used slot assigned.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.approval.submit",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"5-A\"",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "It sits with the School Admin. Report each teacher's periods for the week (PR-3) and the periods per subject (PR-4) — neither is checked by anything, and this is the last look before somebody's week is committed."
+        },
+        {
+          "request": {
+            "text": "timetable bhej do, do slots baad mein bhar denge",
+            "lang": "ur-Latn",
+            "gloss": "send the timetable, we will fill two slots later"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.approval.submit",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted as asked. The API returns SLOT_UNASSIGNED (E9)."
+            }
+          ],
+          "outcome": "Not submitted. Name the day and period of each empty slot (PR-2) — a published timetable is what period attendance and teacher duties read, and a slot that does not exist in it cannot be marked or assigned."
+        },
+        {
+          "request": {
+            "text": "timetable bhej kar manzoor bhi kar do",
+            "lang": "ur-Latn",
+            "gloss": "send the timetable and approve it too"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.approval.submit",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The submission only. The approval is not chained (PR-1)."
+            }
+          ],
+          "outcome": "Submitted. Report that the School Admin approves — the timetable commits every teacher in it to a weekly schedule for the session, and that check is the reason building and approving are different people's acts."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-07-01-PC-5",
+      "intent": {
+        "name": "timetable.approve",
+        "summary": "Approve a section's timetable. School Admin only, one step, and it publishes nothing on its own.",
+        "routesHere": [
+          "approve 5-A's timetable",
+          {
+            "text": "5-A ka timetable manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve 5-A's timetable"
+          },
+          {
+            "text": "timetable theek hai, manzoori de do",
+            "lang": "ur-Latn",
+            "gloss": "the timetable is right, approve it"
+          },
+          {
+            "text": "manzoori de kar shaya bhi kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve it and publish it as well"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "manzoor nahi, wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "not approved, send it back"
+            },
+            "goesTo": "timetable.return — UC-07-01-PC-6"
+          },
+          {
+            "request": {
+              "text": "ustadon ko bata do",
+              "lang": "ur-Latn",
+              "gloss": "tell the teachers"
+            },
+            "goesTo": "timetable.publish — UC-07-01-PC-8",
+            "note": "Approval permits publication; publishing is what reaches teachers, students and guardians."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "timetable.approve",
+            "inputs": {
+              "section_id": "$request.section_phrase",
+              "session_id": "$session.academic_session_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It permits publication and performs none — the lifecycle carries Approved and Published as separate states, and publication is triggered by a person (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the approval and the audit entry together or not at all. Nothing reaches a teacher, a student or a guardian yet. This is the check that stands between a draft and every teacher's committed week (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "timetable.approve",
+          "method": "POST",
+          "path": "/api/v1/timetables/{section_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "section_id + session_id, since a timetable is approved once",
+          "purpose": "Approve the timetable for publication.",
+          "parameters": [
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No section matches within the actor's scope. A class name alone is not a section.",
+                "onAmbiguous": "Ask, naming the sections the class carries (BR-1)."
+              },
+              "notes": "The section whose timetable this is. A timetable is held against a section, not a class (BR-1)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The approval.",
+            "fields": [
+              {
+                "name": "section_id",
+                "type": "string",
+                "description": "The section."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved. Not published (BR-10)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "slots_assigned",
+                "type": "integer",
+                "description": "Slots in the week."
+              },
+              {
+                "name": "teacher_loads",
+                "type": "object[]",
+                "description": "Each teacher with their periods this week, as approved."
+              },
+              {
+                "name": "supersedes",
+                "type": "string",
+                "description": "An existing published timetable for this section, which publication will mark superseded (BR-15)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The timetable is in Draft, Returned, Published or Superseded.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Report the state it is actually in."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never chain publication onto approval. The lifecycle holds Approved and Published as separate states and names a person as publisher (BR-10) — and publishing messages every teacher, student and guardian attached to the section.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report each teacher's load at approval. Approving is the moment those weeks are committed, and nothing else in the use case checks the figures.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where an existing published timetable will be superseded. Publication replaces it and the old one stays readable (BR-15), but the section's week is about to change for everybody in it.",
+          "derivedFrom": [
+            "BR-15"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never approve a timetable the actor built. The Coordinator builds and the School Admin approves (BR-10), and the separation is the only check on a week that binds every teacher in it.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn. A timetable found wrong before publication is returned to the Coordinator, and after publication a change goes through the same approval with a reason (BR-11)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "5-A ka timetable manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve 5-A's timetable"
+          },
+          "context": "School Admin, Johar Town branch, on a timetable awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.approve",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"5-A\"",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only. No publication is chained (PR-1)."
+            }
+          ],
+          "outcome": "Approved and still visible to nobody. Report that publishing is the next act and that it tells every teacher in the timetable, and the section's students and guardians."
+        },
+        {
+          "request": {
+            "text": "manzoor kar ke sab ko bhej do",
+            "lang": "ur-Latn",
+            "gloss": "approve it and send it to everybody"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.approve",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval only (PR-1)."
+            }
+          ],
+          "outcome": "Approved. Report the teacher loads as approved (PR-2) and that publishing is a separate act — worth taking deliberately, since it commits and announces every one of those weeks at once."
+        },
+        {
+          "request": {
+            "text": "timetable manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the timetable"
+          },
+          "context": "School Admin, Johar Town branch, where the section already has a published timetable.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.approve",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved, and supersedes names the timetable currently published. Report it (PR-3) — publishing this one replaces the week the section is running now, and the old one stays readable as superseded rather than disappearing."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-07-01-PC-6",
+      "intent": {
+        "name": "timetable.return",
+        "summary": "Return a timetable to the Coordinator with the reason it was not approved. School Admin only, one step.",
+        "routesHere": [
+          "return this timetable — Sir Imran has eight periods on Monday",
+          {
+            "text": "timetable wapas bhej do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "return the timetable with a reason"
+          },
+          {
+            "text": "manzoor nahi kar sakte, theek kar ke dobara bhejo",
+            "lang": "ur-Latn",
+            "gloss": "we cannot approve it, correct it and send it again"
+          },
+          {
+            "text": "kisi ustad par bohat bojh hai, wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "one teacher is overloaded, send it back"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "timetable manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the timetable"
+            },
+            "goesTo": "timetable.approve — UC-07-01-PC-5"
+          },
+          {
+            "request": {
+              "text": "khud theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix it yourself"
+            },
+            "goesTo": "timetable.slot.assign — UC-07-01-PC-1",
+            "note": "Returning asks the Coordinator to rebuild it. Which teacher goes where is theirs to decide."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "timetable.return",
+            "inputs": {
+              "section_id": "$request.section_phrase",
+              "reason": "$request.reason",
+              "session_id": "$session.academic_session_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing has been published and nobody has planned around it (A6)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. It goes back to the Coordinator as a draft. No teacher, student or guardian is told anything, because nothing was ever visible to them (BR-9)."
+      },
+      "operations": [
+        {
+          "name": "timetable.return",
+          "method": "POST",
+          "path": "/api/v1/timetables/{section_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "section_id + session_id, since a timetable sits in one place at a time",
+          "purpose": "Return the timetable to the Coordinator with the reason.",
+          "parameters": [
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No section matches within the actor's scope. A class name alone is not a section.",
+                "onAmbiguous": "Ask, naming the sections the class carries (BR-1)."
+              },
+              "notes": "The section whose timetable this is. A timetable is held against a section, not a class (BR-1)."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required. What the Coordinator should change — they rebuild from it."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "section_id",
+                "type": "string",
+                "description": "The section."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. It sits with the Coordinator again."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "coordinator_notified",
+                "type": "string",
+                "description": "Delivery status."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E11",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned.",
+              "note": "Ask what should change; never compose one."
+            },
+            {
+              "code": "NOT_AWAITING_APPROVAL",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The timetable is not awaiting approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. The Coordinator rebuilds a week from it, and a reason a planner wrote sends them reassigning teachers on a guess.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never notify teachers, students or guardians of a return. Nothing was published to them, and telling them a timetable was not approved would be the first they had heard of it (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never plan the rebuild alongside the return. What to change is the Coordinator's, and each reassignment runs its own clash check (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. The Coordinator corrects the timetable and resubmits, which is the route back."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "timetable wapas bhej do — Imran sahib ke somwar ko aath period hain",
+            "lang": "ur-Latn",
+            "gloss": "return the timetable — Sir Imran has eight periods on Monday"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.return",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "reason": "Sir Imran carries eight periods on Monday. Spread his load across the week and resubmit.",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the School Admin's own words (PR-1)."
+            }
+          ],
+          "outcome": "Returned to the Coordinator as a draft. Nothing was published, so nothing has to be retracted and no teacher is told anything (PR-2)."
+        },
+        {
+          "request": {
+            "text": "ye timetable wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return this timetable"
+          },
+          "context": "School Admin, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.return",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "reason": "$request.reason — absent",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The reason has nothing to take it from (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what should change — a returned timetable with no reason sends the Coordinator back to a full grid with no idea which slot was wrong."
+        },
+        {
+          "request": {
+            "text": "wapas bhej do aur Imran sahib ke period bhi kam kar do",
+            "lang": "ur-Latn",
+            "gloss": "return it and reduce Sir Imran's periods as well"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.return",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "reason": "$request.reason",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The return only. The reassignment is not chained (PR-3)."
+            }
+          ],
+          "outcome": "Returned with the reason. Report that the Coordinator rebuilds — every slot moved runs its own clash check, and which teacher takes the periods Sir Imran gives up is a decision about the class, not an adjustment to a total."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-07-01-PC-7",
+      "intent": {
+        "name": "timetable.change.propose",
+        "summary": "Propose a change to a published timetable, with the reason. One step, and it changes nothing until the School Admin approves it.",
+        "routesHere": [
+          "propose moving 5-A's Monday period 3 to Sir Ahmed — Sir Imran has left",
+          {
+            "text": "shaya-shuda timetable mein tabdeeli tajweez karo",
+            "lang": "ur-Latn",
+            "gloss": "propose a change to the published timetable"
+          },
+          {
+            "text": "somwar ka teesra period doosre ustad ko de do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "give Monday period 3 to another teacher, with the reason"
+          },
+          {
+            "text": "ye period badalna hai, manzoori ke liye bhejo",
+            "lang": "ur-Latn",
+            "gloss": "this period needs changing, send it for approval"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "draft mein slot badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the slot in the draft"
+            },
+            "goesTo": "timetable.slot.assign — UC-07-01-PC-1",
+            "note": "While the timetable is a draft the coordinator edits it freely and nobody is told (BR-9)."
+          },
+          {
+            "request": {
+              "text": "aaj ke liye cover laga do",
+              "lang": "ur-Latn",
+              "gloss": "arrange cover for today"
+            },
+            "goesTo": "Not offered here.",
+            "note": "A change alters the week from now on. A one-day absence is substitute cover, arranged elsewhere."
+          },
+          {
+            "request": {
+              "text": "tabdeeli manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the change"
+            },
+            "goesTo": "timetable.change.approve — UC-07-01-PC-9"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "timetable.change.propose",
+            "inputs": {
+              "section_id": "$request.section_phrase",
+              "slot_changes": "$request.slot_changes",
+              "reason": "$request.reason",
+              "session_id": "$session.academic_session_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The change goes back through the same approval as the original and carries a written reason (BR-11) — a slot moved after families and staff have planned around it is a different act from an edit to a draft."
+          }
+        ],
+        "onFailure": "Stop and report. The clash checks run on the proposed slots exactly as they do on a draft, and a refusal names what it clashed against and lists the free teachers.",
+        "atomicity": "One write: the proposed changes, the reason and the audit entry together or not at all. **The published timetable is unchanged** and nobody is told anything yet — teachers, students and guardians are told only once the change is approved, and then exactly what changed (BR-12). How much notice a change must give before it takes effect is not specified anywhere in this use case."
+      },
+      "operations": [
+        {
+          "name": "timetable.change.propose",
+          "method": "POST",
+          "path": "/api/v1/timetables/{section_id}/changes",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "section_id + slot_changes, since a repeat proposes the same change",
+          "purpose": "Propose one or more slot changes to a published timetable, with the reason.",
+          "parameters": [
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No section matches within the actor's scope. A class name alone is not a section.",
+                "onAmbiguous": "Ask, naming the sections the class carries (BR-1)."
+              },
+              "notes": "The section whose timetable this is. A timetable is held against a section, not a class (BR-1)."
+            },
+            {
+              "name": "slot_changes",
+              "source": "request",
+              "sourceRef": "$request.slot_changes",
+              "required": true,
+              "type": "object[]",
+              "notes": "Per slot: the day, the period, and the new subject, teacher or room. Only the slots the actor named — every change reaches the families and teachers attached to it, so a plan that tidied an adjacent slot has moved a period nobody asked about."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 500 characters. Required (BR-11, E11). Why a published slot is moving. Staff and families planned around what is there."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The change as proposed.",
+            "fields": [
+              {
+                "name": "change_id",
+                "type": "string",
+                "description": "The proposed change."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Change pending. The published timetable stands unchanged until it is approved."
+              },
+              {
+                "name": "slot_changes",
+                "type": "object[]",
+                "description": "Each slot with what it holds now and what is proposed."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "affected_teachers",
+                "type": "object[]",
+                "description": "Teachers whose week changes if it is approved."
+              },
+              {
+                "name": "affected_students",
+                "type": "integer",
+                "description": "Students in the section, and their guardians, who will be told (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E11",
+              "httpStatus": 400,
+              "meaning": "A change was proposed with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing proposed."
+            },
+            {
+              "code": "TEACHER_TEACHING_ELSEWHERE",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The proposed teacher is teaching another section in that slot.",
+              "written": "Nothing.",
+              "notWritten": "Nothing proposed.",
+              "note": "Named, with the free teachers listed (BR-7, BR-8)."
+            },
+            {
+              "code": "TEACHER_ON_LEAVE",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The proposed teacher is on approved leave or otherwise unavailable then.",
+              "written": "Nothing.",
+              "notWritten": "Nothing proposed."
+            },
+            {
+              "code": "TEACHER_COVERING",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The proposed teacher is covering as a substitute in that slot.",
+              "written": "Nothing.",
+              "notWritten": "Nothing proposed."
+            },
+            {
+              "code": "ROOM_DOUBLE_BOOKED",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The proposed room is already booked.",
+              "written": "Nothing.",
+              "notWritten": "Nothing proposed."
+            },
+            {
+              "code": "NOT_PUBLISHED",
+              "mapsTo": "E11",
+              "httpStatus": 409,
+              "meaning": "The timetable is not published.",
+              "written": "Nothing.",
+              "notWritten": "Nothing proposed.",
+              "note": "A draft is edited directly (BR-9)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. It goes on the record of a change to a week that staff and families planned around (BR-11), and it is what explains the move to whoever asks.",
+          "derivedFrom": [
+            "BR-11",
+            "E11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Change only the slots the actor named. Every change reaches the teachers and families attached to it (BR-12), and a tidied adjacent period is a household told their child's week moved for no reason anybody gave.",
+          "derivedFrom": [
+            "BR-11",
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never describe the published timetable as changed. It stands until the School Admin approves the proposal, and period attendance and teacher duties still read the published one (BR-13).",
+          "derivedFrom": [
+            "BR-11",
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never work around a clash on a proposal. The same five checks apply as on a draft (BR-3 to BR-6), and a published timetable is a worse place to break them.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4",
+            "BR-5",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report who is affected. The teachers whose week changes and the families who will be told are the size of the act, and neither is visible in the words \"a slot change\".",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never treat a one-day absence as a timetable change. A change alters the week from now on; cover for a single day is arranged elsewhere and read by the clash check (BR-6).",
+          "derivedFrom": [
+            "BR-6",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A proposal is not withdrawn here. The School Admin returns it, and the published timetable stands unchanged."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "5-A ka somwar ka teesra period Ahmed sahib ko de do — Imran sahib chale gaye hain",
+            "lang": "ur-Latn",
+            "gloss": "give 5-A's Monday period 3 to Sir Ahmed — Sir Imran has left"
+          },
+          "context": "Coordinator, Johar Town branch, on a published timetable.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.change.propose",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"5-A\"",
+                "slot_changes": "Monday period 3: teacher Imran → Ahmed, subject unchanged",
+                "reason": "Sir Imran has left the school and Sir Ahmed takes his maths periods for 5-A.",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Only that slot is in the change (PR-2). The reason is the Coordinator's own (PR-1)."
+            }
+          ],
+          "outcome": "Proposed and pending. Report that the published timetable is unchanged and nobody has been told (PR-3), and how many teachers and families the change will reach when approved (PR-5)."
+        },
+        {
+          "request": {
+            "text": "Imran sahib ke sare period Ahmed sahib ko de do",
+            "lang": "ur-Latn",
+            "gloss": "give all Sir Imran's periods to Sir Ahmed"
+          },
+          "context": "Coordinator, Johar Town branch, across several published sections.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.change.propose",
+              "inputs": {
+                "section_id": "$request.section_phrase — one section at a time",
+                "slot_changes": "$request.slot_changes",
+                "reason": "$request.reason",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One proposal per section, each approved on its own. Each slot is clash-checked against Sir Ahmed's own week (PR-4)."
+            }
+          ],
+          "outcome": "List the sections and slots Sir Imran holds and confirm them before proposing. Sir Ahmed cannot take two of them if they fall in the same period on the same day, and the clash check will refuse the second — better seen as a list now than as a refusal per section."
+        },
+        {
+          "request": {
+            "text": "Imran sahib kal nahi aayenge, timetable badal do",
+            "lang": "ur-Latn",
+            "gloss": "Sir Imran is away tomorrow, change the timetable"
+          },
+          "context": "Coordinator, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.change.propose",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "slot_changes": "$request.slot_changes",
+                "reason": "$request.reason",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. One day's absence is not a change to the week (PR-6)."
+            }
+          ],
+          "outcome": "Nothing is proposed. Report that a timetable change alters the week from now on and messages every teacher and family in the section — a single day is substitute cover, which the clash check already reads when the next slot is assigned."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-07-01-PC-8",
+      "intent": {
+        "name": "timetable.publish",
+        "summary": "Publish an approved timetable, which tells every teacher in it and the section's students and guardians. One step.",
+        "routesHere": [
+          "publish 5-A's timetable",
+          {
+            "text": "5-A ka timetable shaya kar do",
+            "lang": "ur-Latn",
+            "gloss": "publish 5-A's timetable"
+          },
+          {
+            "text": "ustadon aur walidain ko timetable bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the timetable to the teachers and parents"
+          },
+          {
+            "text": "timetable jari kar do",
+            "lang": "ur-Latn",
+            "gloss": "release the timetable"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "pehle manzoori le lo",
+              "lang": "ur-Latn",
+              "gloss": "get the approval first"
+            },
+            "goesTo": "timetable.approve — UC-07-01-PC-5",
+            "note": "A timetable cannot be published unapproved, because it commits every teacher's working week (BR-10, E10)."
+          },
+          {
+            "request": {
+              "text": "shaya-shuda timetable badal do",
+              "lang": "ur-Latn",
+              "gloss": "change the published timetable"
+            },
+            "goesTo": "timetable.change.propose — UC-07-01-PC-7"
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "timetable.publish",
+            "inputs": {
+              "section_id": "$request.section_phrase",
+              "session_id": "$session.academic_session_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches everybody attached to the section. From here the published timetable is what period attendance and teacher duties read — a slot that does not exist in it cannot be marked or assigned (BR-13)."
+          }
+        ],
+        "onFailure": "Stop and report. Publication before approval is refused by the API.",
+        "atomicity": "One write, atomic in itself: the publication, the notifications to every teacher with periods in it, and to the section's students and guardians, together or not at all. Any previously published timetable for the section becomes superseded and stays readable, so a past week can still be looked up (BR-15). Period attendance and teacher duties read this from now on (BR-13)."
+      },
+      "operations": [
+        {
+          "name": "timetable.publish",
+          "method": "POST",
+          "path": "/api/v1/timetables/{section_id}/publish",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "section_id + session_id, since a timetable is published once and a repeat must not notify everybody twice",
+          "purpose": "Publish an approved timetable to teachers, students and guardians.",
+          "parameters": [
+            {
+              "name": "section_id",
+              "source": "resolved",
+              "sourceRef": "$request.section_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "section",
+                "fromPhrase": "$request.section_phrase",
+                "onNoMatch": "Refuse. No section matches within the actor's scope. A class name alone is not a section.",
+                "onAmbiguous": "Ask, naming the sections the class carries (BR-1)."
+              },
+              "notes": "The section whose timetable this is. A timetable is held against a section, not a class (BR-1)."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The publication.",
+            "fields": [
+              {
+                "name": "section_id",
+                "type": "string",
+                "description": "The section."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Published."
+              },
+              {
+                "name": "published_by",
+                "type": "string",
+                "description": "The Coordinator or School Admin."
+              },
+              {
+                "name": "teachers_notified",
+                "type": "integer",
+                "description": "Each told their own periods in it and where to see their full week."
+              },
+              {
+                "name": "students_notified",
+                "type": "integer",
+                "description": "Students and their guardians told (BR-12)."
+              },
+              {
+                "name": "superseded_timetable_id",
+                "type": "string",
+                "description": "The previously published timetable, now superseded and still readable (BR-15)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_APPROVED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "Publication was attempted before approval.",
+              "written": "Nothing.",
+              "notWritten": "Nothing published.",
+              "note": "It commits every teacher's working week (BR-10)."
+            },
+            {
+              "code": "ALREADY_PUBLISHED",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The timetable is already published.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "A change to it goes through a proposal (BR-11)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never publish an unapproved timetable. E10 is BR-10 working, and approving it to get past the refusal would collapse the only check on a week that binds every teacher in it.",
+          "derivedFrom": [
+            "BR-10",
+            "E10"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report who was told and what they were told. Teachers get their own periods, students and guardians get their section's week — a single call that reaches every household attached to the section.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the superseded timetable. The section may have been running a different week this morning, and the old one stays readable rather than disappearing (BR-15).",
+          "derivedFrom": [
+            "BR-15"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never plan a change in the same breath as a publication. A change to a published timetable goes back through approval and messages everybody again (BR-11) — moving a slot a minute after publishing tells every family twice for one decision.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Say what publication turns on. Period attendance and teacher duties read the published timetable from now on, and a slot that does not exist in it cannot be marked or assigned (BR-13).",
+          "derivedFrom": [
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A publication is not withdrawn. A slot that has to move goes through a proposed change carrying a reason and everybody affected is told exactly what changed (BR-11, BR-12). The controller must not attempt a compensating call — the notifications have gone."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "5-A ka timetable shaya kar do",
+            "lang": "ur-Latn",
+            "gloss": "publish 5-A's timetable"
+          },
+          "context": "School Admin, Johar Town branch, on an approved timetable, no previous one published.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.publish",
+              "inputs": {
+                "section_id": "$request.section_phrase → \"5-A\"",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Published. Report how many teachers and families were told (PR-2), and that period attendance and teacher duties now read this timetable (PR-5)."
+        },
+        {
+          "request": {
+            "text": "timetable shaya kar do",
+            "lang": "ur-Latn",
+            "gloss": "publish the timetable"
+          },
+          "context": "Coordinator, Johar Town branch, on a timetable still awaiting approval.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.publish",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged, with no approval chained (PR-1). The API returns NOT_APPROVED (E10)."
+            }
+          ],
+          "outcome": "Nothing is published. Report that the School Admin approves first — a timetable commits every teacher's working week, and that is the whole reason it cannot be published unapproved."
+        },
+        {
+          "request": {
+            "text": "naya timetable shaya kar do",
+            "lang": "ur-Latn",
+            "gloss": "publish the new timetable"
+          },
+          "context": "School Admin, Johar Town branch, where the section is already running a published timetable.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.publish",
+              "inputs": {
+                "section_id": "$request.section_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Published, and the previous timetable is superseded. Report it plainly (PR-3) — the section's week changes from now on for every teacher and family in it, and the old week stays readable rather than vanishing."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-07-01-PC-9",
+      "intent": {
+        "name": "timetable.change.approve",
+        "summary": "Approve a pending change to a published timetable, which applies it and tells everybody affected exactly what changed. School Admin only, one step.",
+        "routesHere": [
+          "approve the change to 5-A's Monday period 3",
+          {
+            "text": "timetable ki tabdeeli manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the timetable change"
+          },
+          {
+            "text": "tabdeeli theek hai, laga do",
+            "lang": "ur-Latn",
+            "gloss": "the change is right, apply it"
+          },
+          {
+            "text": "manzoori de do aur sab ko bata do",
+            "lang": "ur-Latn",
+            "gloss": "approve it and tell everybody"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tabdeeli manzoor nahi, wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "the change is not approved, send it back"
+            },
+            "goesTo": "timetable.change.return — UC-07-01-PC-10"
+          },
+          {
+            "request": {
+              "text": "alag se sab ko itla kar do",
+              "lang": "ur-Latn",
+              "gloss": "notify everybody separately"
+            },
+            "goesTo": "timetable.change.approve, which tells them",
+            "note": "Once a change is approved, every affected teacher, student and guardian is told exactly what changed — which slot, from what, to what (BR-12)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "timetable.change.approve",
+            "inputs": {
+              "change_id": "$request.change_phrase",
+              "session_id": "$session.academic_session_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it is the moment the published week actually changes. Everybody affected is told exactly which slot moved, from what, to what — rather than being told the timetable has been updated (BR-12)."
+          }
+        ],
+        "onFailure": "Stop and report. A clash that has appeared since the change was proposed is rechecked at approval and arrives as an error.",
+        "atomicity": "One write, atomic in itself: the changed slots, the record of the change with its reason, and the messages to every affected teacher, student and guardian together or not at all (BR-11, BR-12). Period attendance and teacher duties read the changed timetable from this moment (BR-13). How much notice this gives before it takes effect is not specified anywhere in this use case — the change applies as soon as it is approved."
+      },
+      "operations": [
+        {
+          "name": "timetable.change.approve",
+          "method": "POST",
+          "path": "/api/v1/timetable-changes/{change_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "change_id, since a change is applied once and a repeat must not message everybody twice",
+          "purpose": "Approve a pending timetable change and apply it, notifying everybody affected.",
+          "parameters": [
+            {
+              "name": "change_id",
+              "source": "resolved",
+              "sourceRef": "$request.change_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "timetable_change",
+                "fromPhrase": "$request.change_phrase",
+                "onNoMatch": "Refuse. No pending change matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the pending changes with their section, the slots they move and who proposed them."
+              },
+              "notes": "The pending change, resolved from the section and the slots it moves."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The change as applied.",
+            "fields": [
+              {
+                "name": "change_id",
+                "type": "string",
+                "description": "The change."
+              },
+              {
+                "name": "section_id",
+                "type": "string",
+                "description": "The section."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Published. The change is in the timetable."
+              },
+              {
+                "name": "slot_changes",
+                "type": "object[]",
+                "description": "Each slot, from what to what, as told to those affected (BR-12)."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "The reason it carried (BR-11)."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "teachers_notified",
+                "type": "integer",
+                "description": "Each told which of their own slots moved and to what."
+              },
+              {
+                "name": "students_notified",
+                "type": "integer",
+                "description": "Students and guardians told exactly what changed (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "TEACHER_TEACHING_ELSEWHERE",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "The proposed teacher has since been given another section in that slot.",
+              "written": "Nothing.",
+              "notWritten": "Change not applied.",
+              "note": "Rechecked at approval. The message names the section and lists the free teachers (BR-7, BR-8)."
+            },
+            {
+              "code": "TEACHER_ON_LEAVE",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The proposed teacher is now on approved leave or unavailable then.",
+              "written": "Nothing.",
+              "notWritten": "Change not applied."
+            },
+            {
+              "code": "ROOM_DOUBLE_BOOKED",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The room has since been booked.",
+              "written": "Nothing.",
+              "notWritten": "Change not applied."
+            },
+            {
+              "code": "NOT_PENDING",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The change is not pending.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a change the actor proposed. The Coordinator proposes and the School Admin approves, exactly as for the original timetable (BR-10, BR-11).",
+          "derivedFrom": [
+            "BR-10",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report exactly what changed, slot by slot. Everybody affected is told which slot, from what, to what — rather than that the timetable has been updated (BR-12) — and the reply should say the same thing.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never work around a clash that has appeared since the proposal. The checks run again at approval, and a plan that dropped the room or moved the period would apply a change nobody proposed (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "BR-4",
+            "BR-5",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say when it takes effect. The change applies as soon as it is approved, and nothing in this use case sets a notice period — a slot moving today is worth stating plainly.",
+          "derivedFrom": [
+            "BR-12",
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report how many teachers and families were told. One approval reaches every household attached to the section.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approved change is not undone. Putting a slot back is another proposal, with its own reason and its own approval, and everybody is told again (BR-11, BR-12). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "5-A ke somwar wale teesre period ki tabdeeli manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the change to 5-A's Monday period 3"
+          },
+          "context": "School Admin, Johar Town branch, on a pending change.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.change.approve",
+              "inputs": {
+                "change_id": "$request.change_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Applied. Report the slot as told to those affected — Monday period 3, maths, Sir Imran to Sir Ahmed (PR-2) — how many teachers and families were messaged (PR-5), and that it takes effect immediately (PR-4)."
+        },
+        {
+          "request": {
+            "text": "tabdeeli manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the change"
+          },
+          "context": "School Admin, Johar Town branch, where the proposed teacher has since been given another section in that slot.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.change.approve",
+              "inputs": {
+                "change_id": "$request.change_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Emitted unchanged. No slot is moved to make it fit (PR-3). The API returns TEACHER_TEACHING_ELSEWHERE (E4)."
+            }
+          ],
+          "outcome": "Nothing is applied and the published timetable stands. Report which section now has that teacher, and list the teachers free in the slot — the Coordinator proposes again from there, with a reason."
+        },
+        {
+          "request": {
+            "text": "tabdeeli manzoor kar ke agle hafte se lagu karo",
+            "lang": "ur-Latn",
+            "gloss": "approve the change and apply it from next week"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.change.approve",
+              "inputs": {
+                "change_id": "$request.change_phrase",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approval applies the change now. There is no capability that defers it (PR-4)."
+            }
+          ],
+          "outcome": "Report before approving that nothing here can hold a change until next week — approval applies it immediately and messages everybody. If it must start next week, the approval has to wait until then, and that is worth deciding deliberately rather than discovering after the messages go out."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-07-01-PC-10",
+      "intent": {
+        "name": "timetable.change.return",
+        "summary": "Return a proposed timetable change with the reason. School Admin only, one step, and the published timetable stands unchanged.",
+        "routesHere": [
+          "return this change — it leaves Friday uncovered",
+          {
+            "text": "ye tabdeeli wapas bhej do, wajah ke sath",
+            "lang": "ur-Latn",
+            "gloss": "return this change with the reason"
+          },
+          {
+            "text": "tabdeeli manzoor nahi, timetable waisa hi rahe",
+            "lang": "ur-Latn",
+            "gloss": "the change is not approved, leave the timetable as it is"
+          },
+          {
+            "text": "Coordinator ko wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "send it back to the Coordinator"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "tabdeeli manzoor kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the change"
+            },
+            "goesTo": "timetable.change.approve — UC-07-01-PC-9"
+          },
+          {
+            "request": {
+              "text": "khud tabdeeli theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "fix the change yourself"
+            },
+            "goesTo": "timetable.change.propose — UC-07-01-PC-7",
+            "note": "Proposing is the Coordinator's act, and a corrected proposal carries its own reason."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "timetable.change.return",
+            "inputs": {
+              "change_id": "$request.change_phrase",
+              "reason": "$request.reason",
+              "session_id": "$session.academic_session_id",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The published timetable stands unchanged and nobody has been told anything about the proposal."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the return, its reason and the audit entry together or not at all. The published timetable is untouched, so teachers, students and guardians see the week they already have. No message goes to them — they were never told a change was coming (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "timetable.change.return",
+          "method": "POST",
+          "path": "/api/v1/timetable-changes/{change_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "change_id, since a change carries one decision",
+          "purpose": "Return a proposed timetable change with the reason.",
+          "parameters": [
+            {
+              "name": "change_id",
+              "source": "resolved",
+              "sourceRef": "$request.change_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "timetable_change",
+                "fromPhrase": "$request.change_phrase",
+                "onNoMatch": "Refuse. No pending change matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the pending changes with their section, the slots they move and who proposed them."
+              },
+              "notes": "The pending change, resolved from the section and the slots it moves."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required. Why the change is not approved. The Coordinator proposes again from it."
+            },
+            {
+              "name": "session_id",
+              "source": "session",
+              "sourceRef": "$session.session_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The return.",
+            "fields": [
+              {
+                "name": "change_id",
+                "type": "string",
+                "description": "The change."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned. The published timetable stands unchanged."
+              },
+              {
+                "name": "reason",
+                "type": "string",
+                "description": "As given."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The School Admin."
+              },
+              {
+                "name": "coordinator_notified",
+                "type": "string",
+                "description": "Delivery status."
+              },
+              {
+                "name": "timetable_unchanged",
+                "type": "boolean",
+                "description": "True. Teachers, students and guardians keep the week they have."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E11",
+              "httpStatus": 400,
+              "meaning": "A change was returned with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            },
+            {
+              "code": "NOT_PENDING",
+              "mapsTo": "E10",
+              "httpStatus": 409,
+              "meaning": "The change is not pending.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "An applied change is put back by proposing another (BR-11)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. The Coordinator proposes again from it, and a reason a planner wrote sends them rearranging a published week on a guess.",
+          "derivedFrom": [
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never notify teachers or families of a returned change. They were never told it was coming, and telling them a change was refused would be the first they had heard of it (BR-12).",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say plainly that the published timetable stands. The week everybody is running is unaffected, which is the whole point of proposing rather than editing (BR-11).",
+          "derivedFrom": [
+            "BR-11",
+            "BR-13"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never re-propose in the same plan. What the corrected change should be is the Coordinator's, and it carries its own reason and its own clash checks.",
+          "derivedFrom": [
+            "BR-3",
+            "BR-11"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "session_id and branch_id come from $session.",
+          "derivedFrom": [
+            "branch-scope",
+            "academic-session-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not withdrawn. The Coordinator proposes the change again, corrected, with its own reason."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye tabdeeli wapas bhej do — is se jumay ka period khali reh jata hai",
+            "lang": "ur-Latn",
+            "gloss": "return this change — it leaves Friday's period uncovered"
+          },
+          "context": "School Admin, Johar Town branch, on a pending change.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.change.return",
+              "inputs": {
+                "change_id": "$request.change_phrase",
+                "reason": "Moving Sir Ahmed to Monday leaves 5-A's Friday period 2 without a maths teacher.",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The reason is the School Admin's own (PR-1)."
+            }
+          ],
+          "outcome": "Returned. The published timetable stands and no teacher or family is told anything (PR-2, PR-3) — they were never told the change was coming."
+        },
+        {
+          "request": {
+            "text": "tabdeeli wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "return the change"
+          },
+          "context": "School Admin, Johar Town branch, with no reason given.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.change.return",
+              "inputs": {
+                "change_id": "$request.change_phrase",
+                "reason": "$request.reason — absent",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what is wrong with the proposal — the Coordinator will propose again, and without a reason they will propose the same thing."
+        },
+        {
+          "request": {
+            "text": "wapas bhej do aur theek tabdeeli khud tajweez kar do",
+            "lang": "ur-Latn",
+            "gloss": "return it and propose the right change yourself"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "timetable.change.return",
+              "inputs": {
+                "change_id": "$request.change_phrase",
+                "reason": "$request.reason",
+                "session_id": "$session.academic_session_id",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The return only (PR-4)."
+            }
+          ],
+          "outcome": "Returned with the reason. Report that proposing is the Coordinator's act — each proposed slot is clash-checked against the teacher's actual week, and which replacement suits the class is their judgement."
+        }
+      ]
+    }
+  ]
+}

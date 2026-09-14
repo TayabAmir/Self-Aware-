@@ -1,0 +1,889 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-14-09",
+    "name": "Reach everyone at once with an urgent message written by the sender, across every channel",
+    "module": "Communication",
+    "file": "../UseCases/UC-14-09.json",
+    "featureRef": "14.9 Emergency notice distribution"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-14-09-PC-1",
+      "intent": {
+        "name": "emergency.permission.set",
+        "summary": "Set who holds the right to send an emergency notice. Super Admin only, one step.",
+        "routesHere": [
+          "give the Principal the emergency send permission",
+          {
+            "text": "Principal ko emergency paighaam bhejne ka ikhtiyar de do",
+            "lang": "ur-Latn",
+            "gloss": "give the Principal the right to send an emergency message"
+          },
+          {
+            "text": "School Admin se ye ikhtiyar wapas le lo",
+            "lang": "ur-Latn",
+            "gloss": "take this right away from the School Admin"
+          },
+          {
+            "text": "emergency bhejne ka haq kaun rakhta hai, tay karo",
+            "lang": "ur-Latn",
+            "gloss": "set who holds the right to send an emergency"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "abhi emergency paighaam bhejo",
+              "lang": "ur-Latn",
+              "gloss": "send an emergency message now"
+            },
+            "goesTo": "emergency.notice.send — UC-14-09-PC-2"
+          },
+          {
+            "request": {
+              "text": "manzoori ka marhala bhi rakh do",
+              "lang": "ur-Latn",
+              "gloss": "add an approval step as well"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is no approval step. An emergency message that waits for a second person is a message that arrives late, and the control is the permission rather than the approval (BR-9, E5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "emergency.permission.set",
+            "inputs": {
+              "holders": "$request.holders",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. It is a permission, not a fixed role, so the school decides who holds it rather than the software deciding (BR-1)."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "One write: the holders and the audit entry together or not at all. Whoever holds it can send to everybody, on every channel, with no approval — so the permission is the whole control (BR-9). Either the School Admin or the Principal can hold it, and both are named because in a real emergency whichever of them is at the school sends it (BR-2)."
+      },
+      "operations": [
+        {
+          "name": "emergency.permission.set",
+          "method": "PUT",
+          "path": "/api/v1/emergency-notices/permission",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "branch_id, since a branch carries one set of holders",
+          "purpose": "Set which users hold the emergency send permission.",
+          "parameters": [
+            {
+              "name": "holders",
+              "source": "request",
+              "sourceRef": "$request.holders",
+              "required": true,
+              "type": "string[]",
+              "notes": "The users who hold the right (BR-1). The complete list, not an addition — a name absent from it loses the permission. Either the School Admin or the Principal can hold it, and a permission attached to only one is a permission that is absent half the time (BR-2)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The permission as set.",
+            "fields": [
+              {
+                "name": "holders",
+                "type": "object[]",
+                "description": "Who holds it now, by name and role."
+              },
+              {
+                "name": "added",
+                "type": "string[]",
+                "description": "Users who did not hold it before."
+              },
+              {
+                "name": "removed",
+                "type": "string[]",
+                "description": "Users who held it and now do not."
+              },
+              {
+                "name": "holder_count",
+                "type": "integer",
+                "description": "How many. A permission held by nobody present is a permission that is absent when it is needed (BR-2)."
+              },
+              {
+                "name": "set_by",
+                "type": "string",
+                "description": "The Super Admin (BR-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NOT_SUPER_ADMIN",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "A non-Super Admin attempted to set the permission.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "The right is granted by the Super Admin (BR-1)."
+            },
+            {
+              "code": "NO_HOLDER",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The change would leave nobody holding it.",
+              "written": "Nothing.",
+              "notWritten": "Nothing changed.",
+              "note": "Nobody could then send an emergency notice at all."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never add or remove a holder the actor did not name. The list is complete rather than incremental, and a name dropped in passing is somebody who cannot send when the school is on fire.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report who holds it after the change, by name and role. Both the School Admin and the Principal are named in the rule because whichever of them is at the school sends it (BR-2), and a list of one is a permission absent half the time.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never propose an approval step. There is none by design — an emergency message that waits for a second person arrives late, and the permission is the control (BR-9, E5).",
+          "derivedFrom": [
+            "BR-9",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report where a holder is leaving the school. A permission held by somebody who has exited is a permission nobody can use (A6).",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "The permission is set again rather than withdrawn, and every change is recorded with who made it."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Principal ko bhi ye ikhtiyar de do",
+            "lang": "ur-Latn",
+            "gloss": "give the Principal this right as well"
+          },
+          "context": "Super Admin, with the School Admin currently holding it.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "emergency.permission.set",
+              "inputs": {
+                "holders": "the complete list the Super Admin named — the School Admin and the Principal",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The list is complete, not an addition to what was there (PR-1)."
+            }
+          ],
+          "outcome": "Set. Report both holders by name (PR-2) — whichever of them is at the school can send, which is why the rule names both rather than picking one."
+        },
+        {
+          "request": {
+            "text": "Principal ko shamil kar lo",
+            "lang": "ur-Latn",
+            "gloss": "add the Principal"
+          },
+          "context": "Super Admin, on a permission currently held by the School Admin alone.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "emergency.permission.set",
+              "inputs": {
+                "holders": "$request.holders — the complete list, which the actor has not stated",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted until the full list is confirmed (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is set. Report who holds it now and confirm the complete list — the call replaces it, so sending the Principal alone would take the right away from the School Admin and leave them unable to send in an emergency."
+        },
+        {
+          "request": {
+            "text": "emergency bhejne se pehle Principal ki manzoori zaroori kar do",
+            "lang": "ur-Latn",
+            "gloss": "require the Principal's approval before an emergency is sent"
+          },
+          "context": "Super Admin.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "emergency.permission.set",
+              "inputs": {
+                "holders": "$request.holders",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No approval step can be planned — there is none (PR-3)."
+            }
+          ],
+          "outcome": "Report that the design has no approval step and cannot be given one here: a message that waits for a second person arrives late, and the control is who holds the permission. If the Principal should be the one deciding, the answer is to hold the permission themselves — which is what setting the holders does."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-09-PC-2",
+      "intent": {
+        "name": "emergency.notice.send",
+        "summary": "Write an urgent message and send it to everybody, on every channel, at once. One step, no approval, and it cannot be recalled.",
+        "routesHere": [
+          "send an emergency notice — the school is closing at noon",
+          {
+            "text": "emergency paighaam bhej do — school aaj dopahar band ho raha hai",
+            "lang": "ur-Latn",
+            "gloss": "send an emergency notice — the school is closing at noon today"
+          },
+          {
+            "text": "foran sab ko itla kar do",
+            "lang": "ur-Latn",
+            "gloss": "tell everybody at once"
+          },
+          {
+            "text": "zaroori notice sab walidain aur staff ko bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send an urgent notice to all parents and staff"
+          },
+          "send this district notice to everyone with the order attached"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "sirf class 5 ko bhejo",
+              "lang": "ur-Latn",
+              "gloss": "send it to class 5 only"
+            },
+            "goesTo": "Not offered here.",
+            "note": "It goes to everyone. Nobody is selected, because selecting takes time and an emergency is the case where the school would rather over-send (BR-5, E6). Whether it can be limited to one class or campus is an open question in this use case."
+          },
+          {
+            "request": {
+              "text": "template istemal karo",
+              "lang": "ur-Latn",
+              "gloss": "use a template"
+            },
+            "goesTo": "Not offered.",
+            "note": "There is no template step, because the wording of an emergency is the sender's and a template would be a delay and a wrong wording at once (BR-3)."
+          },
+          {
+            "request": {
+              "text": "bhejne ke baad wapas le lo",
+              "lang": "ur-Latn",
+              "gloss": "recall it after sending"
+            },
+            "goesTo": "Not offered.",
+            "note": "An emergency notice cannot be recalled once sent. A correction is a second notice, and both stay on the record (BR-10, E7)."
+          },
+          {
+            "request": {
+              "text": "baad mein bhejne ke liye schedule kar do",
+              "lang": "ur-Latn",
+              "gloss": "schedule it to go later"
+            },
+            "goesTo": "Not offered.",
+            "note": "Nothing about the notice is templated, scheduled or queued behind ordinary traffic. It goes ahead of every other message waiting to be sent (BR-11)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "emergency.notice.send",
+            "inputs": {
+              "message": "$request.message",
+              "attachment_id": "$request.attachment_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reaches every parent, every student, every teacher and every member of staff, across every available channel at once (BR-5, BR-6). There is no approval and no queue — it goes ahead of every other message waiting to be sent (BR-9, BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. An empty message is not sent; no channel configured at all sends nothing and is reported rather than appearing to succeed.",
+        "atomicity": "One write, and it is irreversible: the notice, the send across every channel, and the log of the sender, the time, the message and any attachment (BR-8). **It cannot be recalled** — a correction is a second notice and both stay on the record (BR-10). A channel without balance is skipped and the shortfall is reported at once (E4); a channel that cannot carry the attachment sends the message anyway and the rest are told where to find it (E8)."
+      },
+      "operations": [
+        {
+          "name": "emergency.notice.send",
+          "method": "POST",
+          "path": "/api/v1/emergency-notices",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "message + sender + minute, so a double press does not send every family two emergency notices",
+          "purpose": "Send an emergency notice to everybody across every channel.",
+          "parameters": [
+            {
+              "name": "message",
+              "source": "request",
+              "sourceRef": "$request.message",
+              "required": true,
+              "type": "string",
+              "notes": "10 to 1000 characters, written by the sender (BR-3, E2). There is no template step — the wording of an emergency is theirs, and a message a planner drafted is the school telling every family something nobody chose to say."
+            },
+            {
+              "name": "attachment_id",
+              "source": "resolved",
+              "sourceRef": "$request.attachment_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "uploaded_file",
+                "fromPhrase": "$request.attachment_phrase",
+                "onNoMatch": "Refuse. No uploaded file matches. The document is attached on the screen first.",
+                "onAmbiguous": "Ask, naming the files uploaded for this notice."
+              },
+              "notes": "A document sent with the message where one is needed — a district notice, a road closure order, a health advisory (BR-4). Attached on the screen and named here."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The send and what it reached.",
+            "fields": [
+              {
+                "name": "notice_id",
+                "type": "string",
+                "description": "The notice."
+              },
+              {
+                "name": "sender",
+                "type": "string",
+                "description": "Whoever holds the permission, recorded by name (BR-8)."
+              },
+              {
+                "name": "sent_at",
+                "type": "datetime",
+                "description": "When."
+              },
+              {
+                "name": "recipients",
+                "type": "integer",
+                "description": "Everybody — every parent, student, teacher and member of staff. Not chosen (BR-5)."
+              },
+              {
+                "name": "channels_used",
+                "type": "string[]",
+                "description": "Every available channel at once rather than one after another (BR-6)."
+              },
+              {
+                "name": "delivered",
+                "type": "object[]",
+                "description": "How many were delivered, per channel (BR-7)."
+              },
+              {
+                "name": "failed",
+                "type": "object[]",
+                "description": "Recipients not reached after retries, listed by name so the school knows who to telephone (BR-7)."
+              },
+              {
+                "name": "delivery_unknown",
+                "type": "integer",
+                "description": "Where a provider's delivery reporting is unavailable, delivery reads unknown rather than delivered (E9)."
+              },
+              {
+                "name": "channels_without_balance",
+                "type": "string[]",
+                "description": "Channels skipped for want of balance, reported at once (E4)."
+              },
+              {
+                "name": "attachment_not_carried",
+                "type": "string[]",
+                "description": "Channels that could not carry the attachment. The message still went, and the rest are told where to find it (E8)."
+              },
+              {
+                "name": "unreachable_contacts",
+                "type": "integer",
+                "description": "Numbers the directory already knew could not be reached (UC-14-02 BR-7)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The acting user does not hold the emergency send permission.",
+              "written": "Nothing.",
+              "notWritten": "No notice composed.",
+              "note": "The right is granted by the Super Admin (BR-1)."
+            },
+            {
+              "code": "EMPTY_MESSAGE",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The message is empty.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent."
+            },
+            {
+              "code": "NO_CHANNEL",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "No channel is configured at all.",
+              "written": "Nothing.",
+              "notWritten": "Nothing is sent.",
+              "note": "Reported rather than appearing to succeed."
+            },
+            {
+              "code": "PARTIAL_BALANCE",
+              "mapsTo": "E4",
+              "httpStatus": 200,
+              "meaning": "There is no messaging balance on some channels.",
+              "written": "The notice is sent on the channels that have balance.",
+              "notWritten": "Nothing on the rest.",
+              "treatedAsSuccess": true,
+              "note": "The shortfall is reported at once, since the missing channel may be the one a family actually reads."
+            },
+            {
+              "code": "ATTACHMENT_TOO_LARGE",
+              "mapsTo": "E8",
+              "httpStatus": 200,
+              "meaning": "The attachment is too large for a channel.",
+              "written": "The message goes on every channel.",
+              "notWritten": "The attachment goes only on those that can carry it.",
+              "treatedAsSuccess": true,
+              "note": "The rest are told where to find it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never write or reword the message. The wording of an emergency is the sender's (BR-3), and a message a planner drafted is the school telling every family in it something nobody decided to say.",
+          "derivedFrom": [
+            "BR-3",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never narrow the recipients. It goes to everyone, because selecting takes time and an emergency is the case where the school would rather over-send (BR-5, E6) — and whether it can be limited at all is an open question here.",
+          "derivedFrom": [
+            "BR-5",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say plainly that it cannot be recalled before it goes. A correction is a second notice and both stay on the record (BR-10, E7) — this is the message a school is asked about afterwards.",
+          "derivedFrom": [
+            "BR-8",
+            "BR-10",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report the failed recipients by name. A recipient the message did not reach is somebody the school now has to telephone, and a count does not tell anybody who (BR-7).",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report a channel skipped for want of balance at once. The missing channel may be the one a particular family actually reads, and the send will otherwise look like a success (E4).",
+          "derivedFrom": [
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Report delivery as unknown where a provider cannot say. It is not the same as delivered, and treating it as such is how a family is assumed to have been told (E9).",
+          "derivedFrom": [
+            "BR-7",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never suggest an approval, a template, a schedule or a queue. None exists by design, and each would be a delay in the one message where a delay is the harm (BR-9, BR-11).",
+          "derivedFrom": [
+            "BR-9",
+            "BR-11",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no recall. A correction is a second notice, and both stay on the record (BR-10, E7). The controller must not attempt a compensating call — every family has already been messaged."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "emergency paighaam bhej do — school aaj dopahar band ho raha hai",
+            "lang": "ur-Latn",
+            "gloss": "send an emergency notice — the school is closing at noon today"
+          },
+          "context": "Principal, Johar Town branch, holding the permission, message written.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "emergency.notice.send",
+              "inputs": {
+                "message": "as the Principal wrote it",
+                "attachment_id": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The wording is theirs, untouched (PR-1)."
+            }
+          ],
+          "outcome": "Say before sending that it goes to every parent, student and member of staff on every channel and cannot be recalled (PR-3). After: report delivered per channel, the failures by name so the office can telephone them (PR-4), and any channel skipped for want of balance (PR-5)."
+        },
+        {
+          "request": {
+            "text": "foran sab ko itla kar do ke school band hai, paighaam tum likh do",
+            "lang": "ur-Latn",
+            "gloss": "tell everybody at once that the school is closed — you write the message"
+          },
+          "context": "School Admin, Johar Town branch, holding the permission.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "emergency.notice.send",
+              "inputs": {
+                "message": "$request.message — absent",
+                "attachment_id": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted. The wording is the sender's (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is sent. Ask for the message in their own words — it reaches every family in the school in one act, it cannot be recalled, and it is the message the school is asked about afterwards. Drafting it here would put words the Principal never chose in front of every parent."
+        },
+        {
+          "request": {
+            "text": "sirf class 5 ke walidain ko emergency bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send the emergency to class 5 parents only"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "emergency.notice.send",
+              "inputs": {
+                "message": "$request.message",
+                "attachment_id": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The capability sends to everyone. There is no recipient parameter to narrow (PR-2)."
+            }
+          ],
+          "outcome": "Report before sending that an emergency notice goes to everybody — there is no way to limit it here, and whether it should be limitable to a class or a campus is an open question this use case raises and does not answer. If only class 5 should be told, an ordinary class message is the route; if it is genuinely an emergency, it goes to all."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-14-09-PC-3",
+      "intent": {
+        "name": "emergency.notice.delivery.read",
+        "summary": "Read who an emergency notice reached and who it did not. One step, reads only, and the failures come back by name.",
+        "routesHere": [
+          "who did not get the emergency notice?",
+          {
+            "text": "emergency paighaam kis kis tak nahi pahuncha",
+            "lang": "ur-Latn",
+            "gloss": "who did not receive the emergency notice"
+          },
+          {
+            "text": "delivery ki report dikhao",
+            "lang": "ur-Latn",
+            "gloss": "show the delivery report"
+          },
+          {
+            "text": "kitne log reh gaye, naam bata do",
+            "lang": "ur-Latn",
+            "gloss": "how many were missed — give me the names"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "dobara bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send it again"
+            },
+            "goesTo": "emergency.notice.send — UC-14-09-PC-2",
+            "note": "A resend is a second notice, and both stay on the record (BR-10)."
+          },
+          {
+            "request": {
+              "text": "jo reh gaye un ko phone kar do",
+              "lang": "ur-Latn",
+              "gloss": "telephone the ones who were missed"
+            },
+            "goesTo": "Not offered.",
+            "note": "The list exists so the school knows who to telephone (BR-7). The telephoning is done by people."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "emergency.notice.delivery.read",
+            "inputs": {
+              "notice_id": "$request.notice_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and it reads only. Delivery is monitored and failures are retried; a recipient the message did not reach is listed by name, so the school knows who to telephone (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. There is nothing to undo — nothing was written.",
+        "atomicity": "No write. It answers the question the school asks in the hour after an emergency: who has not been told. A delivery a provider cannot confirm reads unknown rather than delivered (E9), because assuming somebody was told is how a family is left out of an evacuation."
+      },
+      "operations": [
+        {
+          "name": "emergency.notice.delivery.read",
+          "method": "GET",
+          "path": "/api/v1/emergency-notices/{notice_id}/delivery",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Read the delivery state of an emergency notice.",
+          "parameters": [
+            {
+              "name": "notice_id",
+              "source": "resolved",
+              "sourceRef": "$request.notice_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "emergency_notice",
+                "fromPhrase": "$request.notice_phrase",
+                "onNoMatch": "Refuse. No emergency notice matches within the actor's scope.",
+                "onAmbiguous": "Ask, naming the notices with their time, sender and opening words."
+              },
+              "notes": "The notice, resolved from when it was sent or what it said."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "Who it reached.",
+            "fields": [
+              {
+                "name": "notice_id",
+                "type": "string",
+                "description": "The notice."
+              },
+              {
+                "name": "sent_at",
+                "type": "datetime",
+                "description": "When it went."
+              },
+              {
+                "name": "sender",
+                "type": "string",
+                "description": "Who sent it (BR-8)."
+              },
+              {
+                "name": "delivered",
+                "type": "object[]",
+                "description": "Per channel, how many were delivered (BR-7)."
+              },
+              {
+                "name": "failed",
+                "type": "object[]",
+                "description": "Each recipient not reached after retries, by name and number, so the school knows who to telephone (BR-7)."
+              },
+              {
+                "name": "delivery_unknown",
+                "type": "object[]",
+                "description": "Recipients whose provider could not report. Unknown is not delivered (E9)."
+              },
+              {
+                "name": "never_reachable",
+                "type": "object[]",
+                "description": "Recipients whose numbers the directory already knew could not be reached (UC-14-02 BR-7)."
+              },
+              {
+                "name": "no_contact_at_all",
+                "type": "object[]",
+                "description": "People with no contact number, who were never in the send at all (UC-14-02 E8)."
+              },
+              {
+                "name": "retries_remaining",
+                "type": "boolean",
+                "description": "Whether retries are still running. How many before a delivery is abandoned is not decided."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "OUT_OF_SCOPE",
+              "mapsTo": "E1",
+              "httpStatus": 403,
+              "meaning": "The notice is outside the actor's scope.",
+              "written": "Nothing.",
+              "notWritten": "Nothing returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report the failures by name and number, never as a count. The list exists so somebody can pick up a telephone (BR-7), and a total tells them nothing about whom to call.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report unknown delivery separately from delivered. Where a provider cannot confirm, the notice still sent but nobody knows it arrived (E9) — counting it as delivered is how a family is assumed to have been told.",
+          "derivedFrom": [
+            "BR-7",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report the people who were never in the send. Somebody with no contact number at all does not appear as a failure, because they were never a recipient (UC-14-02 E8) — they are the ones nothing ever fails loudly for.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say whether retries are still running. How many before a delivery is abandoned is not decided anywhere in this use case, so a failure list read too early is not final.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never resend as part of reading. A resend is a second notice to everybody, and both stay on the record (BR-10).",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Nothing was written, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "emergency paighaam kis kis tak nahi pahuncha",
+            "lang": "ur-Latn",
+            "gloss": "who did not receive the emergency notice"
+          },
+          "context": "Principal, Johar Town branch, minutes after the send.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "emergency.notice.delivery.read",
+              "inputs": {
+                "notice_id": "$request.notice_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Report the failures by name and number so the office can start telephoning (PR-1), the deliveries the providers could not confirm as unknown rather than delivered (PR-2), and the people who were never in the send at all because no number is held for them (PR-3). Say whether retries are still running (PR-4)."
+        },
+        {
+          "request": {
+            "text": "bas ye bata do kitne deliver hue",
+            "lang": "ur-Latn",
+            "gloss": "just tell me how many were delivered"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "emergency.notice.delivery.read",
+              "inputs": {
+                "notice_id": "$request.notice_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Give the number, then give the names behind the failures anyway (PR-1). In an emergency the useful figure is not how many were reached but which families were not — the count is what makes a send look successful when eleven households have heard nothing."
+        },
+        {
+          "request": {
+            "text": "jo reh gaye un ko dobara bhej do",
+            "lang": "ur-Latn",
+            "gloss": "resend to the ones who were missed"
+          },
+          "context": "Principal, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "emergency.notice.delivery.read",
+              "inputs": {
+                "notice_id": "$request.notice_phrase",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The read only. No resend is chained (PR-5)."
+            }
+          ],
+          "outcome": "The failures come back by name. Report that there is no targeted resend — an emergency notice goes to everybody, so sending again reaches every family a second time, and both notices stay on the record. For eleven households, telephoning is what the list is for."
+        }
+      ]
+    }
+  ]
+}

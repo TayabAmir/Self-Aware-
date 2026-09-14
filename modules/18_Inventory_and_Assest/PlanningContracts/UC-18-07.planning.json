@@ -1,0 +1,1288 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-18-07",
+    "name": "Record a longer-lived item on the asset register when it is bought, with the voucher that paid for it",
+    "module": "Inventory, Assets & Point-of-Sale",
+    "file": "../UseCases/UC-18-07.json",
+    "featureRef": "18.7 Registering an asset"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-18-07-PC-1",
+      "intent": {
+        "name": "asset.register",
+        "summary": "Put a longer-lived item on the asset register when it is bought, with the voucher that paid for it.",
+        "routesHere": [
+          "register the new Epson projector against voucher PV-2026-000633",
+          {
+            "text": "naya projector asset register mein daal dein",
+            "lang": "ur-Latn",
+            "gloss": "put the new projector on the asset register"
+          },
+          {
+            "text": "ye laptop register kar dein, voucher lagi hui hai",
+            "lang": "ur-Latn",
+            "gloss": "register this laptop, the voucher is attached"
+          },
+          {
+            "text": "lab ka naya microscope register par le aayein",
+            "lang": "ur-Latn",
+            "gloss": "bring the lab's new microscope onto the register"
+          },
+          "add the new photocopier to the register"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye asset register se mita dein",
+              "lang": "ur-Latn",
+              "gloss": "delete this asset from the register"
+            },
+            "goesTo": "asset.disposal.raise — UC-18-11.",
+            "note": "An asset is never deleted. One that leaves the school is disposed of through its own route and stays readable, since the voucher, the maintenance history and the verifications all reference it (BR-8, E7)."
+          },
+          {
+            "request": {
+              "text": "ye kis ke naam kar dein?",
+              "lang": "ur-Latn",
+              "gloss": "assign it to somebody"
+            },
+            "goesTo": "asset.assign — UC-18-08.",
+            "note": "Registering an asset assigns it to nobody. Assigning it to a room, a person or a department is a separate act with its own trigger (BR-9, E8)."
+          },
+          {
+            "request": {
+              "text": "marker ko bhi register kar dein",
+              "lang": "ur-Latn",
+              "gloss": "register the markers too"
+            },
+            "goesTo": "stock.item.create — UC-18-01.",
+            "note": "A longer-lived item is registered individually; a consumable is counted as stock. What actually separates the two — a value threshold, an expected life, or the school's judgement — is an open question this use case raises and does not answer (BR-1, OQ-1)."
+          },
+          {
+            "request": {
+              "text": "qeemat khud likh dein, voucher chhod dein",
+              "lang": "ur-Latn",
+              "gloss": "type the value in and skip the voucher"
+            },
+            "goesTo": "Refused.",
+            "note": "The value on the register is the value on the voucher and is not typed independently (BR-3, E5), and without a voucher the register and the books can state different values for the same purchase (BR-2, E4)."
+          },
+          {
+            "request": {
+              "text": "ye cheez donate hui thi, koi voucher nahi hai",
+              "lang": "ur-Latn",
+              "gloss": "this was donated, there is no voucher"
+            },
+            "goesTo": "Not answerable here.",
+            "note": "The rule requires a voucher and nothing says what a donated or transferred asset holds instead. It is an open question this use case raises and does not answer (BR-2, OQ-5)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.register",
+            "inputs": {
+              "identifier": "$request.identifier",
+              "asset_name": "$request.asset_name",
+              "category_id": "$request.category_phrase",
+              "purchase_date": "$request.purchase_date",
+              "expected_life": "$request.expected_life",
+              "voucher_id": "$request.voucher_phrase",
+              "warranty_expiry": "$request.warranty_expiry",
+              "insurance_renewal": "$request.insurance_renewal",
+              "campus_id": "$request.campus_phrase",
+              "location": "$request.location",
+              "condition": "$request.condition",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and the value is not among the inputs: it is taken from the voucher rather than typed (BR-3, E5)."
+          }
+        ],
+        "onFailure": "Stop and report. A duplicate identifier, a purchase date in the future, a value of zero on the voucher, no voucher at all, or no campus where the school has several — each refuses the registration outright.",
+        "atomicity": "One write. The asset is on the register and **assigned to nobody** — assigning it is a separate act (BR-9, E8). It is now available to be assigned, maintained, verified and eventually disposed of."
+      },
+      "operations": [
+        {
+          "name": "asset.register",
+          "method": "POST",
+          "path": "/api/v1/assets",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "identifier, since an asset is registered once and the identifier is what tells two identical machines apart",
+          "purpose": "Register an asset with its voucher, warranty and insurance dates.",
+          "parameters": [
+            {
+              "name": "identifier",
+              "source": "request",
+              "sourceRef": "$request.identifier",
+              "required": true,
+              "type": "string",
+              "notes": "The asset tag or serial number, unique across the register (BR-6, E1, BR-10). Two entries for one machine is two assets the school thinks it owns."
+            },
+            {
+              "name": "asset_name",
+              "source": "request",
+              "sourceRef": "$request.asset_name",
+              "required": true,
+              "type": "string",
+              "notes": "2 to 100 characters."
+            },
+            {
+              "name": "category_id",
+              "source": "resolved",
+              "sourceRef": "$request.category_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset_category",
+                "fromPhrase": "$request.category_phrase",
+                "onNoMatch": "Refuse. No such asset category.",
+                "onAmbiguous": "Ask, naming the categories that match."
+              },
+              "notes": "What kind of asset it is. Who maintains the category list is not specified anywhere (OQ-3)."
+            },
+            {
+              "name": "purchase_date",
+              "source": "request",
+              "sourceRef": "$request.purchase_date",
+              "required": true,
+              "type": "date",
+              "notes": "Not in the future (E2)."
+            },
+            {
+              "name": "expected_life",
+              "source": "request",
+              "sourceRef": "$request.expected_life",
+              "required": true,
+              "type": "string",
+              "notes": "In years or months, greater than zero. Recorded and **nothing uses it** — whether depreciation is calculated anywhere is an open question this use case raises and does not answer (OQ-2)."
+            },
+            {
+              "name": "voucher_id",
+              "source": "resolved",
+              "sourceRef": "$request.voucher_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "voucher",
+                "fromPhrase": "$request.voucher_phrase",
+                "onNoMatch": "Refuse. No payment voucher matches. Where the asset was donated or transferred rather than bought, nothing says what the register holds instead (OQ-5).",
+                "onAmbiguous": "Ask, naming the vouchers that match with their dates, payees and amounts."
+              },
+              "notes": "The payment voucher that paid for the asset. Required (BR-2, E4) — **the value comes from it** and is never typed independently (BR-3, E5)."
+            },
+            {
+              "name": "warranty_expiry",
+              "source": "request",
+              "sourceRef": "$request.warranty_expiry",
+              "required": false,
+              "type": "date",
+              "notes": "When the warranty runs out. One of the two things a school actually needs reminding about, and this register is its natural home (BR-4)."
+            },
+            {
+              "name": "insurance_renewal",
+              "source": "request",
+              "sourceRef": "$request.insurance_renewal",
+              "required": false,
+              "type": "date",
+              "notes": "The other (BR-4)."
+            },
+            {
+              "name": "campus_id",
+              "source": "resolved",
+              "sourceRef": "$request.campus_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "campus",
+                "fromPhrase": "$request.campus_phrase",
+                "onNoMatch": "Refuse. No such campus.",
+                "onAmbiguous": "Ask, naming the campuses."
+              },
+              "notes": "Required where the school has more than one campus (BR-5, E6), so a group knows where its equipment is."
+            },
+            {
+              "name": "location",
+              "source": "request",
+              "sourceRef": "$request.location",
+              "required": true,
+              "type": "string",
+              "notes": "Where the asset is — a room, a laboratory, an office. Not the same as an assignment: this says where it sits, and assigning says who answers for it (BR-1, BR-9)."
+            },
+            {
+              "name": "condition",
+              "source": "request",
+              "sourceRef": "$request.condition",
+              "required": false,
+              "type": "enum: New|Good|Fair|Poor|Unserviceable",
+              "notes": "Its condition when registered. Changed later through maintenance, not here (UC-18-09)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The asset and what the register now holds about it.",
+            "fields": [
+              {
+                "name": "asset_id",
+                "type": "string",
+                "description": "The asset."
+              },
+              {
+                "name": "identifier",
+                "type": "string",
+                "description": "Its tag, unique across the register (BR-6)."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Registered. Assigned to nobody (BR-9, E8)."
+              },
+              {
+                "name": "value",
+                "type": "string",
+                "description": "**Taken from the voucher**, not from the request. Where a different figure was offered, the voucher's is used and the difference is reported (BR-3, E5)."
+              },
+              {
+                "name": "voucher",
+                "type": "string",
+                "description": "What paid for it, so the register and the books can be checked against one another (BR-2)."
+              },
+              {
+                "name": "warranty_expiry",
+                "type": "date",
+                "description": "When the warranty runs out. The school is reminded before it passes — how far before is not specified anywhere (BR-4, OQ-4)."
+              },
+              {
+                "name": "insurance_renewal",
+                "type": "date",
+                "description": "When the insurance must be renewed (BR-4, OQ-4)."
+              },
+              {
+                "name": "expected_life",
+                "type": "string",
+                "description": "Held. Nothing calculates depreciation from it (OQ-2)."
+              },
+              {
+                "name": "campus",
+                "type": "string",
+                "description": "Where it sits, for a group with several (BR-5)."
+              },
+              {
+                "name": "next_step",
+                "type": "string",
+                "description": "Assigning it to a room, a person or a department. Until then nobody answers for it (BR-9)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DUPLICATE_IDENTIFIER",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "The identifier already exists on the register.",
+              "written": "Nothing.",
+              "notWritten": "The asset is not registered.",
+              "note": "An asset is registered once; a second registration of the same identifier is refused rather than creating a duplicate (BR-6, BR-10)."
+            },
+            {
+              "code": "PURCHASE_DATE_FUTURE",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The purchase date is in the future.",
+              "written": "Nothing.",
+              "notWritten": "Not registered."
+            },
+            {
+              "code": "VALUE_NOT_POSITIVE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The value is zero or less.",
+              "written": "Nothing.",
+              "notWritten": "Not registered."
+            },
+            {
+              "code": "NO_VOUCHER",
+              "mapsTo": "E4",
+              "httpStatus": 400,
+              "meaning": "No voucher was attached.",
+              "written": "Nothing.",
+              "notWritten": "Not registered.",
+              "note": "Without it the register and the books can state different values for the same purchase and neither can be checked against the other (BR-2)."
+            },
+            {
+              "code": "VALUE_TAKEN_FROM_VOUCHER",
+              "mapsTo": "E5",
+              "httpStatus": 200,
+              "meaning": "A value was offered that differs from the voucher.",
+              "written": "The asset is registered at the voucher's value.",
+              "notWritten": "The offered figure is not used.",
+              "treatedAsSuccess": true,
+              "note": "The value on the register is the value on the voucher (BR-3)."
+            },
+            {
+              "code": "NO_CAMPUS",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "The school has several campuses and none was selected.",
+              "written": "Nothing.",
+              "notWritten": "Not registered.",
+              "note": "A group with several campuses has to know where its equipment is (BR-5)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never type the value. It comes from the voucher, and a register that says something different from the books about the same purchase leaves neither able to check the other (BR-2, BR-3, E5).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never register without the voucher, and never invent one. Where the asset was donated or transferred rather than bought, the rule still requires a voucher and nothing says what to hold instead — say so rather than improvising (BR-2, E4, OQ-5).",
+          "derivedFrom": [
+            "BR-2",
+            "E4",
+            "OQ-5"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Ask for the warranty and insurance dates even though neither is required. They are the two things a school actually needs reminding about and this register is their only home — an asset registered without them will never remind anybody of anything (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that registering assigns it to nobody. The asset is on the register and no person, room or department answers for it until it is assigned (BR-9, E8).",
+          "derivedFrom": [
+            "BR-9",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never decide whether something is an asset or stock. A projector is clearly one and a marker clearly is not, and where the line falls — value, expected life, or the school's judgement — is not defined anywhere (BR-1, OQ-1).",
+          "derivedFrom": [
+            "BR-1",
+            "OQ-1"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": true,
+        "operation": "asset.disposal.raise",
+        "statement": "An asset registered in error is not deleted — there is no such control. It leaves the register through disposal, which carries its own approval and its own record, and it stays readable because the voucher, the maintenance history and the verifications all reference it (BR-8, E7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "naya Epson projector register kar dein, voucher PV-2026-000633 hai, physics lab mein laga hai",
+            "lang": "ur-Latn",
+            "gloss": "register the new Epson projector, voucher PV-2026-000633, it is in the physics lab"
+          },
+          "context": "Accounts, Johar Town branch, single campus.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.register",
+              "inputs": {
+                "identifier": "the tag on the machine",
+                "asset_name": "Epson EB-X51 projector",
+                "category_id": "$request.category_phrase → Audio-visual equipment",
+                "purchase_date": "14 November",
+                "expected_life": "asked",
+                "voucher_id": "$request.voucher_phrase → PV-2026-000633",
+                "warranty_expiry": "asked",
+                "insurance_renewal": "asked",
+                "campus_id": "omitted — one campus",
+                "location": "Physics laboratory",
+                "condition": "New",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The value comes from the voucher (PR-1)."
+            }
+          ],
+          "outcome": "Ask for the warranty expiry and the insurance renewal before saving — neither is required and this register is the only place they live, so an asset saved without them will never remind anybody. After: report the value taken from the voucher, and that the projector is on the register but assigned to nobody yet."
+        },
+        {
+          "request": {
+            "text": "ye laptop register kar dein, 95 hazaar ka tha",
+            "lang": "ur-Latn",
+            "gloss": "register this laptop, it cost 95 thousand"
+          },
+          "context": "Staff, voucher shows PKR 92,400.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.register",
+              "inputs": {
+                "identifier": "the serial number",
+                "asset_name": "the laptop named",
+                "category_id": "$request.category_phrase → IT equipment",
+                "purchase_date": "as given",
+                "expected_life": "asked",
+                "voucher_id": "$request.voucher_phrase → the voucher",
+                "warranty_expiry": "asked",
+                "insurance_renewal": "asked",
+                "campus_id": "omitted",
+                "location": "asked",
+                "condition": "New",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The voucher's figure is used, not the one in the request (PR-1)."
+            }
+          ],
+          "outcome": "Registered at PKR 92,400 — the voucher's figure, not the 95,000 in the request. That is deliberate: if the register and the books disagree about what one machine cost, neither can be used to check the other. If 92,400 is wrong, the voucher is where it is corrected."
+        },
+        {
+          "request": {
+            "text": "ye microscope donate hua tha, register kar dein",
+            "lang": "ur-Latn",
+            "gloss": "this microscope was donated, register it"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.register",
+              "inputs": {
+                "identifier": "the tag",
+                "asset_name": "the microscope",
+                "category_id": "$request.category_phrase → Laboratory equipment",
+                "purchase_date": "as given",
+                "expected_life": "asked",
+                "voucher_id": "$request.voucher_phrase — no voucher exists",
+                "warranty_expiry": "asked",
+                "insurance_renewal": "asked",
+                "campus_id": "omitted",
+                "location": "asked",
+                "condition": "asked",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Refused at resolution. A voucher is required and none exists (PR-2)."
+            }
+          ],
+          "outcome": "It cannot be registered as written. The rule requires the voucher that paid for the asset, and a donated one has none — the specification does not say what the register should hold instead, and this is a question it raises and leaves open. The school has to decide before donated equipment can go on the register at all."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-07-PC-2",
+      "intent": {
+        "name": "asset.update",
+        "summary": "Correct what the register says about an asset, with the change recorded against whoever made it.",
+        "routesHere": [
+          "correct the warranty date on the projector",
+          {
+            "text": "projector ki warranty ki tareekh theek kar dein",
+            "lang": "ur-Latn",
+            "gloss": "correct the projector's warranty date"
+          },
+          {
+            "text": "insurance renewal ki tareekh daal dein",
+            "lang": "ur-Latn",
+            "gloss": "add the insurance renewal date"
+          },
+          {
+            "text": "ye asset ab library mein hai, location badal dein",
+            "lang": "ur-Latn",
+            "gloss": "this asset is in the library now, change the location"
+          },
+          "fix the serial number on this laptop"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "qeemat badal dein",
+              "lang": "ur-Latn",
+              "gloss": "change the value"
+            },
+            "goesTo": "Not offered here.",
+            "note": "The value on the register is the value on the voucher and is not typed independently. A wrong value is a wrong voucher (BR-3, E5)."
+          },
+          {
+            "request": {
+              "text": "kis ke naam hai wo badal dein",
+              "lang": "ur-Latn",
+              "gloss": "change who it is assigned to"
+            },
+            "goesTo": "asset.reassign — UC-18-08.",
+            "note": "Where an asset sits and who answers for it are different things, and moving the second is an assignment with its own date, its own authoriser and its own reason (BR-9)."
+          },
+          {
+            "request": {
+              "text": "halat kharab ho gayi hai, condition badal dein",
+              "lang": "ur-Latn",
+              "gloss": "its condition has got worse, change the condition"
+            },
+            "goesTo": "asset.maintenance.record — UC-18-09.",
+            "note": "Condition changes through maintenance, with what it cost and what was done, rather than by editing the register."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.update",
+            "inputs": {
+              "asset_id": "$request.asset_phrase",
+              "asset_name": "$request.asset_name",
+              "category_id": "$request.category_phrase",
+              "expected_life": "$request.expected_life",
+              "warranty_expiry": "$request.warranty_expiry",
+              "insurance_renewal": "$request.insurance_renewal",
+              "campus_id": "$request.campus_phrase",
+              "location": "$request.location",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and neither the value nor the identifier is among the parameters — the first comes from the voucher and the second is what tells this machine from another (BR-3, BR-6)."
+          }
+        ],
+        "onFailure": "Stop and report. Nothing is half-changed, and every change is recorded with who made it (BR-7).",
+        "atomicity": "One write and one row in the asset's history. The history is the record of a register that has been corrected rather than one that was always right (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "asset.update",
+          "method": "PATCH",
+          "path": "/api/v1/assets/{asset_id}",
+          "kind": "update",
+          "idempotent": false,
+          "idempotencyKey": "asset_id + the fields submitted, so a double press does not leave two identical rows in the asset's history",
+          "purpose": "Change what the register holds about an asset.",
+          "parameters": [
+            {
+              "name": "asset_id",
+              "source": "resolved",
+              "sourceRef": "$request.asset_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset",
+                "fromPhrase": "$request.asset_phrase",
+                "onNoMatch": "Refuse. No asset on the register matches.",
+                "onAmbiguous": "Ask, naming the assets that match with their identifiers, locations and current holders — two projectors of the same model are told apart only by their tags."
+              },
+              "notes": "The asset, named by its tag, its serial number or what it is and where it sits."
+            },
+            {
+              "name": "asset_name",
+              "source": "request",
+              "sourceRef": "$request.asset_name",
+              "required": false,
+              "type": "string",
+              "notes": "The corrected name."
+            },
+            {
+              "name": "category_id",
+              "source": "resolved",
+              "sourceRef": "$request.category_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset_category",
+                "fromPhrase": "$request.category_phrase",
+                "onNoMatch": "Refuse. No such asset category.",
+                "onAmbiguous": "Ask, naming the categories that match."
+              },
+              "notes": "Where the asset was filed under the wrong category."
+            },
+            {
+              "name": "expected_life",
+              "source": "request",
+              "sourceRef": "$request.expected_life",
+              "required": false,
+              "type": "string",
+              "notes": "The corrected life. Nothing calculates anything from it (OQ-2)."
+            },
+            {
+              "name": "warranty_expiry",
+              "source": "request",
+              "sourceRef": "$request.warranty_expiry",
+              "required": false,
+              "type": "date",
+              "notes": "The warranty date, often added after registration because nobody had the paperwork on the day (BR-4)."
+            },
+            {
+              "name": "insurance_renewal",
+              "source": "request",
+              "sourceRef": "$request.insurance_renewal",
+              "required": false,
+              "type": "date",
+              "notes": "The insurance date (BR-4)."
+            },
+            {
+              "name": "campus_id",
+              "source": "resolved",
+              "sourceRef": "$request.campus_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "campus",
+                "fromPhrase": "$request.campus_phrase",
+                "onNoMatch": "Refuse. No such campus.",
+                "onAmbiguous": "Ask, naming the campuses."
+              },
+              "notes": "Correcting which campus the asset sits at. **Moving it to another campus is a transfer, not a correction** — that is a different act with its own record (UC-18-08 BR-4)."
+            },
+            {
+              "name": "location",
+              "source": "request",
+              "sourceRef": "$request.location",
+              "required": false,
+              "type": "string",
+              "notes": "Where the asset is. A room, a laboratory, an office."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What changed and what did not.",
+            "fields": [
+              {
+                "name": "asset_id",
+                "type": "string",
+                "description": "The asset."
+              },
+              {
+                "name": "changed",
+                "type": "object[]",
+                "description": "Field by field, from and to, with who changed it (BR-7)."
+              },
+              {
+                "name": "value",
+                "type": "string",
+                "description": "Unchanged. It comes from the voucher and is not a parameter here (BR-3)."
+              },
+              {
+                "name": "identifier",
+                "type": "string",
+                "description": "Unchanged. It is what tells two identical machines apart (BR-6)."
+              },
+              {
+                "name": "warranty_expiry",
+                "type": "date",
+                "description": "As it now stands. Where this was empty and is now set, the asset can remind somebody for the first time (BR-4)."
+              },
+              {
+                "name": "reminders_now_possible",
+                "type": "string[]",
+                "description": "Which reminders this change makes possible — a warranty or insurance date that was blank produced none (BR-4)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "DUPLICATE_IDENTIFIER",
+              "mapsTo": "E1",
+              "httpStatus": 409,
+              "meaning": "A change would make the identifier match another asset.",
+              "written": "Nothing.",
+              "notWritten": "The asset is unchanged.",
+              "note": "The identifier is unique across the register (BR-6)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never change the value here. It is the voucher's figure, and a register edited to disagree with the books defeats the reason the voucher is held at all (BR-2, BR-3).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say when a blank date is being filled for the first time. A warranty or insurance date that was empty produced no reminder at all, so adding it is not a correction but the first time the asset can warn anybody (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never treat a change of campus as a correction. Moving an asset to another campus is a transfer with its own record, because the two mean different things to a group (BR-5, UC-18-08 BR-4).",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Say that a change of location is not a change of custodian. Where the asset sits and who answers for it are separate, and only one of them is on this screen (BR-9).",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "There is no undo. A further correction is another change and both rows stay in the asset's history (BR-7), which is what makes a register that has been corrected distinguishable from one that was always right."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "projector ki insurance renewal ki tareekh daal dein, 1 July 2027",
+            "lang": "ur-Latn",
+            "gloss": "add the projector's insurance renewal date, 1 July 2027"
+          },
+          "context": "Accounts, Johar Town branch, the field currently empty.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.update",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the Epson projector",
+                "asset_name": "unchanged",
+                "category_id": "unchanged",
+                "expected_life": "unchanged",
+                "warranty_expiry": "unchanged",
+                "insurance_renewal": "1 July 2027",
+                "campus_id": "unchanged",
+                "location": "unchanged",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One field (PR-2)."
+            }
+          ],
+          "outcome": "Recorded. Worth saying: this asset produced no insurance reminder before, because the date was blank — the register only reminds about dates somebody has put in it. Its warranty date is still empty."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-07-PC-3",
+      "intent": {
+        "name": "assets.read",
+        "summary": "See what the school owns, what it cost, where it is, and what is about to run out of warranty or insurance.",
+        "routesHere": [
+          "what assets do we have in the physics lab?",
+          {
+            "text": "physics lab mein kaunse assets hain?",
+            "lang": "ur-Latn",
+            "gloss": "which assets are in the physics lab?"
+          },
+          {
+            "text": "kis kis cheez ki warranty khatam hone wali hai?",
+            "lang": "ur-Latn",
+            "gloss": "which things have their warranty running out?"
+          },
+          {
+            "text": "school ke paas kitne projector hain aur kis halat mein hain?",
+            "lang": "ur-Latn",
+            "gloss": "how many projectors does the school have and in what condition?"
+          },
+          "list everything bought this year with its value"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "kis ke naam kya hai?",
+              "lang": "ur-Latn",
+              "gloss": "who is holding what?"
+            },
+            "goesTo": "asset.assignments.read — UC-18-08.",
+            "note": "What the school owns and who answers for each is a different question, and the second is the one that matters when somebody leaves."
+          },
+          {
+            "request": {
+              "text": "stock kitna para hai?",
+              "lang": "ur-Latn",
+              "gloss": "how much stock is there?"
+            },
+            "goesTo": "stock.items.read — UC-18-01.",
+            "note": "Stock is counted and assets are registered individually. Which side of the line a thing falls on is not defined anywhere (BR-1, OQ-1)."
+          },
+          {
+            "request": {
+              "text": "depreciation nikaal dein",
+              "lang": "ur-Latn",
+              "gloss": "calculate the depreciation"
+            },
+            "goesTo": "Not offered.",
+            "note": "Expected life is recorded and nothing uses it. Whether depreciation is calculated anywhere is an open question this use case raises and does not answer (OQ-2)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "assets.read",
+            "inputs": {
+              "category_phrase": "$request.category_phrase",
+              "location": "$request.location",
+              "condition": "$request.condition",
+              "expiring_within_days": "$request.expiring_within_days",
+              "campus_phrase": "$request.campus_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read. Nothing on the register changes."
+          }
+        ],
+        "onFailure": "Stop and report.",
+        "atomicity": "A read. Nothing is written, and no asset is ever removed from what it reads — a disposed asset stays on the register (BR-8)."
+      },
+      "operations": [
+        {
+          "name": "assets.read",
+          "method": "GET",
+          "path": "/api/v1/assets",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "List assets with their values, locations, conditions and expiry dates.",
+          "parameters": [
+            {
+              "name": "category_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.category_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset_category",
+                "fromPhrase": "$request.category_phrase",
+                "onNoMatch": "Refuse. No such asset category.",
+                "onAmbiguous": "Ask, naming the categories that match."
+              },
+              "notes": "Where the question is about one kind of asset."
+            },
+            {
+              "name": "location",
+              "source": "request",
+              "sourceRef": "$request.location",
+              "required": false,
+              "type": "string",
+              "notes": "Where the question is about one room, laboratory or office."
+            },
+            {
+              "name": "condition",
+              "source": "request",
+              "sourceRef": "$request.condition",
+              "required": false,
+              "type": "enum: New|Good|Fair|Poor|Unserviceable",
+              "notes": "Where the question is about what state things are in."
+            },
+            {
+              "name": "expiring_within_days",
+              "source": "request",
+              "sourceRef": "$request.expiring_within_days",
+              "required": false,
+              "type": "integer",
+              "notes": "Warranties and insurances falling due. How far in advance the school should be reminded is not specified anywhere (BR-4, OQ-4)."
+            },
+            {
+              "name": "campus_phrase",
+              "source": "resolved",
+              "sourceRef": "$request.campus_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "campus",
+                "fromPhrase": "$request.campus_phrase",
+                "onNoMatch": "Refuse. No such campus.",
+                "onAmbiguous": "Ask, naming the campuses."
+              },
+              "notes": "Where the question is about one campus of a group (BR-5)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What the school owns and what is about to lapse.",
+            "fields": [
+              {
+                "name": "assets",
+                "type": "object[]",
+                "description": "Identifier, name, category, purchase date, value, location, campus, condition and status."
+              },
+              {
+                "name": "total_value",
+                "type": "string",
+                "description": "What the register says the school owns. At purchase value — nothing depreciates it (OQ-2)."
+              },
+              {
+                "name": "warranty_expiring",
+                "type": "object[]",
+                "description": "Warranties running out within the period asked about (BR-4)."
+              },
+              {
+                "name": "insurance_expiring",
+                "type": "object[]",
+                "description": "Insurance renewals falling due (BR-4)."
+              },
+              {
+                "name": "no_warranty_date",
+                "type": "object[]",
+                "description": "Assets with no warranty date recorded at all. These will never remind anybody, and the absence looks identical to a warranty that has already run out (BR-4)."
+              },
+              {
+                "name": "no_insurance_date",
+                "type": "object[]",
+                "description": "The same for insurance. An uninsured asset and an asset whose insurance date nobody entered read the same here (BR-4)."
+              },
+              {
+                "name": "unassigned",
+                "type": "object[]",
+                "description": "Assets on the register that nobody answers for. Registering assigns to nobody, and nothing forces the next step (BR-9)."
+              },
+              {
+                "name": "disposed",
+                "type": "object[]",
+                "description": "Assets disposed of. Still on the register and never deleted, so a total that includes them is not what the school owns (BR-8)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the asset register.",
+              "written": "Nothing.",
+              "notWritten": "No list is returned.",
+              "note": "The use case writes no exception for it — its eight exceptions are all about registering."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Name the assets with no warranty or insurance date at all. A blank date and an expired one look the same on this screen and mean different things: one has lapsed, the other will never warn anybody (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Say that the total is at purchase value. Nothing depreciates anything — expected life is recorded and unused — so a register total is what the school paid, not what it holds (OQ-2).",
+          "derivedFrom": [
+            "OQ-2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Exclude the disposed assets from any total, and say that they are still on the register. Nothing is ever deleted, so a naive total counts equipment that has already left the school (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Name the assets nobody answers for. Registering assigns to nobody and nothing forces an assignment afterwards, so an asset can sit on the register for years with no custodian (BR-9, E8).",
+          "derivedFrom": [
+            "BR-9",
+            "E8"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing, so there is nothing to reverse."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "kis kis cheez ki warranty ya insurance khatam hone wali hai?",
+            "lang": "ur-Latn",
+            "gloss": "which things have their warranty or insurance running out?"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "assets.read",
+              "inputs": {
+                "category_phrase": "omitted",
+                "location": "omitted",
+                "condition": "omitted",
+                "expiring_within_days": "90",
+                "campus_phrase": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "A ninety-day window, stated back — how far ahead the school wants to be told is not written down anywhere (PR-1 concerns the blanks)."
+            }
+          ],
+          "outcome": "Give the warranties and insurances falling due in the window. Then the list nobody asks for and needs most: the assets with no warranty or insurance date recorded at all — they will never appear on a list like this, and on the screen they are indistinguishable from equipment that is properly covered."
+        },
+        {
+          "request": {
+            "text": "school ke paas kitne ki cheezein hain?",
+            "lang": "ur-Latn",
+            "gloss": "how much is the school's equipment worth?"
+          },
+          "context": "Principal, all branches.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "assets.read",
+              "inputs": {
+                "category_phrase": "omitted",
+                "location": "omitted",
+                "condition": "omitted",
+                "expiring_within_days": "omitted",
+                "campus_phrase": "omitted",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The whole register (PR-2, PR-3)."
+            }
+          ],
+          "outcome": "Give the total at purchase value, and say so plainly — nothing in the system depreciates anything, even though every asset carries an expected life. Exclude the disposed assets from the figure and say how many there are: they stay on the register permanently, so a naive total counts equipment that left years ago."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-18-07-PC-4",
+      "intent": {
+        "name": "asset.history.read",
+        "summary": "See what has been changed about an asset since it was registered, and by whom.",
+        "routesHere": [
+          "what has changed on this projector since we bought it?",
+          {
+            "text": "is projector mein register hone ke baad kya kya badla gaya hai?",
+            "lang": "ur-Latn",
+            "gloss": "what has been changed on this projector since it was registered?"
+          },
+          {
+            "text": "is asset ki warranty ki tareekh kis ne daali thi?",
+            "lang": "ur-Latn",
+            "gloss": "who entered this asset's warranty date?"
+          },
+          {
+            "text": "ye laptop kab register hua tha aur kis voucher pe?",
+            "lang": "ur-Latn",
+            "gloss": "when was this laptop registered and against which voucher?"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye kahan kahan raha hai?",
+              "lang": "ur-Latn",
+              "gloss": "where has it been?"
+            },
+            "goesTo": "asset.assignment.history.read — UC-18-08.",
+            "note": "Where an asset has been and who has held it is the assignment history, kept in full and never deleted (UC-18-08 BR-6)."
+          },
+          {
+            "request": {
+              "text": "is ki marammat ka record dikhayein",
+              "lang": "ur-Latn",
+              "gloss": "show its repair record"
+            },
+            "goesTo": "asset.maintenance.read — UC-18-09.",
+            "note": "What has been done to the asset and what it cost is the maintenance record, not the register's change log."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "asset.history.read",
+            "inputs": {
+              "asset_id": "$request.asset_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One read of an append-only record. Every change to an asset is recorded with who made it (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. An asset that cannot be identified returns no history — two projectors of the same model are told apart only by their tags.",
+        "atomicity": "A read. The record is append only; nothing in it can be edited (BR-7)."
+      },
+      "operations": [
+        {
+          "name": "asset.history.read",
+          "method": "GET",
+          "path": "/api/v1/assets/{asset_id}/history",
+          "kind": "read",
+          "idempotent": true,
+          "idempotencyKey": null,
+          "purpose": "Return every change made to an asset's register entry, with who made it.",
+          "parameters": [
+            {
+              "name": "asset_id",
+              "source": "resolved",
+              "sourceRef": "$request.asset_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "asset",
+                "fromPhrase": "$request.asset_phrase",
+                "onNoMatch": "Refuse. No asset matches, registered or disposed of.",
+                "onAmbiguous": "Ask, naming the assets that match with their identifiers and locations."
+              },
+              "notes": "The asset, including one already disposed of — nothing is ever deleted (BR-8)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "What the register has said about this asset over time.",
+            "fields": [
+              {
+                "name": "asset_id",
+                "type": "string",
+                "description": "The asset."
+              },
+              {
+                "name": "registered",
+                "type": "object",
+                "description": "When, by whom, against which voucher and at what value (BR-2)."
+              },
+              {
+                "name": "changes",
+                "type": "object[]",
+                "description": "When, which field, from what to what, and who changed it (BR-7)."
+              },
+              {
+                "name": "date_fields_added_later",
+                "type": "object[]",
+                "description": "Warranty or insurance dates entered after registration. Between the purchase and that entry the asset reminded nobody of anything (BR-4)."
+              },
+              {
+                "name": "value",
+                "type": "string",
+                "description": "The voucher's figure. It appears in no change row, because it is not editable on the register (BR-3)."
+              },
+              {
+                "name": "current_status",
+                "type": "string",
+                "description": "Registered, assigned, under maintenance, unserviceable or disposed of."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_PERMISSION",
+              "mapsTo": null,
+              "httpStatus": 403,
+              "meaning": "The acting user cannot see the asset history.",
+              "written": "Nothing.",
+              "notWritten": "No history is returned.",
+              "note": "The use case writes no exception for it."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Give the registration first — the voucher, the value and the date. That is what ties this asset to the books, and it is what somebody checking the register against them is actually after (BR-2, BR-3).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Name the dates that were added later. Between registration and that entry the asset carried no warranty or insurance date and reminded nobody — which is usually the gap somebody is asking about (BR-4).",
+          "derivedFrom": [
+            "BR-4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Say that the value never appears as a change. It is the voucher's and is not editable, so a register value that looks wrong is a voucher question rather than a register one (BR-3).",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A read changes nothing. The record it reads cannot be edited by anybody (BR-7)."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is projector ki warranty ki tareekh kis ne aur kab daali thi?",
+            "lang": "ur-Latn",
+            "gloss": "who entered this projector's warranty date and when?"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "asset.history.read",
+              "inputs": {
+                "asset_id": "$request.asset_phrase → the Epson projector",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "One read (PR-2)."
+            }
+          ],
+          "outcome": "Give the name and the date it was entered — and the gap it closed: the projector was registered in November and the warranty date was added in February, so for those three months it would have appeared on no warranty list at all. Add the registration itself: the voucher, the value taken from it, and who registered it."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1288 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-04-13",
+    "name": "Record an approved fee reduction, by discretionary concession or by scholarship won on a test",
+    "module": "Fee",
+    "file": "../UseCases/UC-04-13.json",
+    "featureRef": "4.13 Scholarship / discount / concession"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-04-13-PC-1",
+      "intent": {
+        "name": "fee.concession.record",
+        "summary": "Record a proposed fee reduction against a student — a concession, a discount, or a scholarship won on a test — with why it is being granted and how long it lasts. One step, and it reduces nothing yet.",
+        "routesHere": [
+          "record a 25% tuition concession for this student, valid to the end of the session",
+          {
+            "text": "is bache ki fees mein 25% kami kar do",
+            "lang": "ur-Latn",
+            "gloss": "reduce this child's fees by 25%"
+          },
+          {
+            "text": "scholarship record karo, test mein pehla aaya hai",
+            "lang": "ur-Latn",
+            "gloss": "record a scholarship, they came first in the test"
+          },
+          {
+            "text": "transport fee mein 1000 ki chhoot de do",
+            "lang": "ur-Latn",
+            "gloss": "give a 1000 reduction on the transport fee"
+          },
+          {
+            "text": "bhai behan wala discount laga do",
+            "lang": "ur-Latn",
+            "gloss": "apply the sibling discount"
+          },
+          "record a hardship concession for the Khan child"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "ye bill kam kar do",
+              "lang": "ur-Latn",
+              "gloss": "reduce this bill"
+            },
+            "goesTo": "fee.credit.raise — UC-04-10, or a cancellation",
+            "note": "A reduction applies from its effective date onward and never recalculates an invoice already issued (BR-8). A bill already raised is corrected another way."
+          },
+          {
+            "request": {
+              "text": "ye concession khatam kar do",
+              "lang": "ur-Latn",
+              "gloss": "end this concession"
+            },
+            "goesTo": "fee.concession.withdraw — UC-04-13-PC-4",
+            "note": "A reduction is withdrawn rather than deleted, with its own reason (BR-10)."
+          },
+          {
+            "request": {
+              "text": "family ko bata do kyun kami di",
+              "lang": "ur-Latn",
+              "gloss": "tell the family why the reduction was given"
+            },
+            "goesTo": "Not offered.",
+            "note": "The reason recorded is not shown to the family — it may concern their circumstances (BR-12)."
+          },
+          {
+            "request": {
+              "text": "poori class ki fees kam kar do",
+              "lang": "ur-Latn",
+              "gloss": "reduce the whole class's fees"
+            },
+            "goesTo": "fee.structure.revise — UC-04-01-PC-5",
+            "note": "A change for everybody is a change to the price list, not a reduction for one student."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.concession.record",
+            "inputs": {
+              "student_id": "$request.student_phrase",
+              "type": "$request.type",
+              "basis": "$request.basis",
+              "applies_to": "$request.applies_to",
+              "reason": "$request.reason",
+              "valid_from": "$request.valid_from",
+              "valid_to": "$request.valid_to",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, producing a record at Awaiting approval. A reduction recorded by Accounts alone bills nobody (BR-1) — nothing is reduced until it is approved."
+          }
+        ],
+        "onFailure": "Stop and report. A missing reason, a missing end date, a value above the fee it reduces, a second reduction on the same fee type, a scholarship with no test and a start before the session begins are all enforced by the API and arrive as errors.",
+        "atomicity": "One write: the reduction with its value, its scope, its reason and its validity, together with the audit entry or not at all. Nothing is reduced, no invoice changes and the family is told nothing. Approving it is a separate act — and who approves depends on the type (BR-3)."
+      },
+      "operations": [
+        {
+          "name": "fee.concession.record",
+          "method": "POST",
+          "path": "/api/v1/fee-concessions",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "student_id + applies_to + valid_from, since a student holds one reduction per fee type at a time (BR-11)",
+          "purpose": "Record a proposed reduction against a student, with its basis, the fee types it covers and its validity period.",
+          "parameters": [
+            {
+              "name": "student_id",
+              "source": "resolved",
+              "sourceRef": "$request.student_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "student",
+                "fromPhrase": "$request.student_phrase",
+                "onNoMatch": "Refuse. No enrolled student matches.",
+                "onAmbiguous": "Ask, naming the candidates with class and section."
+              },
+              "notes": "An enrolled student belonging to a class with an approved fee structure."
+            },
+            {
+              "name": "type",
+              "source": "request",
+              "sourceRef": "$request.type",
+              "required": true,
+              "type": "enum: Concession | Discount | Scholarship",
+              "notes": "What kind of reduction this is. It decides who approves it — a concession or discount goes to the School Admin, a scholarship to the Principal, because it is awarded on merit and is a claim about the student (BR-3)."
+            },
+            {
+              "name": "basis",
+              "source": "request",
+              "sourceRef": "$request.basis",
+              "required": true,
+              "type": "enum: Percentage | Fixed amount",
+              "notes": "How the reduction is expressed."
+            },
+            {
+              "name": "percentage",
+              "source": "request",
+              "sourceRef": "$request.percentage",
+              "required": false,
+              "type": "decimal",
+              "notes": "Greater than zero and not more than 100. Required where the basis is Percentage."
+            },
+            {
+              "name": "fixed_amount",
+              "source": "request",
+              "sourceRef": "$request.fixed_amount",
+              "required": false,
+              "type": "money",
+              "notes": "Greater than zero and not more than the fee it reduces (BR-6, E3). Required where the basis is Fixed amount."
+            },
+            {
+              "name": "applies_to",
+              "source": "request",
+              "sourceRef": "$request.applies_to",
+              "required": true,
+              "type": "enum: All fee types | Tuition only | Selected fee types",
+              "notes": "Which fee types the reduction covers. A transport concession must not silently reduce tuition (BR-5)."
+            },
+            {
+              "name": "fee_type_ids",
+              "source": "resolved",
+              "sourceRef": "$request.fee_types_phrase",
+              "required": false,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "fee_type",
+                "fromPhrase": "$request.fee_types_phrase",
+                "onNoMatch": "Refuse. No such fee type.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "Required where applies_to is Selected fee types."
+            },
+            {
+              "name": "reason",
+              "source": "request",
+              "sourceRef": "$request.reason",
+              "required": true,
+              "type": "string",
+              "notes": "20 to 1000 characters. Mandatory (BR-2, E1) — a family paying less than their neighbour is a question the school has to be able to answer. Never shown to the family (BR-12)."
+            },
+            {
+              "name": "valid_from",
+              "source": "request",
+              "sourceRef": "$request.valid_from",
+              "required": true,
+              "type": "date",
+              "notes": "Not before the academic session start (E8). The reduction applies from here onward."
+            },
+            {
+              "name": "valid_to",
+              "source": "request",
+              "sourceRef": "$request.valid_to",
+              "required": true,
+              "type": "date",
+              "notes": "Mandatory (BR-9, E2). A reduction with no end date runs forever and is never reviewed — a concession granted for one hard year must not still be running five years later."
+            },
+            {
+              "name": "test_id",
+              "source": "resolved",
+              "sourceRef": "$request.test_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "scholarship_test",
+                "fromPhrase": "$request.test_phrase",
+                "onNoMatch": "Refuse. No marked test matches.",
+                "onAmbiguous": "Ask, naming the candidates with date and class."
+              },
+              "notes": "The scholarship test the award was won on. Required for a scholarship (E7); the score and rank are carried from the marked result rather than typed (BR-4)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The reduction as recorded.",
+            "fields": [
+              {
+                "name": "concession_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Awaiting approval. Nothing is reduced yet (BR-1)."
+              },
+              {
+                "name": "type",
+                "type": "string",
+                "description": "Concession, Discount or Scholarship."
+              },
+              {
+                "name": "approver_role",
+                "type": "string",
+                "description": "School Admin for a concession or discount; Principal for a scholarship (BR-3)."
+              },
+              {
+                "name": "value",
+                "type": "string",
+                "description": "The percentage or fixed amount."
+              },
+              {
+                "name": "applies_to",
+                "type": "object[]",
+                "description": "The fee types covered (BR-5)."
+              },
+              {
+                "name": "score",
+                "type": "string",
+                "description": "Carried from the marked test result, never typed (BR-4). Scholarships only."
+              },
+              {
+                "name": "rank",
+                "type": "string",
+                "description": "Their position among the candidates."
+              },
+              {
+                "name": "existing_reductions",
+                "type": "object[]",
+                "description": "Any reduction the student already holds, and on which fee types — two on the same type is refused (BR-11, E6)."
+              },
+              {
+                "name": "recorded_by",
+                "type": "string",
+                "description": "The acting user, who may not also approve it (BR-1)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "REASON_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "No reason was written.",
+              "written": "Nothing.",
+              "notWritten": "No reduction recorded.",
+              "note": "Message: \"Write why this reduction is being granted.\" Ask; never compose one."
+            },
+            {
+              "code": "END_DATE_REQUIRED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "No end date was set.",
+              "written": "Nothing.",
+              "notWritten": "No reduction recorded.",
+              "note": "A reduction with no end runs forever and is never reviewed (BR-9)."
+            },
+            {
+              "code": "EXCEEDS_FEE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "The reduction is more than the fee it reduces.",
+              "written": "Nothing.",
+              "notWritten": "No reduction recorded.",
+              "note": "There is no route by which a concession pays a family (BR-6). The message names the fee."
+            },
+            {
+              "code": "DUPLICATE_ON_FEE_TYPE",
+              "mapsTo": "E6",
+              "httpStatus": 409,
+              "meaning": "The student already holds a reduction on that fee type.",
+              "written": "Nothing.",
+              "notWritten": "No reduction recorded.",
+              "note": "A student may hold several reductions provided they cover different fee types (BR-11). The message names the existing one."
+            },
+            {
+              "code": "SCHOLARSHIP_NEEDS_TEST",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "A scholarship was recorded with no test.",
+              "written": "Nothing.",
+              "notWritten": "No reduction recorded.",
+              "note": "A scholarship carries the test and score it was won on, so a discretionary favour and an earned award are not confused (BR-4)."
+            },
+            {
+              "code": "STARTS_BEFORE_SESSION",
+              "mapsTo": "E8",
+              "httpStatus": 400,
+              "meaning": "The validity start is before the academic session begins.",
+              "written": "Nothing.",
+              "notWritten": "No reduction recorded."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the reason. A family paying less than their neighbour is a question the school has to be able to answer (BR-2), and the reason is the answer. It is never shown to the family either (BR-12), so it can say what it needs to.",
+          "derivedFrom": [
+            "BR-2",
+            "BR-12",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never supply the end date. A reduction with no end runs forever and is never reviewed (BR-9), and how long a family's circumstances warrant it is a judgement somebody makes — not a default of one session.",
+          "derivedFrom": [
+            "BR-9",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never widen applies_to. A transport concession must not silently reduce tuition (BR-5), and \"All fee types\" chosen because the request was vague reduces charges nobody discussed.",
+          "derivedFrom": [
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never type a scholarship's score. It is carried from the marked test result (BR-4), and typing it is how a discretionary favour gets recorded as an earned award.",
+          "derivedFrom": [
+            "BR-4",
+            "E7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Choose the type from what the actor said, not from the value. The type decides who approves it — a scholarship goes to the Principal because it is a claim about the student's merit (BR-3) — so calling a hardship concession a scholarship routes it past the wrong person.",
+          "derivedFrom": [
+            "BR-3"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never chain the approval. A reduction recorded by Accounts alone bills nobody (BR-1), and that is the control.",
+          "derivedFrom": [
+            "BR-1",
+            "E4",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never offer to reduce an invoice already issued. A reduction applies from its effective date onward and never recalculates one (BR-8).",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A recorded reduction is approved, returned or withdrawn — never deleted. The record of what a family was granted survives (BR-10). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "is bache ko tuition mein 25% concession de do — walid ka intiqal ho gaya hai, is session ke aakhir tak",
+            "lang": "ur-Latn",
+            "gloss": "give this child a 25% concession on tuition — the father has died, until the end of this session"
+          },
+          "context": "Accounts, Johar Town branch, academic session 2025-26 running to 30-06-2027.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.record",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "type": "Concession",
+                "basis": "Percentage",
+                "percentage": 25,
+                "applies_to": "Tuition only",
+                "reason": "The father has died and the family's circumstances have changed. Granted on hardship grounds for the remainder of the session.",
+                "valid_from": "2026-09-08",
+                "valid_to": "2027-06-30",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Tuition only, because that is what the request said — not All fee types (PR-3). The end date comes from the request (PR-2)."
+            }
+          ],
+          "outcome": "A record at Awaiting approval, going to the School Admin. Nothing is reduced yet and the family is told nothing. The reason is never shown to them (BR-12)."
+        },
+        {
+          "request": {
+            "text": "scholarship record karo — Ayesha test mein pehle number pe aayi hai, 50% poori fees pe",
+            "lang": "ur-Latn",
+            "gloss": "record a scholarship — Ayesha came first in the test, 50% on the full fees"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.record",
+              "inputs": {
+                "student_id": "$request.student_phrase → \"Ayesha\"",
+                "type": "Scholarship",
+                "basis": "Percentage",
+                "percentage": 50,
+                "applies_to": "All fee types",
+                "reason": "Awarded on the entrance scholarship test, placed first among candidates.",
+                "valid_from": "$request.valid_from",
+                "valid_to": "$request.valid_to",
+                "test_id": "$request.test_phrase → the scholarship test",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "test_id is required for a scholarship, and the score and rank are carried from the marked result rather than typed (PR-4)."
+            }
+          ],
+          "outcome": "A record at Awaiting approval going to the **Principal**, not the School Admin — a scholarship is a claim about the student's merit (BR-3). The score comes back from the test."
+        },
+        {
+          "request": {
+            "text": "is bache ko transport mein bhi chhoot de do",
+            "lang": "ur-Latn",
+            "gloss": "give this child a reduction on transport too"
+          },
+          "context": "Accounts, Johar Town branch, where the student already holds a tuition concession.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.record",
+              "inputs": {
+                "student_id": "$request.student_phrase",
+                "type": "Concession",
+                "basis": "Fixed amount",
+                "fixed_amount": "$request.fixed_amount",
+                "applies_to": "Selected fee types",
+                "fee_type_ids": "$request.fee_types_phrase → Transport",
+                "reason": "$request.reason",
+                "valid_from": "$request.valid_from",
+                "valid_to": "$request.valid_to",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Permitted: a student may hold several reductions provided they cover different fee types (BR-11). Naming Transport specifically is what keeps them apart (PR-3)."
+            }
+          ],
+          "outcome": "A second record at Awaiting approval, covering transport only. Had it named tuition, E6 would have refused it — two reductions on one fee type is not allowed."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-13-PC-2",
+      "intent": {
+        "name": "fee.concession.approve",
+        "summary": "Approve a fee reduction so it applies to every subsequent invoice. School Admin for a concession or discount; Principal for a scholarship. One step.",
+        "routesHere": [
+          "approve the concession for this student",
+          {
+            "text": "concession approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the concession"
+          },
+          {
+            "text": "ye scholarship manzoor kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve this scholarship"
+          },
+          "sign off the reduction Accounts recorded"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "concession wapas bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send the concession back"
+            },
+            "goesTo": "fee.concession.return — UC-04-13-PC-3"
+          },
+          {
+            "request": {
+              "text": "concession record karo",
+              "lang": "ur-Latn",
+              "gloss": "record a concession"
+            },
+            "goesTo": "fee.concession.record — UC-04-13-PC-1"
+          },
+          {
+            "request": {
+              "text": "purane bill bhi kam kar do",
+              "lang": "ur-Latn",
+              "gloss": "reduce the earlier bills too"
+            },
+            "goesTo": "Not offered.",
+            "note": "A reduction never recalculates an invoice already issued (BR-8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.concession.approve",
+            "inputs": {
+              "concession_id": "$request.concession_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. From here the reduction is applied automatically to every subsequent invoice — nobody remembers to apply it, and nobody can forget (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. The acting role against the reduction's type is enforced by the API and arrives as an error — a School Admin cannot approve a scholarship (BR-3, E5).",
+        "atomicity": "One write: the approval and the audit entry together or not at all. Nothing is billed by it. From the effective date onward every invoice raised for the student carries the reduction automatically (BR-7), and no invoice already issued is recalculated (BR-8). The reduction is surfaced for review when its end date is reached (BR-9). The reason stays internal (BR-12)."
+      },
+      "operations": [
+        {
+          "name": "fee.concession.approve",
+          "method": "POST",
+          "path": "/api/v1/fee-concessions/{concession_id}/approve",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "concession_id, since a reduction carries one approval",
+          "purpose": "Approve a reduction so it applies automatically to every subsequent invoice.",
+          "parameters": [
+            {
+              "name": "concession_id",
+              "source": "resolved",
+              "sourceRef": "$request.concession_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "concession",
+                "fromPhrase": "$request.concession_phrase",
+                "onNoMatch": "Refuse. No reduction matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with student, type, value, fee types covered and status."
+              },
+              "notes": "The reduction, resolved from how the actor named it — the student, the type, or the reference."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The reduction as approved.",
+            "fields": [
+              {
+                "name": "concession_id",
+                "type": "string",
+                "description": "The approved reduction."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Approved."
+              },
+              {
+                "name": "type",
+                "type": "string",
+                "description": "Concession, Discount or Scholarship."
+              },
+              {
+                "name": "approved_by",
+                "type": "string",
+                "description": "The School Admin, or the Principal for a scholarship (BR-3)."
+              },
+              {
+                "name": "valid_from",
+                "type": "date",
+                "description": "When it starts applying."
+              },
+              {
+                "name": "valid_to",
+                "type": "date",
+                "description": "When it is surfaced for review (BR-9)."
+              },
+              {
+                "name": "applies_to",
+                "type": "object[]",
+                "description": "The fee types it covers (BR-5)."
+              },
+              {
+                "name": "invoices_recalculated",
+                "type": "integer",
+                "description": "Always zero. A reduction never recalculates an issued invoice (BR-8)."
+              },
+              {
+                "name": "next_invoice_effect",
+                "type": "string",
+                "description": "What the student's next bill will be reduced by, so the office can answer the family."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "Accounts attempted to approve their own reduction.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "Reducing what a family pays is not one person's decision (BR-1)."
+            },
+            {
+              "code": "SCHOLARSHIP_NEEDS_PRINCIPAL",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "A School Admin attempted to approve a scholarship.",
+              "written": "Nothing.",
+              "notWritten": "Not approved.",
+              "note": "A scholarship is awarded on merit and is a claim about the student, so the Principal approves it (BR-3)."
+            },
+            {
+              "code": "INVOICE_ALREADY_ISSUED",
+              "mapsTo": "E9",
+              "httpStatus": 200,
+              "meaning": "An invoice was issued before the reduction was approved.",
+              "written": "The approval stands.",
+              "notWritten": "That invoice is not recalculated (BR-8).",
+              "treatedAsSuccess": true,
+              "note": "Report it — the family's current bill does not carry the reduction and they will ask why."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never approve a scholarship in a School Admin's session. E5 is BR-3 working — a scholarship is a claim about the student's merit and the Principal makes it.",
+          "derivedFrom": [
+            "BR-3",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Report what the next invoice will be reduced by. The office answers the family from it, and a reduction approved silently is one nobody can explain at the counter.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report where an invoice was issued before approval. It is not recalculated (BR-8, E9), so the family's current bill is the full amount and they will ask why — better said now than at the bank.",
+          "derivedFrom": [
+            "BR-8",
+            "E9"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never quote the reason to the family. It may concern their circumstances, and a parent reading the school's assessment of their finances helps nobody (BR-12).",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report the end date. The reduction is surfaced for review when it is reached (BR-9), and a family should know it is not permanent.",
+          "derivedFrom": [
+            "BR-9"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "An approval is not withdrawn by reversal. A reduction is withdrawn through fee.concession.withdraw, with its own reason, and the record of what the family was granted survives (BR-10). Invoices already reduced under it are not re-billed. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "hardship wali concession approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the hardship concession"
+          },
+          "context": "School Admin, Johar Town branch, on a 25% tuition concession.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.approve",
+              "inputs": {
+                "concession_id": "$request.concession_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved. From 08-09-2026 every invoice for the student carries 25% off tuition automatically (BR-7). Report what the next bill will be — the office will be asked. The reason stays internal."
+        },
+        {
+          "request": {
+            "text": "Ayesha ki scholarship approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve Ayesha's scholarship"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.approve",
+              "inputs": {
+                "concession_id": "$request.concession_phrase → \"Ayesha, scholarship\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "In practice this capability is present but the API refuses on type. It returns SCHOLARSHIP_NEEDS_PRINCIPAL (E5)."
+            }
+          ],
+          "outcome": "Nothing is approved. Report that a scholarship needs the Principal — it is awarded on merit and is a claim about the student, which is why the approver differs (PR-1)."
+        },
+        {
+          "request": {
+            "text": "concession approve kar do",
+            "lang": "ur-Latn",
+            "gloss": "approve the concession"
+          },
+          "context": "School Admin, Johar Town branch, where September's invoice was issued yesterday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.approve",
+              "inputs": {
+                "concession_id": "$request.concession_phrase",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Approved, and E9 comes back: September's invoice was issued before approval and is not recalculated (BR-8). Report that plainly — the family's current bill is the full amount and October's will be the first reduced one (PR-3)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-13-PC-3",
+      "intent": {
+        "name": "fee.concession.return",
+        "summary": "Send a proposed reduction back to Accounts with why it was not approved. One step.",
+        "routesHere": [
+          "return this concession, the reason doesn't justify it",
+          {
+            "text": "concession wapas bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send the concession back"
+          },
+          {
+            "text": "ye kami itni zyada hai, wapas karo",
+            "lang": "ur-Latn",
+            "gloss": "this reduction is too large, send it back"
+          },
+          "send it back — no end date has been set"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "concession approve kar do",
+              "lang": "ur-Latn",
+              "gloss": "approve the concession"
+            },
+            "goesTo": "fee.concession.approve — UC-04-13-PC-2"
+          },
+          {
+            "request": {
+              "text": "kam percentage pe kar do",
+              "lang": "ur-Latn",
+              "gloss": "make it a smaller percentage"
+            },
+            "goesTo": "Returning says so.",
+            "note": "Changing the value is Accounts' work in their own session; the approver states what is wrong."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.concession.return",
+            "inputs": {
+              "concession_id": "$request.concession_phrase",
+              "return_reason": "$request.return_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. Nothing is reduced and no invoice changes."
+          }
+        ],
+        "onFailure": "Stop and report. The reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the status change, the reason and the audit entry together or not at all. The student's invoices are unaffected and the family is told nothing."
+      },
+      "operations": [
+        {
+          "name": "fee.concession.return",
+          "method": "POST",
+          "path": "/api/v1/fee-concessions/{concession_id}/return",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "concession_id + return_reason",
+          "purpose": "Send a proposed reduction back to Accounts with the reason it was not approved.",
+          "parameters": [
+            {
+              "name": "concession_id",
+              "source": "resolved",
+              "sourceRef": "$request.concession_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "concession",
+                "fromPhrase": "$request.concession_phrase",
+                "onNoMatch": "Refuse. No reduction matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with student, type, value, fee types covered and status."
+              },
+              "notes": "The reduction, resolved from how the actor named it — the student, the type, or the reference."
+            },
+            {
+              "name": "return_reason",
+              "source": "request",
+              "sourceRef": "$request.return_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required. The approver's own words — Accounts have to know whether the value, the scope, the validity or the justification is the problem."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The reduction as returned.",
+            "fields": [
+              {
+                "name": "concession_id",
+                "type": "string",
+                "description": "The record."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Returned."
+              },
+              {
+                "name": "return_reason",
+                "type": "string",
+                "description": "As given, shown to Accounts."
+              },
+              {
+                "name": "returned_by",
+                "type": "string",
+                "description": "The approver."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "RETURN_REASON_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A return was recorded with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            },
+            {
+              "code": "CANNOT_APPROVE_OWN",
+              "mapsTo": "E4",
+              "httpStatus": 403,
+              "meaning": "The acting user recorded it themselves.",
+              "written": "Nothing.",
+              "notWritten": "Not returned."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the return reason. Accounts have to know whether the value, the scope, the validity or the justification is the problem, and only the approver can say.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-2"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never adjust the reduction on the approver's behalf. Changing a percentage or a fee type is Accounts' work in their own session; returning states what is wrong.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report that nothing has been reduced. The student is being billed in full and will continue to be.",
+          "derivedFrom": [
+            "BR-1",
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A return is not undone. Accounts correct the record and submit it again, which is a fresh decision."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye concession wapas bhej do — 60% bohat zyada hai, hardship ke liye 25% kaafi hai",
+            "lang": "ur-Latn",
+            "gloss": "send this concession back — 60% is too much, 25% is enough for hardship"
+          },
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.return",
+              "inputs": {
+                "concession_id": "$request.concession_phrase",
+                "return_reason": "60% is beyond what hardship cases are normally granted. 25% would be appropriate.",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The approver states the objection; Accounts change the value (PR-2)."
+            }
+          ],
+          "outcome": "Returned. The student is billed in full meanwhile."
+        },
+        {
+          "request": "send it back — no end date has been set",
+          "context": "School Admin, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.return",
+              "inputs": {
+                "concession_id": "$request.concession_phrase",
+                "return_reason": "No end date has been set. A reduction that runs forever is never reviewed.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Returned with the fault named. In practice E2 would have refused it at recording, so this is the case where the validity is set but too long."
+        },
+        {
+          "request": {
+            "text": "concession wapas kar do",
+            "lang": "ur-Latn",
+            "gloss": "send the concession back"
+          },
+          "context": "School Admin, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.return",
+              "inputs": {
+                "concession_id": "$request.concession_phrase",
+                "return_reason": "$request.return_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what is wrong with it."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-04-13-PC-4",
+      "intent": {
+        "name": "fee.concession.withdraw",
+        "summary": "Withdraw an approved reduction before its end date, with the reason. One step, and it leaves the record of what was granted.",
+        "routesHere": [
+          "withdraw this concession, the family's circumstances have improved",
+          {
+            "text": "ye concession khatam kar do, halaat behtar ho gaye hain",
+            "lang": "ur-Latn",
+            "gloss": "end this concession, their circumstances have improved"
+          },
+          {
+            "text": "scholarship wapas le lo, natije theek nahi rahe",
+            "lang": "ur-Latn",
+            "gloss": "withdraw the scholarship, the results have not held up"
+          },
+          "cancel the sibling discount, the older child has left"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "concession barha do",
+              "lang": "ur-Latn",
+              "gloss": "extend the concession"
+            },
+            "goesTo": "A6, the renewal path — not written as a capability.",
+            "note": "Renewal is a flow step (renewConcession) but no capability is specified for it. See OPEN-QUESTIONS."
+          },
+          {
+            "request": {
+              "text": "concession record karo",
+              "lang": "ur-Latn",
+              "gloss": "record a concession"
+            },
+            "goesTo": "fee.concession.record — UC-04-13-PC-1"
+          },
+          {
+            "request": {
+              "text": "purane bill dobara banao",
+              "lang": "ur-Latn",
+              "gloss": "re-bill the earlier invoices"
+            },
+            "goesTo": "Not offered.",
+            "note": "Invoices already reduced under the concession are not re-billed. It applies from its date onward, in both directions (BR-8)."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "fee.concession.withdraw",
+            "inputs": {
+              "concession_id": "$request.concession_phrase",
+              "withdrawal_reason": "$request.withdrawal_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The reduction is withdrawn rather than deleted, and the withdrawal carries its own reason — the record of what a family was granted survives (BR-10)."
+          }
+        ],
+        "onFailure": "Stop and report. The reason is enforced by the API and arrives as an error.",
+        "atomicity": "One write: the status change, the reason and the audit entry together or not at all. Nothing already billed is touched — invoices raised while the reduction was live keep it (BR-8). From here the student's invoices carry the full amount. The record of the reduction and its reason survives (BR-10)."
+      },
+      "operations": [
+        {
+          "name": "fee.concession.withdraw",
+          "method": "POST",
+          "path": "/api/v1/fee-concessions/{concession_id}/withdraw",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "concession_id, since a reduction is withdrawn once and Withdrawn is terminal",
+          "purpose": "Withdraw an approved reduction, keeping the record of what was granted and why.",
+          "parameters": [
+            {
+              "name": "concession_id",
+              "source": "resolved",
+              "sourceRef": "$request.concession_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "concession",
+                "fromPhrase": "$request.concession_phrase",
+                "onNoMatch": "Refuse. No reduction matches at a status that allows this.",
+                "onAmbiguous": "Ask, naming the candidates with student, type, value, fee types covered and status."
+              },
+              "notes": "The reduction, resolved from how the actor named it — the student, the type, or the reference."
+            },
+            {
+              "name": "withdrawal_reason",
+              "source": "request",
+              "sourceRef": "$request.withdrawal_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 500 characters. Required (BR-10). The actor's own words — a family whose reduction stops will ask, and this is the answer."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The reduction as withdrawn.",
+            "fields": [
+              {
+                "name": "concession_id",
+                "type": "string",
+                "description": "The reduction."
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "description": "Withdrawn. Terminal."
+              },
+              {
+                "name": "withdrawal_reason",
+                "type": "string",
+                "description": "As given, kept with the record (BR-10)."
+              },
+              {
+                "name": "withdrawn_by",
+                "type": "string",
+                "description": "The acting user."
+              },
+              {
+                "name": "invoices_affected",
+                "type": "integer",
+                "description": "Always zero. Invoices already reduced are not re-billed (BR-8)."
+              },
+              {
+                "name": "next_invoice_effect",
+                "type": "string",
+                "description": "What the student's next bill will be without it, so the office can answer the family."
+              },
+              {
+                "name": "family_notified",
+                "type": "boolean",
+                "description": "Whether the family is told. The reason is not shown to them (BR-12)."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "WITHDRAWAL_REASON_REQUIRED",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A withdrawal was attempted with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not withdrawn.",
+              "note": "Ask; never compose one. The record of what a family was granted has to say why it stopped (BR-10)."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the withdrawal reason. A family whose reduction stops will ask why, and BR-10 keeps the reason with the record precisely so somebody can answer.",
+          "derivedFrom": [
+            "BR-10",
+            "E1"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never offer to re-bill invoices already reduced. The reduction applied while it was live and those bills stand (BR-8) — withdrawing it changes what comes next, not what has gone.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Report what the next invoice will be. A family used to paying a reduced amount will receive a full bill, and the office should be able to explain it before they ring.",
+          "derivedFrom": [
+            "BR-7",
+            "BR-10"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never quote the reason to the family. It may concern their circumstances (BR-12), and this one especially — a reduction withdrawn because circumstances improved is not something to put in a message.",
+          "derivedFrom": [
+            "BR-12"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "branch_id comes from $session.",
+          "derivedFrom": [
+            "branch-scope"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "Withdrawn is terminal. Where the reduction should resume, a fresh one is recorded and approved on its own merits — and the earlier one and its withdrawal both stay on the record (BR-10). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "ye concession khatam kar do — walida ki naukri lag gayi hai",
+            "lang": "ur-Latn",
+            "gloss": "end this concession — the mother has found work"
+          },
+          "context": "Accounts, Johar Town branch, on an approved 25% tuition concession.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.withdraw",
+              "inputs": {
+                "concession_id": "$request.concession_phrase",
+                "withdrawal_reason": "The mother is now employed and the family's circumstances have improved.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Withdrawn. Invoices already raised at 25% off stand (BR-8); the next one is the full amount. Report what that will be — the family will ask. The reason is not sent to them (PR-4)."
+        },
+        {
+          "request": {
+            "text": "bhai behan wala discount khatam karo, bara bhai school chhod chuka hai",
+            "lang": "ur-Latn",
+            "gloss": "end the sibling discount, the older brother has left"
+          },
+          "context": "Accounts, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.withdraw",
+              "inputs": {
+                "concession_id": "$request.concession_phrase",
+                "withdrawal_reason": "The elder sibling has left the school, so the sibling discount no longer applies.",
+                "branch_id": "$session.branch_id"
+              }
+            }
+          ],
+          "outcome": "Withdrawn with the reason kept. The record of what the family was granted, and why it stopped, survives (BR-10)."
+        },
+        {
+          "request": {
+            "text": "concession khatam kar do",
+            "lang": "ur-Latn",
+            "gloss": "end the concession"
+          },
+          "context": "Accounts, Johar Town branch, with no reason in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "fee.concession.withdraw",
+              "inputs": {
+                "concession_id": "$request.concession_phrase",
+                "withdrawal_reason": "$request.withdrawal_reason — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "No plan is emitted (PR-1)."
+            }
+          ],
+          "outcome": "Nothing is written. Ask why it is ending — the family will ask the same question."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,414 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-02-12",
+    "name": "Message an enquiring family and log it against the enquiry",
+    "module": "Admissions & Inquiry Management",
+    "file": "../UseCases/UC-02-12.json",
+    "featureRef": "2.12 Messaging an enquiring family"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-02-12-PC-1",
+      "intent": {
+        "name": "inquiry.message",
+        "summary": "Send a message to one enquiring family or several, through a channel the enquiry holds a contact for, and log it against the enquiry. One step.",
+        "routesHere": [
+          "send the fee structure to the Ahmed Raza family",
+          {
+            "text": "unko fee structure bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send them the fee structure"
+          },
+          {
+            "text": "in sab ko test ki date ka message kar do",
+            "lang": "ur-Latn",
+            "gloss": "send all of them a message with the test date"
+          },
+          "WhatsApp the prospectus to this enquiry",
+          {
+            "text": "jitni bhi grade 3 ki inquiries hain, sab ko admission reminder bhejo",
+            "lang": "ur-Latn",
+            "gloss": "send an admission reminder to all the grade 3 enquiries"
+          },
+          "email the fee structure to the families who asked about grade 1"
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "call ki thi, log kar do",
+              "lang": "ur-Latn",
+              "gloss": "I called, log it"
+            },
+            "goesTo": "inquiry.contact.log — UC-02-10-PC-2",
+            "note": "A call is logged; a message is sent and logs itself (BR-7). Never both for the same act."
+          },
+          {
+            "request": {
+              "text": "unko admission form ka link bhej do",
+              "lang": "ur-Latn",
+              "gloss": "send them the admission form link"
+            },
+            "goesTo": "admission.invite.resend — UC-02-03-PC-3",
+            "note": "The invite is a single-use link issued at approval, not a message composed here. Sending it as ordinary text would put a live link outside its own record."
+          },
+          {
+            "request": {
+              "text": "unko test ki date bata do",
+              "lang": "ur-Latn",
+              "gloss": "tell them the test date"
+            },
+            "goesTo": "admission.test.schedule — UC-02-05",
+            "note": "Scheduling sends the date and time itself (UC-02-05 BR-6). A second message about it duplicates the record."
+          },
+          {
+            "request": "send the credentials to the admitted student",
+            "goesTo": "applicant.admit — UC-02-07",
+            "note": "Credentials go out as part of the admission (UC-02-07 BR-9), never as a message composed here."
+          },
+          {
+            "request": "write a new template",
+            "goesTo": "The Messaging module.",
+            "note": "The first message to an enquiry is saved as a template automatically (BR-4). Authoring one outright lives with Messaging, not here."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "inquiry.message",
+            "inputs": {
+              "inquiry_ids": "$request.inquiry_phrase",
+              "channel": "$request.channel",
+              "template_id": "$request.template_phrase",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, whether the request names one family or forty. The merge fields are resolved by the API against each enquiry's own values (BR-6), and a per-recipient result comes back (BR-11)."
+          }
+        ],
+        "onFailure": "Stop and report. Channel availability, balance, merge-field resolution and the authorisation threshold are all enforced by the API and arrive as errors; the plan does not test for them beforehand. A bulk send above the threshold is not refused — it is queued for School Admin authorisation (E4), which is an outcome to report rather than a failure.",
+        "atomicity": "One write per recipient, and the batch does not stop at the first bad one: valid recipients are sent and failures are listed with their reason (BR-11). So a partial result is the normal shape here, not an accident. Each send writes a message record, a contact-log entry against the enquiry and an audit entry, and counts as a contact attempt (BR-7). Delivery status starts at Queued and is never reported optimistically (BR-9) — a run that reports success has queued the message, not delivered it."
+      },
+      "operations": [
+        {
+          "name": "inquiry.message",
+          "method": "POST",
+          "path": "/api/v1/inquiries/messages",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "inquiry_ids + template_id + channel + the send timestamp, because a repeat would message the family twice and inflate the attempt count BR-7 relies on",
+          "purpose": "Send a templated message to one or several enquiries through a channel each holds a contact for, and log it against each.",
+          "parameters": [
+            {
+              "name": "inquiry_ids",
+              "source": "resolved",
+              "sourceRef": "$request.inquiry_phrase",
+              "required": true,
+              "type": "string[]",
+              "resolves": {
+                "entityType": "inquiry",
+                "fromPhrase": "$request.inquiry_phrase",
+                "onNoMatch": "Refuse. No enquiry matches, or none holding a contact for that channel.",
+                "onAmbiguous": "Ask, naming the candidates. For a set, report how many matched and what they are before anything is sent — a message cannot be unsent."
+              },
+              "notes": "One enquiry or several, resolved from how the actor named them — a child's name, or a set such as \"the grade 3 enquiries\". Enquiries holding no contact for the chosen channel are not offered (BR-3)."
+            },
+            {
+              "name": "channel",
+              "source": "request",
+              "sourceRef": "$request.channel",
+              "required": true,
+              "type": "enum: WhatsApp | Email",
+              "notes": "Only channels the enquiry holds a contact for are offered (BR-3). WhatsApp needs a number, email needs an address."
+            },
+            {
+              "name": "template_id",
+              "source": "resolved",
+              "sourceRef": "$request.template_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "message_template",
+                "fromPhrase": "$request.template_phrase",
+                "onNoMatch": "Refuse. No template of that name for this channel (E7).",
+                "onAmbiguous": "Ask, naming the candidates with their channel."
+              },
+              "notes": "A saved template, resolved from what the actor called it — \"fee structure\", \"admission reminder\". Required for a bulk send (BR-5). Omit only for a single free-composed message."
+            },
+            {
+              "name": "message_body",
+              "source": "request",
+              "sourceRef": "$request.message_body",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 1000 characters, for a single recipient only. Never for several — free text to many cannot be reviewed before it goes or reused afterwards (BR-5, E3)."
+            },
+            {
+              "name": "attachment_id",
+              "source": "resolved",
+              "sourceRef": "$request.attachment_phrase",
+              "required": false,
+              "type": "string",
+              "resolves": {
+                "entityType": "attachment",
+                "fromPhrase": "$request.attachment_phrase",
+                "onNoMatch": "Refuse. No such file.",
+                "onAmbiguous": "Ask, naming the candidates."
+              },
+              "notes": "One file, typically the fee structure or the prospectus."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "A per-recipient result, because one bad number does not stop the batch.",
+            "fields": [
+              {
+                "name": "sent",
+                "type": "object[]",
+                "description": "inquiry_id, message_id, delivery_status. Queued until the provider says otherwise (BR-9)."
+              },
+              {
+                "name": "failed",
+                "type": "object[]",
+                "description": "inquiry_id and the reason. Listed rather than silently dropped (BR-11)."
+              },
+              {
+                "name": "recipient_count",
+                "type": "integer",
+                "description": "How many enquiries the send covered."
+              },
+              {
+                "name": "template_name",
+                "type": "string",
+                "description": "The template used, held on the enquiry rather than a second copy of the text (BR-12)."
+              },
+              {
+                "name": "awaiting_authorisation",
+                "type": "boolean",
+                "description": "True where the batch exceeded the threshold and is held for School Admin approval (BR-8, E4). Nothing has been sent."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "NO_CONTACT_FOR_CHANNEL",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The enquiry holds no contact number or email.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "Adding a contact is a correction to the enquiry, recorded as one (BR-2). Never substitute a number from elsewhere."
+            },
+            {
+              "code": "MERGE_FIELD_UNRESOLVED",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "A template field cannot be filled from this enquiry's values.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "The send is blocked rather than going out with a gap in it (BR-6). The message names the field. Never fill it in by hand."
+            },
+            {
+              "code": "BULK_REQUIRES_TEMPLATE",
+              "mapsTo": "E3",
+              "httpStatus": 400,
+              "meaning": "A bulk send was attempted with free text.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "Message: \"Select a template. Your own message can only be sent to one enquiry at a time.\""
+            },
+            {
+              "code": "AWAITING_AUTHORISATION",
+              "mapsTo": "E4",
+              "httpStatus": 202,
+              "meaning": "The batch is above the threshold a Staff user may send unaided.",
+              "written": "The batch is queued and School Admin is notified.",
+              "notWritten": "Nothing sent yet.",
+              "treatedAsSuccess": true,
+              "note": "Not a failure. Report that it has gone for approval, and to whom. Never split the batch to get under the threshold."
+            },
+            {
+              "code": "NO_BALANCE",
+              "mapsTo": "E5",
+              "httpStatus": 402,
+              "meaning": "There is no balance or quota for the channel.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent.",
+              "note": "Never fall back to the other channel to get the message out — the channel was chosen, and the enquiry may not hold a contact for the other."
+            },
+            {
+              "code": "PROVIDER_UNREACHABLE",
+              "mapsTo": "E6",
+              "httpStatus": 503,
+              "meaning": "The provider cannot be reached.",
+              "written": "The messages are queued and will send when it is reachable.",
+              "notWritten": "Not delivered.",
+              "treatedAsSuccess": true,
+              "note": "Report them as queued, never as sent (BR-9)."
+            },
+            {
+              "code": "TEMPLATE_WRONG_CHANNEL",
+              "mapsTo": "E7",
+              "httpStatus": 400,
+              "meaning": "The template belongs to a different channel.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent."
+            },
+            {
+              "code": "ENQUIRY_CLOSED",
+              "mapsTo": "E8",
+              "httpStatus": 409,
+              "meaning": "The enquiry was closed as not interested.",
+              "written": "Nothing.",
+              "notWritten": "Nothing sent to that enquiry.",
+              "note": "Re-opening is a separate decision (UC-02-11), never chained onto a send."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Report what a set resolves to before anything is sent, and never send to a set the actor has not seen. A message cannot be unsent, and \"sab ko bhej do\" is a phrase with no number in it — the count is what the actor is actually approving.",
+          "derivedFrom": [
+            "BR-11",
+            "BR-5"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never split a batch to get under the authorisation threshold. The threshold exists so a School Admin sees a large send before it goes (BR-8); splitting it defeats that while looking like a success.",
+          "derivedFrom": [
+            "BR-8",
+            "E4"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never switch channel because one has no balance or no contact. The channel was chosen, and the other may reach a different person or nobody at all — a family who gave a number and no email is not reachable by email (BR-3).",
+          "derivedFrom": [
+            "BR-3",
+            "E1",
+            "E5"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never fill an unresolved merge field by hand. E2 blocks the send precisely so a template does not go out with a gap or a guess where the child's class should be. The missing value belongs on the enquiry.",
+          "derivedFrom": [
+            "BR-6",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Report a send as queued, never as delivered. Delivery status is what the provider says, and the school believing a family was told when they were not is the failure BR-9 exists to prevent.",
+          "derivedFrom": [
+            "BR-9",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Never log a contact alongside a message. The send counts as a contact attempt in its own right (BR-7), and logging one too makes the attempt count and the message log disagree.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never use free text for more than one recipient. E3 refuses it, and the reason is that text sent to many can neither be reviewed before it goes nor reused after.",
+          "derivedFrom": [
+            "BR-5",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-8",
+          "rule": "Send only to the contact on the enquiry. A number the actor supplies in passing is a correction to the enquiry first, recorded as one (BR-2), and never a destination for this send.",
+          "derivedFrom": [
+            "BR-2"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A message cannot be unsent. The log entry, the attempt count and the delivery status are history. Where the wrong thing went out, the answer is another message, which is another planned send — never a compensating call the controller makes on its own."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Ahmed Raza wali family ko fee structure WhatsApp kar do",
+            "lang": "ur-Latn",
+            "gloss": "WhatsApp the fee structure to the Ahmed Raza family"
+          },
+          "context": "Staff, Johar Town branch. The enquiry holds a WhatsApp number.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.message",
+              "inputs": {
+                "inquiry_ids": "$request.inquiry_phrase → [\"Ahmed Raza\"]",
+                "channel": "WhatsApp",
+                "template_id": "$request.template_phrase → \"fee structure\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The template is resolved from the words \"fee structure\", not translated into a key. The merge fields — child name, guardian name, target class — are filled by the API from the enquiry's own values (BR-6)."
+            }
+          ],
+          "outcome": "One message queued, logged against the enquiry with its template name, and counted as a contact attempt. Reported as queued, not delivered (BR-9)."
+        },
+        {
+          "request": {
+            "text": "jitni bhi grade 3 ki khuli inquiries hain, sab ko admission reminder bhej do",
+            "lang": "ur-Latn",
+            "gloss": "send an admission reminder to all the open grade 3 enquiries"
+          },
+          "context": "Staff, Johar Town branch. Thirty-one open enquiries match.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.message",
+              "inputs": {
+                "inquiry_ids": "$request.inquiry_phrase → the 31 open grade 3 enquiries",
+                "channel": "WhatsApp",
+                "template_id": "$request.template_phrase → \"admission reminder\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The set is reported to the actor before the plan is emitted — thirty-one families, named by class and status (PR-1). A template is used because a bulk send cannot be free text (BR-5)."
+            }
+          ],
+          "outcome": "Twenty-nine queued and two listed as failed with their reasons — one number no longer in service, one enquiry holding no WhatsApp contact. The batch was not abandoned for the two (BR-11), and neither was silently dropped."
+        },
+        {
+          "request": "email the prospectus to the Sana Malik enquiry",
+          "context": "Staff, Johar Town branch, on an enquiry that holds a mobile number and no email address.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "inquiry.message",
+              "inputs": {
+                "inquiry_ids": "$request.inquiry_phrase → [\"Sana Malik\"]",
+                "channel": "Email",
+                "template_id": "$request.template_phrase → \"prospectus\"",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged; it does not check for the missing address beforehand. The API returns NO_CONTACT_FOR_CHANNEL (E1)."
+            }
+          ],
+          "outcome": "Nothing is sent. Report that the enquiry holds no email address, and that adding one is a correction to the enquiry — not a reason to send it by WhatsApp instead (PR-3)."
+        }
+      ]
+    }
+  ]
+}

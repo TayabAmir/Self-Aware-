@@ -1,0 +1,701 @@
+{
+  "$schema": "../../../planning-contracts/planning-contract.schema.json",
+  "useCase": {
+    "id": "UC-02-06",
+    "name": "Record the admission test score against the applicant",
+    "module": "Admissions & Inquiry Management",
+    "file": "../UseCases/UC-02-06.json",
+    "featureRef": "2.6 Admission test marking"
+  },
+  "planned": true,
+  "contracts": [
+    {
+      "contractId": "UC-02-06-PC-1",
+      "intent": {
+        "name": "admission.test.mark",
+        "summary": "Record whether an applicant sat the admission test and, where they did, what they scored. One step, attendance first.",
+        "routesHere": [
+          "record Bilal's admission test score — 78",
+          {
+            "text": "Bilal ne 78 number liye",
+            "lang": "ur-Latn",
+            "gloss": "Bilal got 78 marks"
+          },
+          {
+            "text": "ye applicant test mein nahi aaya",
+            "lang": "ur-Latn",
+            "gloss": "this applicant did not come to the test"
+          },
+          {
+            "text": "APP-2026-0417 ka score 64 likh do",
+            "lang": "ur-Latn",
+            "gloss": "record 64 as APP-2026-0417's score"
+          },
+          "mark this applicant absent, they didn't turn up",
+          {
+            "text": "test ho gaya, number daal do — 82 out of 100",
+            "lang": "ur-Latn",
+            "gloss": "the test is done, put the marks in — 82 out of 100"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "score galat likha gaya tha, theek kar do",
+              "lang": "ur-Latn",
+              "gloss": "the score was recorded wrongly, correct it"
+            },
+            "goesTo": "admission.test.correct — UC-02-06-PC-2",
+            "note": "Changing a recorded score needs a reason and is School Admin's act (BR-7, E5)."
+          },
+          {
+            "request": {
+              "text": "ye applicant eligible hai",
+              "lang": "ur-Latn",
+              "gloss": "this applicant is eligible"
+            },
+            "goesTo": "applicant.eligibility.flag — UC-02-07-PC-1",
+            "note": "The score is recorded, not judged. This use case sets no pass mark and decides no eligibility (BR-5)."
+          },
+          {
+            "request": {
+              "text": "test ki nayi date rakh do",
+              "lang": "ur-Latn",
+              "gloss": "set a new test date"
+            },
+            "goesTo": "admission.test.reschedule — UC-02-05-PC-2",
+            "note": "An applicant who missed the test may be rescheduled, but that is a decision taken after the absence is recorded (BR-10)."
+          },
+          {
+            "request": "what did this applicant score?",
+            "goesTo": "A read of the applicant record.",
+            "note": "Reading a score back is not this capability, which records one."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "admission.test.mark",
+            "inputs": {
+              "applicant_id": "$request.applicant_phrase",
+              "attendance": "$request.attendance",
+              "score": "$request.score",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step, and attendance is not optional in it. An absent applicant carries no score at all — not a zero (BR-4) — so score is omitted entirely rather than sent as 0."
+          }
+        ],
+        "onFailure": "Stop and report. The maximum mark, the range, whether the test has taken place and whether the applicant was marked absent are all enforced by the API and arrive as errors.",
+        "atomicity": "One write, atomic in itself: the test result, the applicant's status change and the audit entry together or not at all. Nothing is judged — no pass mark is applied, no eligibility is set and nobody is admitted (BR-5). The score becomes visible to School Admin and Principal alongside the admission form, because neither is enough on its own to decide (BR-6)."
+      },
+      "operations": [
+        {
+          "name": "admission.test.mark",
+          "method": "POST",
+          "path": "/api/v1/applicants/{applicant_id}/test/result",
+          "kind": "create",
+          "idempotent": false,
+          "idempotencyKey": "applicant_id + test_schedule_id, since an applicant has one result per test and a repeat is a correction rather than a second result",
+          "purpose": "Record attendance at the admission test and, where the applicant sat it, the score against the maximum configured for that class.",
+          "parameters": [
+            {
+              "name": "applicant_id",
+              "source": "resolved",
+              "sourceRef": "$request.applicant_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "applicant",
+                "fromPhrase": "$request.applicant_phrase",
+                "onNoMatch": "Refuse. No applicant matches in this branch with a test to mark.",
+                "onAmbiguous": "Ask, naming the candidates with temporary ID, child name and test date. Never pick the likeliest — this is the identifier the whole decision hangs off (BR-1)."
+              },
+              "notes": "The applicant, resolved from how the actor named them — the temporary ID, or the child's name. A score recorded against the wrong applicant is the failure BR-1 exists to prevent, so an ambiguous name is asked about and never guessed."
+            },
+            {
+              "name": "attendance",
+              "source": "request",
+              "sourceRef": "$request.attendance",
+              "required": true,
+              "type": "enum: Present | Absent",
+              "notes": "Recorded before any score, and separately from it, because a no-show and a poor result mean different things to the decision (BR-2)."
+            },
+            {
+              "name": "score",
+              "source": "request",
+              "sourceRef": "$request.score",
+              "required": false,
+              "type": "number",
+              "notes": "A whole number from 0 to the maximum configured for that class's test (BR-3). Required where attendance is Present; omitted entirely where Absent — an absent applicant carries no score at all, and 0 means they sat it and scored nothing, which is a different fact (BR-4)."
+            },
+            {
+              "name": "marker_remark",
+              "source": "request",
+              "sourceRef": "$request.marker_remark",
+              "required": false,
+              "type": "string",
+              "notes": "Maximum 250 characters. Internal — visible to School Admin and Principal and never sent to the family (BR-8)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The result as recorded.",
+            "fields": [
+              {
+                "name": "test_result_id",
+                "type": "string",
+                "description": "The result."
+              },
+              {
+                "name": "attendance",
+                "type": "string",
+                "description": "Present or Absent."
+              },
+              {
+                "name": "score",
+                "type": "number",
+                "description": "Absent where the applicant did not sit it — not zero (BR-4)."
+              },
+              {
+                "name": "maximum_mark",
+                "type": "number",
+                "description": "Configured for that class's test, so the score can be read in proportion."
+              },
+              {
+                "name": "marked_by",
+                "type": "string",
+                "description": "Who recorded it."
+              },
+              {
+                "name": "marked_on",
+                "type": "datetime",
+                "description": "DD-MM-YYYY HH:mm, school-local."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "SCORE_ABOVE_MAXIMUM",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "A score above the maximum mark was entered.",
+              "written": "Nothing.",
+              "notWritten": "No result recorded.",
+              "note": "The message names the range. Never clamp the value to the maximum — the number came from a paper."
+            },
+            {
+              "code": "SCORE_NEGATIVE",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "A negative score was entered.",
+              "written": "Nothing.",
+              "notWritten": "No result recorded."
+            },
+            {
+              "code": "SCORE_FOR_ABSENT",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "A score was given for an applicant recorded absent.",
+              "written": "Nothing.",
+              "notWritten": "No result recorded.",
+              "note": "Message: \"This applicant was marked absent. Change the attendance first if they sat the test.\" Changing attendance is a decision, not a step to chain."
+            },
+            {
+              "code": "NO_MAXIMUM_CONFIGURED",
+              "mapsTo": "E4",
+              "httpStatus": 409,
+              "meaning": "No maximum mark is set for that class's admission test.",
+              "written": "Nothing.",
+              "notWritten": "No result recorded.",
+              "note": "Nothing can be validated against, so nothing is recorded. This is configuration, not a marking problem."
+            },
+            {
+              "code": "TEST_NOT_TAKEN",
+              "mapsTo": "E7",
+              "httpStatus": 409,
+              "meaning": "The scheduled date and time have not passed.",
+              "written": "Nothing.",
+              "notWritten": "No result recorded.",
+              "note": "The message names the scheduled date. A score cannot exist for a test that has not happened."
+            },
+            {
+              "code": "NOT_ASSIGNED_TO_YOU",
+              "mapsTo": "E8",
+              "httpStatus": 403,
+              "meaning": "A Teacher opened an applicant not assigned to them.",
+              "written": "Nothing.",
+              "notWritten": "Nothing recorded.",
+              "note": "Row scope inside a permitted capability — a Teacher marks only tests assigned to them."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never record a score without attendance, and never send 0 for an absent applicant. Zero means they sat the test and scored nothing; absent means they did not sit it. The two look alike in a sentence and mean opposite things to the decision (BR-2, BR-4).",
+          "derivedFrom": [
+            "BR-2",
+            "BR-4",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Never guess which applicant. A score against the wrong temporary ID is the failure BR-1 exists to prevent, and it surfaces weeks later as an admission decision taken on somebody else's paper. Where two applicants could match the name, ask.",
+          "derivedFrom": [
+            "BR-1"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Pass the score exactly as given. Never clamp it to the maximum, never round it, never convert a percentage into a mark. E1 refusing a score above the maximum means the paper and the configuration disagree, and that is worth someone looking at.",
+          "derivedFrom": [
+            "BR-3",
+            "E1",
+            "E2"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Never change attendance to make a score save. E3 says the applicant is recorded absent; marking them present so a number fits rewrites whether a child turned up.",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never judge the score. No pass mark is applied here, no eligibility is set and nobody is admitted (BR-5). Reporting a score as good, poor or a pass reads a judgement into a number that the school has not made yet.",
+          "derivedFrom": [
+            "BR-5",
+            "BR-6"
+          ]
+        },
+        {
+          "id": "PR-6",
+          "rule": "Keep marker_remark out of anything the family sees. It is internal by rule (BR-8), and a reply that quotes it back into a message to a parent breaks that quietly.",
+          "derivedFrom": [
+            "BR-8"
+          ]
+        },
+        {
+          "id": "PR-7",
+          "rule": "Never reschedule to deal with an absence in the same breath. Missing a test is not a result (BR-10); recording the absence and deciding whether to offer another date are separate acts by separate judgements.",
+          "derivedFrom": [
+            "BR-10"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A recorded result is not deleted or overwritten. It is corrected through admission.test.correct, with a reason, and the previous value stays in the audit trail — because an admission decision may already have been taken on it (BR-7). The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Bilal Khan ne test mein 78 number liye",
+            "lang": "ur-Latn",
+            "gloss": "Bilal Khan got 78 marks in the test"
+          },
+          "context": "Staff, Johar Town branch. The maximum for that class's test is 100, and the test was yesterday.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.mark",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase → \"Bilal Khan\"",
+                "attendance": "Present",
+                "score": 78,
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Attendance is Present because a score was given for a test that happened. The number is passed as spoken, not converted (PR-3)."
+            }
+          ],
+          "outcome": "78 out of 100 recorded against the temporary ID, visible to School Admin and Principal beside the admission form (BR-6). Nothing is judged — no eligibility is set."
+        },
+        {
+          "request": {
+            "text": "ye applicant test wale din aaya hi nahi",
+            "lang": "ur-Latn",
+            "gloss": "this applicant simply did not come on the test day"
+          },
+          "context": "Staff, Johar Town branch.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.mark",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase",
+                "attendance": "Absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "score is absent from the inputs entirely — not 0. An absent applicant carries no score at all (BR-4, PR-1)."
+            }
+          ],
+          "outcome": "Recorded absent with no score. Whether they are offered another date is a decision someone takes afterwards (BR-10); this plan does not raise it and does not reschedule."
+        },
+        {
+          "request": {
+            "text": "Sana ka score 105 likh do",
+            "lang": "ur-Latn",
+            "gloss": "record Sana's score as 105"
+          },
+          "context": "Staff, Johar Town branch, where the maximum for that class is 100.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.mark",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase → \"Sana\"",
+                "attendance": "Present",
+                "score": 105,
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan is emitted unchanged; the score is passed as given. The API returns SCORE_ABOVE_MAXIMUM (E1)."
+            }
+          ],
+          "outcome": "Nothing is recorded. Report that the maximum for that class is 100 and the paper says 105 — the two disagree, and someone should look. Never clamp it to 100 (PR-3)."
+        }
+      ]
+    },
+    {
+      "contractId": "UC-02-06-PC-2",
+      "intent": {
+        "name": "admission.test.correct",
+        "summary": "Correct a recorded admission test score, with the reason it changed, keeping the previous value. One step, and School Admin only.",
+        "routesHere": [
+          "correct Bilal's score to 87, it was entered wrong",
+          {
+            "text": "score galat likha gaya tha, 87 kar do",
+            "lang": "ur-Latn",
+            "gloss": "the score was recorded wrongly, make it 87"
+          },
+          {
+            "text": "paper dobara check hua, number badal gaye",
+            "lang": "ur-Latn",
+            "gloss": "the paper was re-checked, the marks changed"
+          },
+          "change this applicant's score — the addition was wrong on the paper",
+          {
+            "text": "attendance galat lagi thi, ye applicant to aaya tha",
+            "lang": "ur-Latn",
+            "gloss": "the attendance was wrong, this applicant did come"
+          }
+        ],
+        "routesElsewhere": [
+          {
+            "request": {
+              "text": "naya score daal do",
+              "lang": "ur-Latn",
+              "gloss": "enter a new score"
+            },
+            "goesTo": "admission.test.mark — UC-02-06-PC-1",
+            "note": "Where no score has been recorded yet."
+          },
+          {
+            "request": {
+              "text": "is applicant ko reject kar do",
+              "lang": "ur-Latn",
+              "gloss": "reject this applicant"
+            },
+            "goesTo": "applicant.reject — UC-02-07-PC-3",
+            "note": "A correction changes what was recorded. It does not revisit a decision taken on it."
+          },
+          {
+            "request": "undo the admission that was granted on this score",
+            "goesTo": "Not offered.",
+            "note": "A decision is never edited (UC-02-07 BR-11). Where an admission was granted on a score that turns out wrong, that is a further recorded decision, not a correction here."
+          }
+        ]
+      },
+      "plan": {
+        "steps": [
+          {
+            "step": 1,
+            "operation": "admission.test.correct",
+            "inputs": {
+              "applicant_id": "$request.applicant_phrase",
+              "correction_reason": "$request.correction_reason",
+              "branch_id": "$session.branch_id"
+            },
+            "note": "One step. The score, the attendance, or both may change; the reason is always required, because an admission decision may already have been taken on the value being replaced (BR-7)."
+          }
+        ],
+        "onFailure": "Stop and report. The range, the maximum and the acting role are enforced by the API and arrive as errors. A Teacher attempting this is refused (E5) — in practice the capability is absent from their allow-list.",
+        "atomicity": "One write, atomic in itself. The previous value is not overwritten: it stays in the audit trail, because an admission decision may already have been taken on it (BR-7). So a correction leaves two readable facts — what was recorded, and what it was changed to and why. Nothing downstream is revisited: a decision already taken on the old score stands until someone takes another."
+      },
+      "operations": [
+        {
+          "name": "admission.test.correct",
+          "method": "PATCH",
+          "path": "/api/v1/applicants/{applicant_id}/test/result",
+          "kind": "update",
+          "idempotent": true,
+          "idempotencyKey": "applicant_id + score + attendance + correction_reason, so a repeated call does not record a second correction of the same value",
+          "purpose": "Change a recorded score or attendance with a reason, keeping the previous value in the audit trail.",
+          "parameters": [
+            {
+              "name": "applicant_id",
+              "source": "resolved",
+              "sourceRef": "$request.applicant_phrase",
+              "required": true,
+              "type": "string",
+              "resolves": {
+                "entityType": "applicant",
+                "fromPhrase": "$request.applicant_phrase",
+                "onNoMatch": "Refuse. No applicant matches in this branch with a test to mark.",
+                "onAmbiguous": "Ask, naming the candidates with temporary ID, child name and test date. Never pick the likeliest — this is the identifier the whole decision hangs off (BR-1)."
+              },
+              "notes": "The applicant, resolved from how the actor named them — the temporary ID, or the child's name. A score recorded against the wrong applicant is the failure BR-1 exists to prevent, so an ambiguous name is asked about and never guessed."
+            },
+            {
+              "name": "correction_reason",
+              "source": "request",
+              "sourceRef": "$request.correction_reason",
+              "required": true,
+              "type": "string",
+              "notes": "Maximum 250 characters. Always required (BR-7, E6). The actor's own words — they sit in the audit trail beside the value being replaced."
+            },
+            {
+              "name": "score",
+              "source": "request",
+              "sourceRef": "$request.score",
+              "required": false,
+              "type": "number",
+              "notes": "The corrected score, 0 to the maximum for that class. Omit where only the attendance is being corrected."
+            },
+            {
+              "name": "attendance",
+              "source": "request",
+              "sourceRef": "$request.attendance",
+              "required": false,
+              "type": "enum: Present | Absent",
+              "notes": "Only where the attendance itself was wrong. Correcting Absent to Present makes a score possible where one was refused before (E3)."
+            },
+            {
+              "name": "marker_remark",
+              "source": "request",
+              "sourceRef": "$request.marker_remark",
+              "required": false,
+              "type": "string",
+              "notes": "Internal, as on the original (BR-8)."
+            },
+            {
+              "name": "branch_id",
+              "source": "session",
+              "sourceRef": "$session.branch_id",
+              "required": true,
+              "type": "string",
+              "notes": "Never from the request, even where the request names a campus or a past year (branch-scope, academic-session-scope)."
+            }
+          ],
+          "returns": {
+            "description": "The corrected result, and what it replaced.",
+            "fields": [
+              {
+                "name": "test_result_id",
+                "type": "string",
+                "description": "The result, unchanged in identity."
+              },
+              {
+                "name": "score",
+                "type": "number",
+                "description": "The value now recorded."
+              },
+              {
+                "name": "previous_score",
+                "type": "number",
+                "description": "What it was. Kept, not overwritten (BR-7)."
+              },
+              {
+                "name": "attendance",
+                "type": "string",
+                "description": "The value now recorded."
+              },
+              {
+                "name": "previous_attendance",
+                "type": "string",
+                "description": "What it was."
+              },
+              {
+                "name": "corrected_by",
+                "type": "string",
+                "description": "Who changed it."
+              },
+              {
+                "name": "decision_already_taken",
+                "type": "boolean",
+                "description": "True where an admission decision was already recorded against the previous value. Report it — the decision stands, and someone needs to know it was taken on a number that has since changed."
+              }
+            ]
+          },
+          "errors": [
+            {
+              "code": "CORRECTION_REASON_REQUIRED",
+              "mapsTo": "E6",
+              "httpStatus": 400,
+              "meaning": "The score was changed with no reason.",
+              "written": "Nothing.",
+              "notWritten": "Not corrected.",
+              "note": "Message: \"Give a reason for changing this score.\" Ask for it; never compose one."
+            },
+            {
+              "code": "NOT_PERMITTED",
+              "mapsTo": "E5",
+              "httpStatus": 403,
+              "meaning": "A Teacher attempted to change a recorded score.",
+              "written": "Nothing.",
+              "notWritten": "Not corrected.",
+              "note": "Only a School Admin may change a recorded score. In practice the capability is absent from a Teacher's allow-list."
+            },
+            {
+              "code": "SCORE_ABOVE_MAXIMUM",
+              "mapsTo": "E1",
+              "httpStatus": 400,
+              "meaning": "The corrected score is above the maximum.",
+              "written": "Nothing.",
+              "notWritten": "Not corrected."
+            },
+            {
+              "code": "SCORE_NEGATIVE",
+              "mapsTo": "E2",
+              "httpStatus": 400,
+              "meaning": "The corrected score is negative.",
+              "written": "Nothing.",
+              "notWritten": "Not corrected."
+            },
+            {
+              "code": "SCORE_FOR_ABSENT",
+              "mapsTo": "E3",
+              "httpStatus": 409,
+              "meaning": "A score was given while the applicant remains recorded absent.",
+              "written": "Nothing.",
+              "notWritten": "Not corrected.",
+              "note": "Correcting the attendance in the same call is legitimate; leaving it Absent and supplying a score is not."
+            }
+          ]
+        }
+      ],
+      "planningRules": [
+        {
+          "id": "PR-1",
+          "rule": "Never compose the correction reason. An admission decision may already have been taken on the value being replaced (BR-7), and the reason is what someone reads when they go back to find out how that happened.",
+          "derivedFrom": [
+            "BR-7",
+            "E6"
+          ]
+        },
+        {
+          "id": "PR-2",
+          "rule": "Correct only what the request says is wrong. Resupplying the existing attendance alongside a score change records a correction to something nobody corrected, and the audit trail then shows two changes where one happened.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-3",
+          "rule": "Never correct attendance in order to get a score in. Where the request says the applicant did attend, correcting both together is right; where it only supplies a number, E3 refusing it means the record says they were absent, and that is a fact to check rather than an obstacle.",
+          "derivedFrom": [
+            "BR-2",
+            "E3"
+          ]
+        },
+        {
+          "id": "PR-4",
+          "rule": "Report decision_already_taken whenever it comes back true. A decision made on a score that has since changed is the single most consequential thing this capability can surface, and it goes nowhere unless it is said.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        },
+        {
+          "id": "PR-5",
+          "rule": "Never chain a re-decision onto a correction. A decision is never edited (UC-02-07 BR-11); where the corrected score changes what should have happened, that is a further decision someone takes.",
+          "derivedFrom": [
+            "BR-7"
+          ]
+        }
+      ],
+      "reversal": {
+        "exists": false,
+        "operation": null,
+        "statement": "A correction is itself the correction mechanism, and it is not reversed — a further correction is another recorded change with its own reason. The previous values all stay in the audit trail, so the sequence of what was recorded and when survives. The controller must not attempt a compensating call."
+      },
+      "resolvedPlans": [
+        {
+          "request": {
+            "text": "Bilal ka score galat likha gaya tha, paper pe 87 hai — theek kar do",
+            "lang": "ur-Latn",
+            "gloss": "Bilal's score was recorded wrongly, the paper says 87 — correct it"
+          },
+          "context": "School Admin, Johar Town branch. 78 was recorded.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.correct",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase → \"Bilal\"",
+                "correction_reason": "Recorded wrongly; the paper says 87.",
+                "score": 87,
+                "branch_id": "$session.branch_id"
+              },
+              "note": "attendance is omitted — the request says the score was wrong, not the attendance (PR-2)."
+            }
+          ],
+          "outcome": "87 is recorded and 78 stays in the audit trail. If an admission decision had already been taken on 78, decision_already_taken comes back true and is reported — the decision stands, but someone needs to know what it was taken on."
+        },
+        {
+          "request": {
+            "text": "attendance galat lagi thi, ye applicant to aaya tha aur 64 number liye",
+            "lang": "ur-Latn",
+            "gloss": "the attendance was wrong, this applicant did come and scored 64"
+          },
+          "context": "School Admin, Johar Town branch. The applicant was recorded Absent.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.correct",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase",
+                "correction_reason": "Marked absent in error; the applicant sat the test.",
+                "attendance": "Present",
+                "score": 64,
+                "branch_id": "$session.branch_id"
+              },
+              "note": "Both change together, because the request says both were wrong. Supplying the score alone would be refused under E3 (PR-3)."
+            }
+          ],
+          "outcome": "The applicant moves from Absent with no score to Present with 64, and both previous values stay in the audit trail."
+        },
+        {
+          "request": "the paper was re-marked and the score has changed",
+          "context": "School Admin, Johar Town branch, with no new score stated in the request.",
+          "steps": [
+            {
+              "step": 1,
+              "operation": "admission.test.correct",
+              "inputs": {
+                "applicant_id": "$request.applicant_phrase",
+                "correction_reason": "Paper re-marked.",
+                "score": "$request.score — absent",
+                "branch_id": "$session.branch_id"
+              },
+              "note": "The plan cannot be completed: the request gives a reason but no number. No plan is emitted."
+            }
+          ],
+          "outcome": "Nothing is written. Ask what the re-marked score is. A correction with a reason and no value changes nothing."
+        }
+      ]
+    }
+  ]
+}
