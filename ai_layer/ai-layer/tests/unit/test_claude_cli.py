@@ -77,6 +77,14 @@ async def test_an_error_result_is_a_model_unavailable_error(tmp_path: Path) -> N
         await ClaudeCliModel(cli, timeout_seconds=10).generate(REQUEST)
 
 
+async def test_an_api_error_says_what_went_wrong_such_as_an_expired_sign_in(tmp_path: Path) -> None:
+    message = "Failed to authenticate: OAuth session expired and could not be refreshed"
+    cli = fake_cli(tmp_path, envelope(is_error=True, terminal_reason="api_error", result=message))
+
+    with pytest.raises(ModelUnavailableError, match="OAuth session expired"):
+        await ClaudeCliModel(cli, timeout_seconds=10).generate(REQUEST)
+
+
 async def test_an_answer_without_structured_output_is_a_model_output_error(tmp_path: Path) -> None:
     cli = fake_cli(tmp_path, envelope(result="four"))
 

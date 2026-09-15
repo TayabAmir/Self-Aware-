@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
-from app.api import chat, health
+from app.api import chat, chat_page, health
 from app.api.middleware import RequestContextMiddleware
 from app.core.logging import configure_logging
 from app.core.settings import Settings, get_settings
@@ -50,4 +50,6 @@ def create_app(
     app.add_middleware(RequestContextMiddleware)
     app.include_router(health.router)
     app.include_router(chat.router)
+    if settings.chat_page_enabled:
+        app.include_router(chat_page.router)
     return app

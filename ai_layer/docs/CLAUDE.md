@@ -143,7 +143,8 @@ Everything lives under `ai_layer/`. Folders marked with a phase do not exist yet
   /app
     main.py, resources.py   app factory; opens and closes the index pool, clients, sync loop, retriever
     /core                   settings, logging. Imports nothing else from app
-    /api                    HTTP routes: health; POST /chat
+    /api                    HTTP routes: health; POST /chat; GET / (the chat test page)
+    /web                    the chat test page: one static HTML file, a developer tool
     /gateway                client for /agent/*; models.py generated from /openapi
     /index                  the only database access: pool, migration runner, index queries
     /embeddings             client for the embeddings service; refuses an unpinned model
@@ -165,6 +166,8 @@ Everything lives under `ai_layer/`. Folders marked with a phase do not exist yet
 /snapshots                  agent-metadata.json: GET /agent/metadata, exported by the backend
 /docker                     docker compose: Postgres 16 + pgvector; embeddings service (profile)
 /scripts                    whole-stack checks: verify_phase0.sh … verify_phase7.sh
+(repository root)
+  .github/workflows/ai-layer.yml   CI: backend tests, AI layer tests, measure regression run
 /docs                       this file, the implementation plan, the preflight design
 ```
 

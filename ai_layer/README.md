@@ -69,11 +69,11 @@ out of: 175 labelled sentences, 70 to refuse, 607 injected faults
 - **Recorded model answers.** Every Haiku and Sonnet answer is saved, before validation, in `ai-layer/eval/recordings/`, together with a hash of the exact prompt.
   - `make measure` asks the models only for answers not yet recorded. The first recording took 16 minutes; a run from recordings takes about 25 seconds.
   - A changed prompt or glossary means re-recording.
-- **The CI regression run.** `make measure-ci` replays the recordings without calling a model, and fails when any number falls below `ai-layer/eval/measure/baseline.json`. [.github/workflows/ai-layer.yml](.github/workflows/ai-layer.yml) runs it, plus the backend and AI layer tests.
+- **The CI regression run.** `make measure-ci` replays the recordings without calling a model, and fails when any number falls below `ai-layer/eval/measure/baseline.json`. [.github/workflows/ai-layer.yml](../.github/workflows/ai-layer.yml), at the repository root, runs it, plus the backend and AI layer tests.
 - **A broken description shows up.** The run replaces `fee.payment.record`'s description with one about library books. Recall@30 for its sentences falls from 100% to 4.5%, and for all sentences from 96.6% to 84.6%.
 - **The report** [ai-layer/eval/reports/measure.md](ai-layer/eval/reports/measure.md) lists outcomes per set, plan accuracy per capability, each fault kind, and every sentence that went wrong.
 - **Tests:**
-  - AI layer: 246 in `make ai-test` (225 unit, 19 integration, 2 build checks), 11 eval tests in `make ai-eval`, and 3 real-model checks;
+  - AI layer: 250 in `make ai-test` (229 unit, 19 integration, 2 build checks, counting the chat page added after Phase 7), 11 eval tests in `make ai-eval`, and 3 real-model checks;
   - backend: unchanged at 157.
 
 **What the numbers say:**
@@ -467,7 +467,35 @@ The state machine and POST /chat (unit tests with a scripted backend and planner
 Phase 6 is done: every check passed.
 ```
 
-### Chat with it yourself
+### Chat with it in the browser
+
+With the backend and the AI layer running, open **http://127.0.0.1:8081/**.
+
+1. Paste the dev token (`BACKEND_DEV_USER_TOKEN` from `.env`) under **Sign in** and press **Use**. It is kept in that browser tab only.
+2. Type a sentence, or click an example on the right. The examples are grouped by what the POC can do today:
+   - overdue fees and the dashboard (reads, answered straight away);
+   - fee reminders and recording a payment (writes, which wait for **Yes, go ahead**);
+   - two steps at once;
+   - the four fee corrections (understood, then refused as not built yet);
+   - requests nothing here does.
+3. Replies show their type (answer, question, confirmation, refusal) and code:
+   - a question has a button for each option;
+   - a confirmation has **Yes, go ahead** and **Cancel**;
+   - an answer can open the backend's data, for example the overdue list as a table.
+
+The pill at the top shows the AI layer's readiness; hover it for each check. **New conversation** starts a
+fresh session, and **Show details** adds plan ids to replies. A new sentence takes about 15 seconds; answers
+to questions are instant.
+
+The page is a developer tool served by the AI layer itself (`GET /`). It is one static file, talks
+only to `/chat` and `/health/ready` on the same address, and a strict content-security policy stops
+it loading or sending anything anywhere else. `AI_LAYER_CHAT_PAGE_ENABLED=false` turns it off.
+
+**Every reply says "Sorry, I can't understand requests right now"?** The Claude CLI could not be used.
+The AI layer's log says why (`planning_unavailable`). Most often the Claude desktop app's sign-in has
+expired: open the app and sign in again.
+
+### Chat with it from the terminal
 
 The token is `BACKEND_DEV_USER_TOKEN` from `.env`. Send a sentence:
 
@@ -1073,6 +1101,17 @@ mean?"). Everything with a number or a name in it comes from the backend.
 - Replayed answers give the same numbers every run. The tolerance is room for a fresh recording.
 - `EVAL_UPDATE_BASELINE=1 make measure` accepts new numbers on purpose.
 
+**64. The chat test page is served by the AI layer, from one static file.** Being on the same
+address as `/chat` avoids any cross-origin setup, and the page needs no build step or framework.
+
+- It is a developer tool, not the product's interface, and can be turned off.
+- Replies are inserted as text, never as markup.
+- The token stays in the browser tab.
+
+**65. CI lives at the repository root and watches `ai_layer/` only.** The repository also holds the use
+cases and planning contracts, which do not affect these jobs. A push that changes only those documents
+does not start them.
+
 ## Open questions
 
 - **Lists of names.** The registry refuses a parameter that looks up a list of names, and no POC
@@ -1121,9 +1160,10 @@ mean?"). Everything with a number or a name in it comes from the backend.
 - **The reminder only reaches a whole section.** The contracts also route "is family ko fees ka reminder
   karo" and "message the over-90-day defaulters" to `fee.reminder.send`, and the planner rightly refuses
   both today. The real capability's `student_ids` (see "Lists of names") would cover them.
-- **The CI workflow has not run on GitHub.** The project is not a git repository yet. The workflow assumes
-  `ai_layer/` is the repository root, and was checked locally by running the same make targets. Its
-  `measure` job downloads the 2.3 GB model once and caches it. The 75 contract sentences score a little
+- **CI has not run on GitHub yet.** The workflow is at the repository root
+  (`.github/workflows/ai-layer.yml`) and runs only when `ai_layer/` changes. All three jobs pass in a clean
+  clone on this Mac (backend, AI layer, and `measure`, which took 7.5 minutes with nothing cached), but
+  a GitHub runner is Linux. Its `measure` job downloads the 2.3 GB model once and caches it. The 75 contract sentences score a little
   lower than the 100 written here (see the report). Phase 7 should add sentences from real staff.
 - **The other two docs still use old wording.** `docs/POC_Implementation_Plan.md` and
   `docs/Preflight_Implementation.md` still show snake_case example ids and "temperature 0". The

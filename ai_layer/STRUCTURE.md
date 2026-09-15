@@ -9,6 +9,11 @@ change that adds, moves or removes a file.
 
 ## The big picture
 
+The git repository is the folder above `ai_layer/`, which also holds the use cases (`modules/`) and
+the planning contracts. CI for the AI layer is at the repository root:
+`.github/workflows/ai-layer.yml` (backend tests, AI layer tests, and the measure regression run). It
+runs only when `ai_layer/` changes.
+
 ```
 ai_layer/
 ├── README.md              start here: what this is, how to run it, phase status, decisions
@@ -17,7 +22,6 @@ ai_layer/
 ├── Makefile               short commands for everything (make help)
 ├── .env.example           every setting with a safe local default; copy to .env
 ├── .gitignore
-├── .github/workflows/     CI: backend tests, AI layer tests, and the measure regression run
 │
 ├── docs/                  the specification (read before changing code)
 ├── docker/                Postgres 16 + pgvector, and the BGE-M3 embeddings service
@@ -307,6 +311,13 @@ Both folders share one numbering. Never edit a migration that has run; add a new
 | --- | --- |
 | `health.py` | `GET /health/live` and `GET /health/ready` (index, backend, whether metadata sync has filled the index, and whether chat is on) |
 | `chat.py` | `POST /chat`: the bearer token, one turn (a message, a choice or a confirm), and the typed reply (answer, question, confirmation, refusal) |
+| `chat_page.py` | `GET /`: serves the chat test page with a strict content-security policy (off with `AI_LAYER_CHAT_PAGE_ENABLED=false`) |
+
+`app/web/` — the chat test page
+
+| File | What it has |
+| --- | --- |
+| `chat.html` | One self-contained page: sign in with the dev token, send sentences, answer questions with option buttons, confirm or cancel, see the backend's data as tables, examples of everything the POC can do, and the readiness pill |
 | `middleware.py` | One log line per request, with a request id echoed on the response |
 | `dependencies.py` | How a route gets the shared resources |
 
@@ -445,6 +456,7 @@ The folder decides the marker:
 | `unit/test_chat_orchestrator.py` | With a scripted backend and planner: a read in one turn; a write after yes; an ambiguous name resumed without planning; a missing value filled; cancelling runs nothing; an expired token and a moved count confirmed again; a failed precondition in the backend's words; a name not found asked up to three times; the plan cache; model failures not cached; a new sentence replacing a waiting plan; sessions per user; a stale version |
 | `unit/test_chat_answers.py` | Yes and no words, choosing options, reading amounts, dates, allowed values and free text; the plan cache key and eviction |
 | `unit/test_measure_logic.py` | Recordings (asked once, replayed without a model, refused for a changed prompt, outages not recorded), every fault caught for its own reason, and how the four numbers are counted |
+| `unit/test_chat_page.py` | `GET /` serves the page self-contained and locked to its own origin, inserts replies as text, can be turned off, and stays out of the API description |
 | `unit/test_chat_api.py` | `POST /chat` over HTTP: the reply's shape, exactly one kind of turn, 401 without a token or when the backend refuses it, 503 when chat or the backend is off |
 | `model_checks/test_planning_with_real_models.py` | Real Haiku and Sonnet: a Roman Urdu sentence becomes a valid plan with names intact, a sentence matching nothing is refused, a two-part sentence becomes two steps in order |
 | `integration/conftest.py` | The container and connection fixtures |

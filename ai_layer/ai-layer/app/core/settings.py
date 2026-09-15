@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     # Chat: how long an unanswered conversation is kept, and how many plans are remembered
     chat_session_ttl_seconds: float = Field(default=1800.0, gt=0)
     plan_cache_size: int = Field(default=256, ge=0)
+    # GET / serves a small page for trying POST /chat by hand (a developer tool)
+    chat_page_enabled: bool = True
 
     @model_validator(mode="after")
     def _pool_bounds_are_ordered(self) -> Self:

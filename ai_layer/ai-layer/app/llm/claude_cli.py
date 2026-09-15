@@ -132,10 +132,14 @@ def _structured_output(
         outcome=envelope.get("subtype"),
     )
     if envelope.get("is_error") or returncode != 0:
-        raise ModelUnavailableError(
-            f"The {request.purpose} call failed: {envelope.get('subtype')} "
-            f"(API status {envelope.get('api_error_status')})"
-        )
+        reason = f"{envelope.get('subtype')} (API status {envelope.get('api_error_status')})"
+        if envelope.get("terminal_reason") == "api_error" and isinstance(
+            envelope.get("result"), str
+        ):
+            # An API error's result is the CLI's own message (for example an expired sign-in),
+            # never model text, so it is safe to repeat and it says what to fix.
+            reason = envelope["result"][:200]
+        raise ModelUnavailableError(f"The {request.purpose} call failed: {reason}")
     output = envelope.get("structured_output")
     if not isinstance(output, dict):
         raise ModelOutputError(f"The {request.purpose} call returned no structured output")

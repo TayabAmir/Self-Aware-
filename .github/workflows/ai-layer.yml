@@ -1,0 +1,114 @@
+# Continuous integration for the AI layer POC (everything under ai_layer/).
+#
+# Three jobs, each on a fresh hosted Ubuntu runner (Docker is available there):
+#
+#   backend    the backend's unit and integration tests (Testcontainers)
+#   ai-layer   lint, types, unit and integration tests; no embeddings service, no model calls
+#   measure    the regression run: the embeddings service starts, and every eval runs from the
+#              recorded model answers in ai_layer/ai-layer/eval/recordings/ (no model is called, so
+#              no Claude credential is needed). It fails when recall@30, plan accuracy, refusal
+#              correctness or the validator catch rate falls below
+#              ai_layer/ai-layer/eval/measure/baseline.json, so a description made worse shows up
+#              here as a recall drop.
+#
+# A change to a prompt or the glossary changes the recordings' prompt hash, and `measure` fails until
+# someone re-records locally with `make measure` (on a Claude subscription) and commits the result.
+#
+# Runs only when something under ai_layer/ (or this file) changes: the use-case documents and the
+# planning contracts elsewhere in the repository do not affect it.
+
+name: ai-layer
+
+on:
+  push:
+    paths: ["ai_layer/**", ".github/workflows/ai-layer.yml"]
+  pull_request:
+    paths: ["ai_layer/**", ".github/workflows/ai-layer.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: ai-layer-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: ai_layer
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: ai_layer/backend/**/pom.xml
+      - run: make env
+      - run: make backend-verify
+
+  ai-layer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: ai_layer/ai-layer/uv.lock
+      - run: make env
+      - run: make ai-install
+      - run: make ai-lint
+      - name: Unit and integration tests (no embeddings service, no model calls)
+        run: cd ai-layer && uv run pytest -m "not embeddings and not model"
+
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: ai_layer/ai-layer/uv.lock
+      - run: make env
+      - run: make ai-install
+      # Paths in `with:` are relative to the repository root, not to the working directory above.
+      - name: Cache the BGE-M3 weights and the eval embeddings
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bge-m3
+            ai_layer/ai-layer/eval/.cache
+          key: bge-m3-5617a9f61b028005a4858fdac845db406aefb181-${{ hashFiles('ai_layer/ai-layer/eval/**/*.jsonl') }}
+          restore-keys: bge-m3-5617a9f61b028005a4858fdac845db406aefb181-
+      - name: Start the embeddings service (the same pinned image and model as docker compose)
+        run: |
+          mkdir -p ~/.cache/bge-m3
+          docker run -d --name embeddings -p 127.0.0.1:8083:80 -v ~/.cache/bge-m3:/data \
+            ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.3 \
+            --model-id=BAAI/bge-m3 --revision=5617a9f61b028005a4858fdac845db406aefb181 \
+            --port=80 --max-batch-tokens=2048
+          for i in $(seq 1 600); do
+            if curl -fsS -m 2 http://127.0.0.1:8083/health >/dev/null; then echo "embeddings ready"; exit 0; fi
+            sleep 2
+          done
+          docker logs embeddings
+          exit 1
+      - name: Build checks (description similarity)
+        run: make ai-build-checks
+      - name: Regression run from the recorded model answers
+        run: make measure-ci
+      - name: Upload the measure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: measure-report
+          path: ai_layer/ai-layer/eval/reports/
+          if-no-files-found: ignore
+      # The container writes the weights as root; hand them back so the cache step can save them.
+      - name: Make the model cache readable for saving
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" ~/.cache/bge-m3 || true
